@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { loadNetworkConfig } from '../lib/network';
 import type { AppSettings } from '../lib/settings';
-import { SNOOZE_MS, checkForUpdate, installUpdate, mayCheckForUpdates, snoozeActive, type FoundUpdate } from '../lib/updates';
+import { RECHECK_MS, SNOOZE_MS, checkForUpdate, dueForCheck, installUpdate, mayCheckForUpdates, snoozeActive, type FoundUpdate } from '../lib/updates';
 
 /** Installs a found update: the app closes and comes back as the new version. */
 function InstallButton({ found }: { found: FoundUpdate }) {
@@ -67,18 +67,40 @@ export function UpdateCheck() {
   );
 }
 
-/** Once at start: a quiet banner when a newer build exists. "Later" is remembered for three days. */
+/**
+ * A quiet banner when a newer build exists. The app usually stays running in the tray, so one look at start is not enough:
+ * it looks again whenever the window comes back to the front, and on a timer, at most every half hour. A look that fails
+ * (no network yet) is tried again next time. "Later" is remembered for three days.
+ */
 export function UpdateBanner({ settings, updateSettings }: { settings: AppSettings; updateSettings: (patch: Partial<AppSettings>) => void }) {
   const [found, setFound] = useState<FoundUpdate | null>(null);
   const wanted = settings.updateChecks && !snoozeActive(settings.updateSnoozedUntil);
   useEffect(() => {
-    if (!wanted || !mayCheckForUpdates(loadNetworkConfig())) return;
+    if (!wanted) return;
     let live = true;
-    checkForUpdate()
-      .then((update) => live && setFound(update))
-      .catch(() => undefined);
+    let lastDone = 0;
+    const look = () => {
+      if (!dueForCheck(lastDone) || !mayCheckForUpdates(loadNetworkConfig())) return;
+      const started = Date.now();
+      checkForUpdate()
+        .then((update) => {
+          lastDone = started;
+          if (live && update) setFound(update);
+        })
+        .catch(() => undefined);
+    };
+    const back = () => {
+      if (document.visibilityState === 'visible') look();
+    };
+    look();
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('focus', back);
+    const timer = window.setInterval(look, RECHECK_MS);
     return () => {
       live = false;
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('focus', back);
+      window.clearInterval(timer);
     };
   }, [wanted]);
   if (!found) return null;
