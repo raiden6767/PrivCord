@@ -20,6 +20,10 @@ object AppUpdate {
 
     fun isNewer(info: UpdateInfo, currentVersionCode: Int) = info.versionCode > currentVersionCode
 
+    /** The automatic check runs at most this often (the "Check now" button always asks). */
+    const val RECHECK_MS = 30 * 60 * 1000L
+    fun dueForCheck(lastCheckAt: Long, now: Long) = now - lastCheckAt >= RECHECK_MS
+
     /** A check contacts GitHub directly, so it is never made while Hide my IP or Tor mode is on. */
     fun mayCheck(network: NetworkConfig) = !network.forceRelay && !network.torMode
 }

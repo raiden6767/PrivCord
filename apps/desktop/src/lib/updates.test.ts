@@ -5,7 +5,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...
 const inShell = vi.fn(() => true);
 vi.mock('../config', () => ({ isTauri: () => inShell() }));
 
-import { checkForUpdate, installUpdate, mayCheckForUpdates, snoozeActive, SNOOZE_MS } from './updates';
+import { checkForUpdate, dueForCheck, installUpdate, mayCheckForUpdates, RECHECK_MS, snoozeActive, SNOOZE_MS } from './updates';
 import { parseSettings } from './settings';
 
 beforeEach(() => {
@@ -34,6 +34,12 @@ describe('updates', () => {
   it('keeps "Later" for three days', () => {
     expect(snoozeActive(1000 + SNOOZE_MS, 1000)).toBe(true);
     expect(snoozeActive(1000, 1000 + 1)).toBe(false);
+  });
+
+  it('repeats the automatic check at most every half hour', () => {
+    expect(dueForCheck(0, 5 * RECHECK_MS)).toBe(true);
+    expect(dueForCheck(1000, 1000 + RECHECK_MS - 1)).toBe(false);
+    expect(dueForCheck(1000, 1000 + RECHECK_MS)).toBe(true);
   });
 
   it('checks for updates by default, and keeps the setting', () => {

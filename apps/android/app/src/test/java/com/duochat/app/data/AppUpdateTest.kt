@@ -42,4 +42,12 @@ class AppUpdateTest {
         assertFalse(AppUpdate.mayCheck(NetworkConfig(forceRelay = true)))
         assertFalse(AppUpdate.mayCheck(NetworkConfig(torMode = true)))
     }
+
+    @Test
+    fun `the automatic check repeats at most every half hour`() {
+        val t = 10_000_000L
+        assertTrue(AppUpdate.dueForCheck(0L, t))
+        assertFalse(AppUpdate.dueForCheck(t, t + AppUpdate.RECHECK_MS - 1))
+        assertTrue(AppUpdate.dueForCheck(t, t + AppUpdate.RECHECK_MS))
+    }
 }

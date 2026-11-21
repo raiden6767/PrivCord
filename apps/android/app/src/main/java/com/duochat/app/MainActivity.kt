@@ -73,6 +73,11 @@ class MainActivity : FragmentActivity() {
         com.duochat.app.engine.BackgroundPolicy.setForeground(true)
     }
 
+    override fun onResume() {
+        super.onResume()
+        com.duochat.app.UpdateSignal.resumes.value++
+    }
+
     override fun onStop() {
         com.duochat.app.engine.BackgroundPolicy.setForeground(false)
         super.onStop()
@@ -138,11 +143,21 @@ private fun RootScreen(viewModel: AppViewModel) {
             com.duochat.app.data.parseWhatsNew(viewModel.insight("whats_new", com.duochat.app.data.jsonString(AppConfig.APP_VERSION)))
         } else null
     }
-    // A newer build, found once when the app starts (never while Hide my IP or Tor is on; "Later" snoozes it for 3 days).
+    // A newer build, looked for when the app starts and again each time it comes back to the front (the process often stays
+    // alive in the background, so "opening" the app is only a resume), at most every 30 minutes. Never while Hide my IP or Tor
+    // is on; "Later" snoozes it for 3 days.
     var update by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.duochat.app.data.UpdateInfo?>(null) }
-    LaunchedEffect(settings.updateChecks, settings.network.forceRelay, settings.network.torMode) {
-        if (settings.updateChecks && com.duochat.app.data.AppUpdate.mayCheck(settings.network) && System.currentTimeMillis() >= settings.updateSnoozedUntil) {
-            update = com.duochat.app.AppUpdater.latest().getOrNull()
+    val resumes = com.duochat.app.UpdateSignal.resumes.value
+    LaunchedEffect(settings.updateChecks, settings.network.forceRelay, settings.network.torMode, resumes) {
+        val now = System.currentTimeMillis()
+        if (update == null && settings.updateChecks && com.duochat.app.data.AppUpdate.mayCheck(settings.network) &&
+            now >= settings.updateSnoozedUntil && com.duochat.app.data.AppUpdate.dueForCheck(com.duochat.app.UpdateSignal.lastCheck, now)
+        ) {
+            // Only a finished look counts: a failed one (no network yet) or one cut short is tried again at the next resume.
+            com.duochat.app.AppUpdater.latest().onSuccess {
+                com.duochat.app.UpdateSignal.lastCheck = now
+                update = it
+            }
         }
     }
     update?.let { info ->

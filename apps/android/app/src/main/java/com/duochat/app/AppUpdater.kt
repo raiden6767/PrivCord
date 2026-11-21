@@ -9,11 +9,18 @@ import android.content.pm.PackageInstaller
 import android.os.Build
 import com.duochat.app.data.AppUpdate
 import com.duochat.app.data.UpdateInfo
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+
+/** Bumped each time the app comes to the front, so the start-up check can run again; remembers when it last ran. */
+object UpdateSignal {
+    val resumes = mutableStateOf(0)
+    @Volatile var lastCheck = 0L
+}
 
 /**
  * In-app updates without a store: read the small `android.json` from our release, and if there is a newer build, stream
