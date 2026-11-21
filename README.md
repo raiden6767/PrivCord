@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/brand/privcord-icon.png" alt="PrivCord logo: a rounded letter D with a blue to cyan gradient on a dark background" width="128">
+  <img src="docs/brand/privcord-icon.png" alt="PrivCord logo: a teal letter P shaped like a chat bubble, on a dark navy background" width="128">
 </p>
 
 # PrivCord: private, end-to-end encrypted messenger with no account, no phone number and no server that reads your chats
