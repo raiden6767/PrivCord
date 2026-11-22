@@ -7,6 +7,7 @@ import { ChatLayout } from './components/ChatLayout';
 import { RecoveryDialog } from './components/RecoveryDialogs';
 import { BrandMark } from './components/Avatar';
 import { DeviceLinkDialog } from './components/DeviceLinkDialog';
+import { UpdateBanner } from './components/UpdateControl';
 
 export default function App() {
   const { settings, update } = useSettings();
@@ -33,8 +34,13 @@ export default function App() {
     };
   }, []);
 
+  // On every screen, the setup pages and the lock screen included: a person who has not finished setting up still gets told
+  // there is a newer build (an old install is the likeliest one to have a bug a new build fixed).
+  const updateNotice = <UpdateBanner settings={settings} updateSettings={update} />;
+
   if (needsIdentity) {
     return (
+      <>
       <main className="loading-page">
         <div className="splash">
           <BrandMark size={72} />
@@ -61,6 +67,8 @@ export default function App() {
           }}
         />
       </main>
+      {updateNotice}
+      </>
     );
   }
 
@@ -74,6 +82,7 @@ export default function App() {
         fatal={fatal}
       />
       {locked ? <LockScreen onUnlocked={unlocked} /> : null}
+      {updateNotice}
     </>
   );
 }

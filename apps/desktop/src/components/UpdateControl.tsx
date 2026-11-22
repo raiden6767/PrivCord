@@ -105,7 +105,7 @@ export function UpdateBanner({ settings, updateSettings }: { settings: AppSettin
   }, [wanted]);
   if (!found) return null;
   return (
-    <div className="banner info" role="status">
+    <div className="banner info update-float" role="status">
       <span>PrivCord {found.version} is ready.</span>
       <InstallButton found={found} />
       <button

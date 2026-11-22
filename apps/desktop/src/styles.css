@@ -3823,3 +3823,6 @@ input[type='checkbox'] {
   opacity: 0.6;
   cursor: default;
 }
+
+/* The update notice floats above every screen (setup pages, the chat, dialogs), top centre. */
+.update-float { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 150; margin: 0; width: max-content; max-width: min(560px, calc(100vw - 24px)); flex-wrap: wrap; box-shadow: 0 12px 34px rgba(0, 0, 0, .45); background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--bg-elevated); }
