@@ -33,6 +33,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.duochat.app.AppUpdater
+import com.duochat.app.UpdateDownload
+import com.duochat.app.UpdateService
+import com.duochat.app.UpdateSignal
 import com.duochat.app.data.AppUpdate
 import com.duochat.app.data.NetworkConfig
 import com.duochat.app.data.UpdateInfo
@@ -42,10 +45,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun UpdateInstallButton(info: UpdateInfo, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var percent by remember { mutableStateOf(0) }
+    val download by UpdateSignal.download
     var message by remember { mutableStateOf<String?>(null) }
+    val busy = download.busy
+    val percent = download.percent
     Column(modifier) {
         if (busy) {
             DownloadPill(percent)
@@ -59,18 +62,13 @@ fun UpdateInstallButton(info: UpdateInfo, modifier: Modifier = Modifier) {
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                     )
                 } else {
-                    busy = true
                     message = null
-                    scope.launch {
-                        AppUpdater.install(context, info) { percent = it }
-                            .onSuccess { message = "Downloaded. Confirm the install when Android asks." }
-                            .onFailure { message = it.message ?: "The update failed." }
-                        busy = false
-                    }
+                    UpdateSignal.download.value = UpdateDownload(busy = true)
+                    UpdateService.start(context, info)
                 }
             },
         ) { Text("Install ${info.versionName}") }
-        message?.let {
+        (message ?: download.message)?.let {
             Spacer(Modifier.height(6.dp))
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
