@@ -53,18 +53,26 @@ class UpdateService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         scope.launch {
             var last = -1
-            AppUpdater.install(applicationContext, info) { p ->
-                UpdateSignal.download.value = UpdateDownload(busy = true, percent = p)
-                if (p != last) {
-                    last = p
-                    manager?.notify(NOTIFICATION_ID, notification(p))
+            // A dropped connection (the phone changed network, or the system cut the socket) starts the download again.
+            var result: Result<Unit> = Result.failure(IllegalStateException("The update failed."))
+            for (attempt in 1..3) {
+                result = AppUpdater.install(applicationContext, info) { p ->
+                    UpdateSignal.download.value = UpdateDownload(busy = true, percent = p)
+                    if (p != last) {
+                        last = p
+                        manager?.notify(NOTIFICATION_ID, notification(p))
+                    }
                 }
+                val e = result.exceptionOrNull()
+                if (e == null || e is IllegalStateException) break // done, or the file itself is wrong: no point retrying
+                kotlinx.coroutines.delay(2_000L * attempt)
             }
+            result
                 .onSuccess {
                     UpdateSignal.download.value = UpdateDownload(message = "Downloaded. Confirm the install when Android asks.")
                 }
                 .onFailure {
-                    UpdateSignal.download.value = UpdateDownload(message = it.message ?: "The update failed.")
+                    UpdateSignal.download.value = UpdateDownload(message = "The download was interrupted. Check your connection and tap Install again.")
                 }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
