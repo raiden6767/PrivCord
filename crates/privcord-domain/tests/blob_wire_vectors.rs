@@ -66,7 +66,11 @@ fn the_wire_forms_match_the_pinned_vectors_and_round_trip() {
         .into_iter()
         .map(|(name, blob)| {
             let wire = blob.encode();
-            assert_eq!(SealedBlob::decode(&wire).as_ref(), Some(&blob), "{name} round trip");
+            assert_eq!(
+                SealedBlob::decode(&wire).as_ref(),
+                Some(&blob),
+                "{name} round trip"
+            );
             json!({ "name": name, "wire": wire })
         })
         .collect();
@@ -74,6 +78,10 @@ fn the_wire_forms_match_the_pinned_vectors_and_round_trip() {
     if std::env::var("UPDATE_VECTORS").is_ok() {
         std::fs::write(path(), &text).unwrap();
     }
-    let pinned = std::fs::read_to_string(path()).expect("docs/blob-wire-vectors.json (run with UPDATE_VECTORS=1)");
-    assert_eq!(pinned, text, "the wire form changed: run with UPDATE_VECTORS=1 and check the Kotlin test still passes");
+    let pinned = std::fs::read_to_string(path())
+        .expect("docs/blob-wire-vectors.json (run with UPDATE_VECTORS=1)");
+    assert_eq!(
+        pinned, text,
+        "the wire form changed: run with UPDATE_VECTORS=1 and check the Kotlin test still passes"
+    );
 }
