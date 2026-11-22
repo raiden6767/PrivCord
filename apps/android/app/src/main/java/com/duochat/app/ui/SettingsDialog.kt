@@ -213,7 +213,7 @@ fun SettingsDialog(
                     DevicesStrip(it)
                     Spacer(Modifier.height(10.dp))
                 }
-                DevicesSection(state, onLinkNew = { linking = true }, onRemoval = onDeviceRemoval)
+                DevicesSection(state, onLinkNew = { onCancelDeviceLink(); linking = true }, onRemoval = onDeviceRemoval)
                 if (linking) {
                     LinkHostDialog(
                         state = state,

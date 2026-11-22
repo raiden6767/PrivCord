@@ -8,13 +8,13 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 
 | Status | Files | Lines |
 |---|---:|---:|
-| Ported, tested | 66 | 9861 |
+| Ported, tested | 66 | 9862 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
 | Stays (UI) | 99 | 17805 |
-| Stays (platform adapter) | 67 | 12864 |
+| Stays (platform adapter) | 67 | 12866 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **237** | **43175** |
+| **All mapped files** | **237** | **43178** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -119,7 +119,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/hosted/enable.ts` | 13 | `hostedEngineAvailable`, `hostedEngineEnabled` | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
 | `apps/desktop/src/lib/hosted/hostedEngine.ts` | 1011 | `HostedDeps`, `ENGINE_IDENTITY_KEY`, `friendly`, `HostedChatEngine`, `shapePrefs`, `shapeReceipts` +1 | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
 | `apps/desktop/src/lib/hosted/legacyIdentity.ts` | 29 | `legacySecretsHex`, `seedEngineIdentity` | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
-| `apps/desktop/src/lib/hosted/linkByScan.test.ts` | 83 | (none) | Linking a new device by scanning: the commands sent and the stages shown | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/hosted/linkByScan.test.ts` | 85 | (none) | Linking a new device by scanning: the commands sent and the stages shown | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/prefsExtras.test.ts` | 26 | (none) | Guards how the screens read silent chats, device receipts and mesh hops from the engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/runtime.test.ts` | 308 | (none) | WebRTC and relay adapters for the hosted engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/runtime.ts` | 600 | `LinkTransport`, `BleLike`, `RelayHub`, `RuntimeOptions`, `HostedRuntime` | WebRTC and relay adapters for the hosted engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -240,7 +240,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/security/KillSwitch.kt` | 441 | `KillSwitchScope`, `KillSwitchMode`, `StepStatus`, `KillSwitchPlanStep`, `KillSwitchStepResult`, `KillSwitchReport` +8 | Emergency erase steps for Android (Keystore key, files, Room) | domain::killswitch + engine::core::privacy run the plan; these steps call Android APIs | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/LocalCrypto.kt` | 88 | `LocalCrypto` | Keystore identity storage, at-rest encryption, biometric lock | SecureStore adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/RecoveryIdentity.kt` | 116 | `RecoveryIdentity`, `P256` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/security/Seal.kt` | 133 | `SealedBlob`, `Seal` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/security/Seal.kt` | 134 | `SealedBlob`, `Seal` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/SecureChannel.kt` | 136 | `SecureChannel` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/SignatureCodec.kt` | 81 | `SignatureCodec` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/signaling/Nostr.kt` | 79 | `NostrEvent`, `NostrCodec` | Nostr, relay client, signaling hub | engine::signaling (state machines) + crypto::nostr; a socket adapter remains | Engine/Adapter | Ported, tested | M8: replace with the socket adapter that feeds SignalingHub | same tests as the desktop clients |

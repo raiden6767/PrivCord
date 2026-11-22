@@ -117,7 +117,8 @@ object Seal {
     fun decode(text: String): SealedBlob? = try {
         val json = JSONObject(String(SignatureCodec.base64UrlDecode(text), Charsets.UTF_8))
         val epk = json.optJSONObject("epk")
-        if (json.optInt("v", -1) != 1 || epk == null || jwkOrNull(epk) == null) null
+        // Device-linking blobs ("to": "link") carry no key of their own (empty epk): the engine checks them, not this codec.
+        if (json.optInt("v", -1) != 1 || epk == null || (json.optString("to") != "link" && jwkOrNull(epk) == null)) null
         else SealedBlob(
             json.getString("to"), json.getString("from"), epk,
             json.getString("iv"), json.getString("ct"), json.getString("sig"),
