@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EngineBridge } from '../engineBridge';
 import { HostedChatEngine } from './hostedEngine';
 
-function make(answers: Record<string, unknown> = {}) {
+function make(answers: Record<string, unknown> = {}, relayWaitMs?: number) {
   const calls: [string, unknown][] = [];
   const bridge: EngineBridge = {
     start: async () => undefined,
@@ -18,7 +18,7 @@ function make(answers: Record<string, unknown> = {}) {
     },
     on: async () => () => undefined,
   };
-  const engine = new HostedChatEngine({ bridge, ownName: () => '', network: () => ({ signaling: [], turn: [], storeForward: false }) } as never);
+  const engine = new HostedChatEngine({ bridge, ownName: () => '', network: () => ({ signaling: [], turn: [], storeForward: false }), relayWaitMs } as never);
   return { engine, calls };
 }
 
@@ -51,5 +51,33 @@ describe('linking a new device by scanning', () => {
     expect((engine as unknown as { deviceLink: unknown }).deviceLink).toEqual({ stage: 'enter-code' });
     (engine as unknown as { onEvent(e: unknown): void }).onEvent({ DeviceLink: { stage: 'wrong-code' } });
     expect((engine as unknown as { deviceLink: unknown }).deviceLink).toEqual({ stage: 'wrong-code' });
+  });
+
+  it('waits for the relay sockets right after start instead of failing on the first tap', async () => {
+    let tries = 0;
+    const bridge: EngineBridge = {
+      start: async () => undefined,
+      stop: async () => undefined,
+      invoke: async () => {
+        tries += 1;
+        if (tries < 3) throw new Error('NoSignaling');
+        return 'duocord-link-1:ok';
+      },
+      on: async () => () => undefined,
+    };
+    const engine = new HostedChatEngine({ bridge, ownName: () => '', network: () => ({ signaling: [], turn: [], storeForward: false }) } as never);
+    expect(await engine.startScanLinkOffer('PC')).toBe('duocord-link-1:ok');
+    expect(tries).toBe(3);
+  });
+
+  it('gives up with a clear message when no relay ever comes up, and does not wait on other errors', async () => {
+    const down = make({ start_scan_link_offer: new Error('NoSignaling') }, 50);
+    await expect(down.engine.startScanLinkOffer('PC')).rejects.toThrow(/Could not reach a connection service/);
+    expect(down.calls.length).toBeGreaterThan(0);
+    const other = make({ start_scan_link_offer: new Error('IdentityExists') }, 5000);
+    const started = Date.now();
+    await expect(other.engine.startScanLinkOffer('PC')).rejects.toBeInstanceOf(Error);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(other.calls.length).toBe(1);
   });
 });

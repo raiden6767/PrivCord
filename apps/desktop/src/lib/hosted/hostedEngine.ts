@@ -41,12 +41,17 @@ export interface HostedDeps {
   expectedUid?: string;
   /** Tests replace the WebRTC links and relay sockets. */
   runtimeOverrides?: Partial<Pick<RuntimeOptions, 'createTransport' | 'createHub' | 'createBle' | 'now' | 'nativeSignaling'>>;
+  /** How long linking waits for the connection services to come online (tests shorten it). */
+  relayWaitMs?: number;
 }
 
 /** The credential-store key the shell keeps the engine's identity under (see `engine_host.rs`). */
 export const ENGINE_IDENTITY_KEY = 'engine-identity-v1';
 
 const LOOKUP_WAIT_MS = 42_000;
+/** Linking needs a relay. Right after the app starts the relay sockets are still connecting, so it waits this long, not fail at once. */
+const RELAY_WAIT_MS = 15_000;
+const RELAY_POLL_MS = 700;
 const REFRESH_DELAY_MS = 30;
 /** Messages of each chat the snapshot carries: the screens stay as fast on a long history as on a short one. */
 const WINDOW = 200;
@@ -71,7 +76,7 @@ export function friendly(error: unknown): string {
     ['BackupUnreadable', 'That backup could not be opened. Check the passphrase and the file.'],
     ['BackupNotYours', 'That backup belongs to a different identity.'],
     ['Busy', 'The engine is busy. Try again in a moment.'],
-    ['NoSignaling', 'No connection service is set up. Turn one on in Settings > Connection.'],
+    ['NoSignaling', 'Could not reach a connection service. Check that you are online and try again in a moment. If none is turned on, turn one on in Settings > Connection.'],
   ];
   for (const [code, words] of table) if (text.includes(code)) return words;
   return text || 'Something went wrong.';
@@ -364,11 +369,28 @@ export class HostedChatEngine implements ChatEngineApi {
 
   /* ------------------------------------------------------------------ devices of the account */
 
+  /**
+   * Linking needs a relay, and just after the app starts its relay sockets are still connecting (the engine answers
+   * NoSignaling until one is up). Instead of failing on the first tap, wait for them for a few seconds.
+   */
+  private async whenRelaysAnswer<T>(call: () => Promise<T>): Promise<T> {
+    const until = Date.now() + (this.deps.relayWaitMs ?? RELAY_WAIT_MS);
+    for (;;) {
+      try {
+        return await call();
+      } catch (e) {
+        const text = e instanceof Error ? e.message : String(e);
+        if (!text.includes('NoSignaling') || Date.now() >= until) throw e;
+        await new Promise((resolve) => setTimeout(resolve, RELAY_POLL_MS));
+      }
+    }
+  }
+
   /** On the device holding the account key: a code for the new device to scan or type. */
   async startDeviceLink(): Promise<string> {
     this.deviceLink = null;
     try {
-      const code = await this.engine.call<string>('start_device_link');
+      const code = await this.whenRelaysAnswer(() => this.engine.call<string>('start_device_link'));
       this.scheduleRefresh();
       return code;
     } catch (e) {
@@ -380,7 +402,7 @@ export class HostedChatEngine implements ChatEngineApi {
   async joinDeviceLink(code: string, name: string): Promise<void> {
     this.deviceLink = null;
     try {
-      await this.engine.call('join_device_link', { code: code.trim(), name: name.trim() || 'Computer' });
+      await this.whenRelaysAnswer(() => this.engine.call('join_device_link', { code: code.trim(), name: name.trim() || 'Computer' }));
     } catch (e) {
       throw new Error(friendly(e));
     }
@@ -390,7 +412,7 @@ export class HostedChatEngine implements ChatEngineApi {
   async startScanLinkOffer(name: string): Promise<string> {
     this.deviceLink = null;
     try {
-      const code = await this.engine.call<string>('start_scan_link_offer', { name: name.trim() || 'Computer' });
+      const code = await this.whenRelaysAnswer(() => this.engine.call<string>('start_scan_link_offer', { name: name.trim() || 'Computer' }));
       this.scheduleRefresh();
       return code;
     } catch (e) {
@@ -413,7 +435,7 @@ export class HostedChatEngine implements ChatEngineApi {
   async hostScannedLink(code: string): Promise<void> {
     this.deviceLink = null;
     try {
-      await this.engine.call('host_scanned_link', { code: code.trim() });
+      await this.whenRelaysAnswer(() => this.engine.call('host_scanned_link', { code: code.trim() }));
       this.scheduleRefresh();
     } catch (e) {
       throw new Error(friendly(e));

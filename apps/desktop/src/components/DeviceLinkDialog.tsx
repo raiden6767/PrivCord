@@ -220,11 +220,11 @@ export function DeviceLinkDialog({
           <div className="button-row">
             {manual ? (
               <button type="button" className="button primary" disabled={busy || typed.trim().length < 10} onClick={() => void join()}>
-                Link
+                {busy ? 'Connecting…' : 'Link'}
               </button>
             ) : (
               <button type="button" className="button primary" disabled={busy || !engine?.startScanLinkOffer} onClick={() => void showQr()}>
-                Show code to scan
+                {busy ? 'Connecting…' : 'Show code to scan'}
               </button>
             )}
             <button type="button" className="button" onClick={() => setManual(!manual)}>
