@@ -105,19 +105,24 @@ export function UpdateBanner({ settings, updateSettings }: { settings: AppSettin
   }, [wanted]);
   if (!found) return null;
   return (
-    <div className="banner info update-float" role="status">
-      <span>PrivCord {found.version} is ready.</span>
-      <InstallButton found={found} />
-      <button
-        type="button"
-        className="button secondary small"
-        onClick={() => {
-          setFound(null);
-          updateSettings({ updateSnoozedUntil: Date.now() + SNOOZE_MS });
-        }}
-      >
-        Later
-      </button>
+    <div className="update-backdrop">
+      <div className="update-dialog" role="alertdialog" aria-modal="true" aria-labelledby="update-title">
+        <h2 id="update-title">Update available</h2>
+        <p className="muted">PrivCord {found.version} is ready. Your messages and settings stay as they are.</p>
+        <div className="update-actions">
+          <InstallButton found={found} />
+          <button
+            type="button"
+            className="button secondary small"
+            onClick={() => {
+              setFound(null);
+              updateSettings({ updateSnoozedUntil: Date.now() + SNOOZE_MS });
+            }}
+          >
+            Later
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
