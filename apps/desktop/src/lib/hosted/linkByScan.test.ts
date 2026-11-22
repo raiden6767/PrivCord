@@ -58,7 +58,9 @@ describe('linking a new device by scanning', () => {
     const bridge: EngineBridge = {
       start: async () => undefined,
       stop: async () => undefined,
-      invoke: async () => {
+      invoke: async (command) => {
+        // Only the link call counts; the state refresh after it gets nothing back, as in the first helper.
+        if (command !== 'start_scan_link_offer') return null;
         tries += 1;
         if (tries < 3) throw new Error('NoSignaling');
         return 'duocord-link-1:ok';
