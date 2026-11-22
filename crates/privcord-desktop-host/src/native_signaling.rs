@@ -10,7 +10,7 @@
 //! ponytail: one worker thread, blocking connects with a short timeout; per-connection threads if a slow relay ever
 //! holds the others up noticeably.
 
-use privcord_crypto::rng::OsEntropy;
+use privcord_crypto::rng::{Entropy, OsEntropy};
 use privcord_domain::{
     blob::SealedBlob,
     network::{NetworkConfig, SignalingConfig},
@@ -150,6 +150,10 @@ struct PendingPut {
 }
 
 struct Worker {
+    /// A mailbox nobody writes to, kept subscribed so the relay sockets are open (and `online` is true) even before any
+    /// conversation or link has a mailbox of its own. Without it a fresh install, with no contacts, reports "offline"
+    /// and cannot start linking to another device (which has to find a relay online before it subscribes).
+    idle: String,
     config: NetworkConfig,
     socks: Option<String>,
     hubs: BTreeMap<String, Hub>,
@@ -178,7 +182,10 @@ fn services_for(config: &NetworkConfig, mailbox: &str) -> Vec<Service> {
 
 impl Worker {
     fn new(sink: BlobSink, status: StatusSink, online: Arc<AtomicBool>) -> Self {
+        let mut raw = [0u8; 16];
+        let _ = OsEntropy.fill(&mut raw);
         Self {
+            idle: raw.iter().map(|b| format!("{b:02x}")).collect(),
             config: NetworkConfig {
                 signaling: Vec::new(),
                 ..NetworkConfig::default()
@@ -241,7 +248,10 @@ impl Worker {
             Cmd::Configure { config, socks } => {
                 self.config = config;
                 self.socks = socks;
-                let mailboxes: Vec<String> = self.hubs.keys().cloned().collect();
+                let mut mailboxes: Vec<String> = self.hubs.keys().cloned().collect();
+                if !mailboxes.contains(&self.idle) {
+                    mailboxes.push(self.idle.clone());
+                }
                 for m in mailboxes {
                     self.subscribe(&m);
                 }
@@ -252,6 +262,9 @@ impl Worker {
                 }
             }
             Cmd::Unsubscribe(m) => {
+                if m == self.idle {
+                    return;
+                }
                 if let Some(mut h) = self.hubs.remove(&m) {
                     let _ = h.hub.stop();
                     for (_, mut s) in std::mem::take(&mut h.sockets) {
