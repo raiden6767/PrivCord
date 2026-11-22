@@ -12,9 +12,9 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
 | Stays (UI) | 99 | 17805 |
-| Stays (platform adapter) | 67 | 12864 |
+| Stays (platform adapter) | 67 | 12866 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **237** | **43176** |
+| **All mapped files** | **237** | **43178** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -119,7 +119,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/hosted/enable.ts` | 13 | `hostedEngineAvailable`, `hostedEngineEnabled` | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
 | `apps/desktop/src/lib/hosted/hostedEngine.ts` | 1011 | `HostedDeps`, `ENGINE_IDENTITY_KEY`, `friendly`, `HostedChatEngine`, `shapePrefs`, `shapeReceipts` +1 | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
 | `apps/desktop/src/lib/hosted/legacyIdentity.ts` | 29 | `legacySecretsHex`, `seedEngineIdentity` | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
-| `apps/desktop/src/lib/hosted/linkByScan.test.ts` | 83 | (none) | Linking a new device by scanning: the commands sent and the stages shown | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/hosted/linkByScan.test.ts` | 85 | (none) | Linking a new device by scanning: the commands sent and the stages shown | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/prefsExtras.test.ts` | 26 | (none) | Guards how the screens read silent chats, device receipts and mesh hops from the engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/runtime.test.ts` | 308 | (none) | WebRTC and relay adapters for the hosted engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/runtime.ts` | 600 | `LinkTransport`, `BleLike`, `RelayHub`, `RuntimeOptions`, `HostedRuntime` | WebRTC and relay adapters for the hosted engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
