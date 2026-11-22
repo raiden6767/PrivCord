@@ -110,7 +110,7 @@ rule(r"android/.*/data/(Models|MessageStore)\.kt", "Chat state models and the in
 rule(r"android/.*/data/Preferences\.kt", "App settings storage", "UI state (stays)", "UI", UI, "Stays")
 rule(r"android/.*/data/QuickWins\.kt", "Small pure helpers for the screens: pinned chats, hosts the app contacts, privacy checkup", "UI state (stays)", "UI", UI, "Stays")
 rule(r"android/.*/data/AppUpdate\.kt", "In-app update: reads the release's android.json, version and privacy rules", "UI state (stays)", "UI", UI, "Stays")
-rule(r"android/.*/AppUpdater\.kt", "In-app update: downloads the APK into Android's installer", "Platform adapter (stays)", "Adapter", ADAPTER, "Stays")
+rule(r"android/.*/(AppUpdater|UpdateService)\.kt", "In-app update: downloads the APK into Android's installer", "Platform adapter (stays)", "Adapter", ADAPTER, "Stays")
 rule(r"android/.*/data/Waveform\.kt", "Voice-note waveform: peak per bar from decoded samples (drawing only)", "UI state (stays)", "UI", UI, "Stays")
 rule(r"android/.*/data/Themes\.kt", "Themes", "UI", "UI", UI, "Stays")
 rule(r"android/.*/data/local/DuoDatabase\.kt", "Room database", "storage::SqliteStorage; privcord-import (Room importer, Keystore decryptor supplied by the app)", "Storage", PORTED, "M8: after the importer has run on every install", "importer tests on generated Room v7 fixtures")
