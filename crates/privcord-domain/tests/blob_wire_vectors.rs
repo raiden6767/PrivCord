@@ -74,14 +74,19 @@ fn the_wire_forms_match_the_pinned_vectors_and_round_trip() {
             json!({ "name": name, "wire": wire })
         })
         .collect();
-    let text = serde_json::to_string_pretty(&json!({ "blobs": produced })).unwrap() + "\n";
+    let value = json!({ "blobs": produced });
+    let text = serde_json::to_string_pretty(&value).unwrap() + "\n";
     if std::env::var("UPDATE_VECTORS").is_ok() {
         std::fs::write(path(), &text).unwrap();
     }
-    let pinned = std::fs::read_to_string(path())
-        .expect("docs/blob-wire-vectors.json (run with UPDATE_VECTORS=1)");
+    // Compared as JSON, not text: a Windows checkout may turn the file's line endings into CRLF.
+    let pinned: Value = serde_json::from_str(
+        &std::fs::read_to_string(path())
+            .expect("docs/blob-wire-vectors.json (run with UPDATE_VECTORS=1)"),
+    )
+    .unwrap();
     assert_eq!(
-        pinned, text,
+        pinned, value,
         "the wire form changed: run with UPDATE_VECTORS=1 and check the Kotlin test still passes"
     );
 }
