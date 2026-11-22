@@ -131,6 +131,21 @@ fn blobs_cross_between_two_installs_through_the_real_relay() {
 }
 
 #[test]
+fn it_is_online_with_no_mailbox_subscribed_so_a_fresh_install_can_start_linking() {
+    let Some((_server, port)) = start_relay() else {
+        return;
+    };
+    // A new install has no contacts, so nothing is subscribed: the relay sockets must still be up, or "link to a device
+    // you already use" (which needs a relay online before it subscribes its own mailbox) can never start.
+    let (s, _) = install(port);
+    wait(
+        "the relay sockets to be online with no subscription",
+        || s.online(),
+    );
+    assert!(s.put("a-mailbox-nobody-listens-on", "x", PutKind::Msg, 60));
+}
+
+#[test]
 fn with_no_relay_configured_it_stays_offline_and_refuses_puts() {
     let s = NativeSignaling::start(Arc::new(|_, _| {}), Arc::new(|_| {}));
     s.configure(&json!({ "signaling": [] }).to_string(), None);
