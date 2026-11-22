@@ -1,0 +1,16 @@
+{
+  "blobs": [
+    {
+      "name": "link-request",
+      "wire": "eyJ2IjoxLCJ0byI6ImxpbmsiLCJmcm9tIjoibGluay1yZXF1ZXN0IiwiZXBrIjp7Imt0eSI6IkVDIiwiY3J2IjoiUC0yNTYiLCJ4IjoiIiwieSI6IiJ9LCJpdiI6IiIsImN0Ijoib3BhcXVlLXJlcXVlc3QiLCJzaWciOiIwZjBmIn0"
+    },
+    {
+      "name": "classic-v1",
+      "wire": "eyJ2IjoxLCJ0byI6InVpZC10byIsImZyb20iOiJ1aWQtZnJvbSIsImVwayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IkFRSUQiLCJ5IjoiQkFVRyJ9LCJpdiI6ImFYWSIsImN0IjoiWTNRIiwic2lnIjoiYzJsbiJ9"
+    },
+    {
+      "name": "hybrid-v2",
+      "wire": "eyJ2IjoyLCJ0byI6InVpZC10byIsImZyb20iOiJ1aWQtZnJvbSIsImVwayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IkFRSUQiLCJ5IjoiQkFVRyJ9LCJpdiI6ImFYWSIsImN0IjoiWTNRIiwic2lnIjoiYzJsbiIsImtlbSI6ImEyVnQiLCJrZXkiOiJhMlY1In0"
+    }
+  ]
+}
