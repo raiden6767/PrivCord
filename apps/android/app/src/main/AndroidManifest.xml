@@ -76,6 +76,11 @@
             android:exported="false" />
 
         <service
+            android:name=".UpdateService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
+        <service
             android:name=".notifications.DuoBackgroundService"
             android:foregroundServiceType="dataSync|remoteMessaging"
             android:exported="false" />

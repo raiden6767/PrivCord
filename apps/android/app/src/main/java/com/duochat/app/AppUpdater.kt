@@ -17,7 +17,11 @@ import java.net.URL
 import java.security.MessageDigest
 
 /** Bumped each time the app comes to the front, so the start-up check can run again; remembers when it last ran. */
+/** The state of a running or finished update download, shared by [UpdateService] and the buttons that start it. */
+data class UpdateDownload(val busy: Boolean = false, val percent: Int = 0, val message: String? = null)
+
 object UpdateSignal {
+    val download = mutableStateOf(UpdateDownload())
     val resumes = mutableStateOf(0)
     @Volatile var lastCheck = 0L
 }
@@ -101,6 +105,23 @@ class InstallResultReceiver : BroadcastReceiver() {
             @Suppress("DEPRECATION")
             intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
         } ?: return
-        runCatching { context.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        // From the background Android blocks opening a screen, so there is always a tap-to-install notification as well.
+        runCatching { context.startActivity(Intent(confirm).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+        runCatching {
+            UpdateService.createChannel(context)
+            val tap = PendingIntent.getActivity(
+                context, 1, Intent(confirm).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val ready = androidx.core.app.NotificationCompat.Builder(context, UpdateService.CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("PrivCord update is ready")
+                .setContentText("Tap to install it")
+                .setContentIntent(tap)
+                .setAutoCancel(true)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .build()
+            context.getSystemService(android.app.NotificationManager::class.java)?.notify(UpdateService.READY_ID, ready)
+        }
     }
 }

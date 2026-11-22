@@ -24,6 +24,10 @@ export function Modal({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<Element | null>(null);
+  // Callers often pass a new onClose on every render; keeping it in a ref stops the effect below (which moves focus to
+  // the first control) from running again on each keystroke.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -39,7 +43,7 @@ export function Modal({
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onClose();
+        closeRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -60,7 +64,7 @@ export function Modal({
       document.removeEventListener('keydown', onKeyDown);
       if (previousFocus.current instanceof HTMLElement) previousFocus.current.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
