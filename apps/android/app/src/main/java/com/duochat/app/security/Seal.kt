@@ -19,10 +19,18 @@ class SealedBlob(
     val iv: String,
     val ct: String,
     val sig: String,
+    /** 1 = classic ECDH, 2 = hybrid (carries [kem] and [key]); the engine opens both, so they must pass through intact. */
+    val v: Int = 1,
+    val kem: String? = null,
+    val key: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
-        .put("v", 1).put("to", to).put("from", from).put("epk", epk)
+        .put("v", v).put("to", to).put("from", from).put("epk", epk)
         .put("iv", iv).put("ct", ct).put("sig", sig)
+        .apply {
+            kem?.let { put("kem", it) }
+            key?.let { put("key", it) }
+        }
 
     companion object {
         /** Null unless the JSON has the exact blob shape (same checks as the TypeScript `validateBlob`). */
@@ -117,12 +125,20 @@ object Seal {
     fun decode(text: String): SealedBlob? = try {
         val json = JSONObject(String(SignatureCodec.base64UrlDecode(text), Charsets.UTF_8))
         val epk = json.optJSONObject("epk")
+        val v = json.optInt("v", -1)
+        val kem = json.optString("kem").takeIf { it.isNotEmpty() }
+        val key = json.optString("key").takeIf { it.isNotEmpty() }
         // Device-linking blobs ("to": "link") carry no key of their own (empty epk): the engine checks them, not this codec.
-        if (json.optInt("v", -1) != 1 || epk == null || (json.optString("to") != "link" && jwkOrNull(epk) == null)) null
-        else SealedBlob(
-            json.getString("to"), json.getString("from"), epk,
-            json.getString("iv"), json.getString("ct"), json.getString("sig"),
-        )
+        val keyOk = json.optString("to") == "link" || (epk != null && jwkOrNull(epk) != null)
+        if (epk == null || !keyOk) {
+            null
+        } else if (v == 1) {
+            SealedBlob(json.getString("to"), json.getString("from"), epk, json.getString("iv"), json.getString("ct"), json.getString("sig"))
+        } else if (v == 2 && kem != null && key != null) {
+            SealedBlob(json.getString("to"), json.getString("from"), epk, json.getString("iv"), json.getString("ct"), json.getString("sig"), 2, kem, key)
+        } else {
+            null
+        }
     } catch (_: Exception) {
         null
     }
