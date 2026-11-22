@@ -16,7 +16,6 @@ import { MessageList } from './MessageList';
 import { FilterPills, type ChatFilter } from './FilterPills';
 import { takeRecentNotified } from '../lib/notifications';
 import { SettingsDialog, type SettingsSection } from './SettingsDialog';
-import { UpdateBanner } from './UpdateControl';
 import { ManualConnectDialog } from './ManualConnectDialog';
 import { ClearChatDialog, NukeDialog } from './KillSwitchDialogs';
 import { RecoveryDialog } from './RecoveryDialogs';
@@ -291,7 +290,6 @@ export function ChatLayout({
   return (
     <div className={`app-shell ${current ? 'has-chat' : ''}`}>
       <aside className="sidebar">
-        <UpdateBanner settings={settings} updateSettings={updateSettings} />
         <header className="sidebar-head">
           <BrandMark size={30} />
           <h1>PrivCord</h1>
