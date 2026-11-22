@@ -37,7 +37,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsOff
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PushPin
@@ -354,6 +353,59 @@ private fun SearchField(query: String, onChange: (String) -> Unit) {
     }
 }
 
+/** Two friends, one private line, and a message travelling along it (the same picture as on the desktop app). */
+@Composable
+private fun DuoLink() {
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "duo")
+    val travel by transition.animateFloat(
+        0f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(2600, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        ),
+        label = "travel",
+    )
+    val breatheA by transition.animateFloat(
+        1f, 1.06f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(2000), androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "a",
+    )
+    val breatheB by transition.animateFloat(
+        1.06f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(2000), androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "b",
+    )
+    val left = MaterialTheme.colorScheme.primary
+    val right = MaterialTheme.colorScheme.tertiary
+    val line = MaterialTheme.colorScheme.outline
+    val dot = MaterialTheme.colorScheme.onSurface
+    androidx.compose.foundation.Canvas(Modifier.size(width = 240.dp, height = 96.dp)) {
+        // The desktop drawing is 160 x 64: circles r16 at x 36 and 124, line 44 to 116, dot rides the line.
+        val k = size.width / 160f
+        val cy = size.height / 2
+        fun x(v: Float) = v * k
+        drawLine(
+            line, androidx.compose.ui.geometry.Offset(x(44f), cy), androidx.compose.ui.geometry.Offset(x(116f), cy),
+            strokeWidth = 2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 6.dp.toPx())),
+        )
+        drawCircle(left, radius = x(16f) * breatheA, center = androidx.compose.ui.geometry.Offset(x(36f), cy))
+        drawCircle(right, radius = x(16f) * breatheB, center = androidx.compose.ui.geometry.Offset(x(124f), cy))
+        val fade = when {
+            travel < 0.15f -> travel / 0.15f
+            travel > 0.85f -> (1f - travel) / 0.15f
+            else -> 1f
+        }
+        drawCircle(
+            dot.copy(alpha = 0.9f * fade), radius = x(3.5f),
+            center = androidx.compose.ui.geometry.Offset(x(44f + 72f * travel), cy),
+        )
+    }
+}
+
 @Composable
 private fun EmptyHome(onAddFriend: () -> Unit, onChannels: () -> Unit) {
     Column(
@@ -361,19 +413,7 @@ private fun EmptyHome(onAddFriend: () -> Unit, onChannels: () -> Unit) {
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Two overlapping avatars: you and the friend you're about to add.
-        Box(Modifier.width(112.dp).height(72.dp)) {
-            Surface(shape = CircleShape, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(72.dp)) {}
-            Surface(
-                shape = CircleShape, color = MaterialTheme.colorScheme.primary,
-                border = androidx.compose.foundation.BorderStroke(4.dp, MaterialTheme.colorScheme.background),
-                modifier = Modifier.size(72.dp).align(Alignment.CenterEnd),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(28.dp))
-                }
-            }
-        }
+        DuoLink()
         Spacer(Modifier.height(28.dp))
         Text("Your first conversation", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
         Spacer(Modifier.height(10.dp))
