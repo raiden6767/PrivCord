@@ -20,6 +20,13 @@ class SealWireVectorsTest {
         (0 until all.length()).map { all.getJSONObject(it) }
     }
 
+    /** The object as text with its keys sorted, so two objects compare equal whatever order their fields were written in. */
+    private fun canon(o: JSONObject): String =
+        o.keys().asSequence().sorted().joinToString(",", "{", "}") { k ->
+            val v = o.get(k)
+            "\"$k\":" + if (v is JSONObject) canon(v) else v.toString()
+        }
+
     private fun json(wire: String) = JSONObject(String(SignatureCodec.base64UrlDecode(wire), Charsets.UTF_8))
 
     @Test fun thereAreVectorsForEveryKind() {
@@ -32,7 +39,7 @@ class SealWireVectorsTest {
             val decoded = Seal.decode(wire)
             assertNotNull("${b.getString("name")} was refused by the Kotlin decoder", decoded)
             val again = json(Seal.encode(decoded!!))
-            assertTrue("${b.getString("name")} changed on the way through: $again", json(wire).similar(again))
+            assertTrue("${b.getString("name")} changed on the way through: $again", canon(json(wire)) == canon(again))
         }
     }
 
