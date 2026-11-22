@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 66 | 9862 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 99 | 17839 |
+| Stays (UI) | 99 | 17843 |
 | Stays (platform adapter) | 68 | 13011 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **238** | **43357** |
+| **All mapped files** | **238** | **43361** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -82,7 +82,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/LockScreen.tsx` | 47 | `LockScreen` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/ManualConnectDialog.tsx` | 327 | `ManualConnectDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/MessageList.tsx` | 660 | `MessageList` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
-| `apps/desktop/src/components/Modal.tsx` | 103 | `Modal` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/Modal.tsx` | 107 | `Modal` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/NetworkSettings.tsx` | 289 | `NetworkSettings` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/NetworkTransparency.tsx` | 60 | `NetworkTransparency` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/PersonDialog.tsx` | 161 | `PersonDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
