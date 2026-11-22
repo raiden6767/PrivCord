@@ -32,6 +32,11 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      # Keeps the compiled libraries between runs (OpenSSL and the database library alone take minutes), so a repeat build only
+      # recompiles what changed. The desktop crate has its own Cargo.lock and target folder.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
       - run: npm ci
       # Every build is newer than the last (the updater needs that). With the update-signing key (a repository secret)
       # the build also makes the signed update files; without it, it is only an installer.
