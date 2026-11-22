@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 66 | 9862 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 99 | 17805 |
+| Stays (UI) | 99 | 17841 |
 | Stays (platform adapter) | 67 | 12866 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **237** | **43178** |
+| **All mapped files** | **237** | **43214** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -272,5 +272,5 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/SettingsDialog.kt` | 1110 | `SettingsDialog`, `SectionTitle`, `DetailRow`, `ToggleRow`, `ChoiceChip`, `parseColor` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/StatusScreens.kt` | 125 | `LoadingScreen`, `FatalScreen` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Theme.kt` | 241 | `figtree`, `style`, `mix`, `ensureReadable`, `onColor`, `scheme` +4 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/UpdateUi.kt` | 124 | `UpdateInstallButton`, `UpdateDialog`, `UpdateCheckRow` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/UpdateUi.kt` | 160 | `UpdateInstallButton`, `DownloadPill`, `UpdateDialog`, `UpdateCheckRow` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/WaveformDecoder.kt` | 85 | `WaveformDecoder` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |

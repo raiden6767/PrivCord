@@ -3,7 +3,18 @@ package com.duochat.app.ui
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
@@ -36,8 +47,10 @@ fun UpdateInstallButton(info: UpdateInfo, modifier: Modifier = Modifier) {
     var percent by remember { mutableStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
     Column(modifier) {
-        Button(
-            enabled = !busy,
+        if (busy) {
+            DownloadPill(percent)
+        } else Button(
+            modifier = Modifier.fillMaxWidth(),
             onClick = {
                 if (!context.packageManager.canRequestPackageInstalls()) {
                     message = "Allow installing apps from PrivCord on the next screen, then come back and tap Install again."
@@ -56,11 +69,34 @@ fun UpdateInstallButton(info: UpdateInfo, modifier: Modifier = Modifier) {
                     }
                 }
             },
-        ) { Text(if (busy) "Downloading… $percent%" else "Install ${info.versionName}") }
+        ) { Text("Install ${info.versionName}") }
         message?.let {
             Spacer(Modifier.height(6.dp))
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+/** The Install button while downloading: same size, the colour fills from the left as the download advances. */
+@Composable
+private fun DownloadPill(percent: Int) {
+    val progress by animateFloatAsState(percent.coerceIn(0, 100) / 100f, label = "download")
+    val shape = RoundedCornerShape(50)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+            .semantics { progressBarRangeInfo = ProgressBarRangeInfo(progress, 0f..1f) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(Modifier.fillMaxHeight().fillMaxWidth(progress).background(MaterialTheme.colorScheme.primary).align(Alignment.CenterStart))
+        Text(
+            "Downloading… $percent%",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
