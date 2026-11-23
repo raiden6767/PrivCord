@@ -144,7 +144,7 @@ private fun RootScreen(viewModel: AppViewModel) {
         } else null
     }
     // A newer build, looked for when the app starts and again each time it comes back to the front (the process often stays
-    // alive in the background, so "opening" the app is only a resume), at most every 30 minutes. Never while Hide my IP or Tor
+    // alive in the background, so "opening" the app is only a resume), at most every six hours. Never while Hide my IP or Tor
     // is on; "Later" snoozes it for 3 days.
     var update by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<com.duochat.app.data.UpdateInfo?>(null) }
     val resumes = com.duochat.app.UpdateSignal.resumes.value

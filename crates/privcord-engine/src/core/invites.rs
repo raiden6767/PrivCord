@@ -484,6 +484,16 @@ impl Core {
         {
             return;
         }
+        // An anonymous envelope: only on our own mailboxes, opened with one of our standing keys; what is inside goes
+        // through the same checks as any other message.
+        if blob.v == 3 {
+            if self.own_mailboxes().iter().any(|m| m == mailbox) {
+                if let Some(inner) = self.open_anon_blob(&blob) {
+                    self.signal_blob(mailbox, &inner.encode());
+                }
+            }
+            return;
+        }
         // Linking a device: the new device has no account yet, so this comes first.
         if self.is_link_mailbox(mailbox) {
             self.link_blob(&blob);

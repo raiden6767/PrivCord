@@ -19,7 +19,7 @@ class SealedBlob(
     val iv: String,
     val ct: String,
     val sig: String,
-    /** 1 = classic ECDH, 2 = hybrid (carries [kem] and [key]); the engine opens both, so they must pass through intact. */
+    /** 1 = classic ECDH, 2 = hybrid, 3 = the anonymous envelope (2 and 3 carry [kem] and [key]); the engine opens them all, so they must pass through intact. */
     val v: Int = 1,
     val kem: String? = null,
     val key: String? = null,
@@ -134,8 +134,8 @@ object Seal {
             null
         } else if (v == 1) {
             SealedBlob(json.getString("to"), json.getString("from"), epk, json.getString("iv"), json.getString("ct"), json.getString("sig"))
-        } else if (v == 2 && kem != null && key != null) {
-            SealedBlob(json.getString("to"), json.getString("from"), epk, json.getString("iv"), json.getString("ct"), json.getString("sig"), 2, kem, key)
+        } else if ((v == 2 || v == 3) && kem != null && key != null) {
+            SealedBlob(json.getString("to"), json.getString("from"), epk, json.getString("iv"), json.getString("ct"), json.getString("sig"), v, kem, key)
         } else {
             null
         }

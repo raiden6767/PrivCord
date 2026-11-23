@@ -30,7 +30,8 @@ export async function installUpdate(): Promise<void> {
 }
 
 /** The automatic check repeats at most this often (it runs at start, when the window comes back, and on a timer). */
-export const RECHECK_MS = 30 * 60 * 1000;
+// Six hours, not thirty minutes: every check tells GitHub this computer is online, and its address.
+export const RECHECK_MS = 6 * 60 * 60 * 1000;
 
 export function dueForCheck(lastDoneAt: number, now: number = Date.now()): boolean {
   return now - lastDoneAt >= RECHECK_MS;

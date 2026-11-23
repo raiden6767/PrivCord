@@ -22,6 +22,20 @@ This is an internal review, not an independent audit (see `AUDIT.md`).
 | Someone nearby | Bluetooth and local-network broadcasts |
 | Anyone looking at your unlocked phone or PC | Notifications, window titles |
 
+## Status after the fixes in this change
+
+| # | Status |
+|---|---|
+| M1 | **Fixed** for relay posts when the other app has handed over its keys (anonymous envelope, version 3: no `to`, `from` or signature on the outside). First contact and apps that do not support it still use the old shape. |
+| M2 | **Partly fixed.** Once keys are exchanged, posts go to a private inbox derived from the receiver's own secret, which a past contact cannot compute. Not rotated; not removed on contact removal; unkeyed addresses still use the public mailbox. |
+| M3 | Mitigated by M1 and M2 only. |
+| M4, M5 | **Not fixed** (device fan-out, event kind and expiry still visible). |
+| M6 | **Fixed**: default STUN is Cloudflare only (no Google). |
+| M7 | **Mitigated**: update check every 6 hours instead of more often; still on by default. |
+| M8 | **Fixed**: notification previews off by default. |
+| M9 | By design. |
+| M10-M18 | Not changed. |
+
 ## Findings
 
 ### High

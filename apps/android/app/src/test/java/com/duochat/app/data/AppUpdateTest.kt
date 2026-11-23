@@ -44,8 +44,8 @@ class AppUpdateTest {
     }
 
     @Test
-    fun `the automatic check repeats at most every half hour`() {
-        val t = 10_000_000L
+    fun `the automatic check repeats at most every six hours`() {
+        val t = 100_000_000L
         assertTrue(AppUpdate.dueForCheck(0L, t))
         assertFalse(AppUpdate.dueForCheck(t, t + AppUpdate.RECHECK_MS - 1))
         assertTrue(AppUpdate.dueForCheck(t, t + AppUpdate.RECHECK_MS))

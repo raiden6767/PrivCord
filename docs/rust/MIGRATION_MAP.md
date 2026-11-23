@@ -8,10 +8,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 
 | Status | Files | Lines |
 |---|---:|---:|
-| Ported, tested | 66 | 9878 |
+| Ported, tested | 66 | 9875 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 100 | 18019 |
+| Stays (UI) | 100 | 18022 |
 | Stays (platform adapter) | 71 | 13207 |
 | Replaced by a library | 4 | 333 |
 | **All mapped files** | **242** | **43749** |
@@ -31,7 +31,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `packages/protocol/src/connectivity/seal.ts` | 156 | `SealedBlob`, `MAX_SEALED_BLOB_BYTES`, `mailboxFor`, `SealInput`, `seal`, `signBlob` +6 | Sealed blobs, mailbox ids | crypto::seal, domain::blob | Crypto | Ported, tested | M7/M8 | vectors both ways |
 | `packages/protocol/src/connectivity/secureChannel.ts` | 145 | `ScHello`, `ScData`, `isScHello`, `isScData`, `SecureChannel` | Link encryption handshake and frames | crypto::secure_channel | Crypto | Ported, tested | M7/M8 | byte-for-byte frame vectors |
 | `packages/protocol/src/connectivity/turnShare.ts` | 29 | `TURN_SHARE_PREFIX`, `encodeTurnShare`, `parseTurnShare` | Relay setup line | domain::network | Domain | Ported, tested | M7/M8 | vector |
-| `packages/protocol/src/constants.ts` | 34 | `PROTOCOL_VERSION`, `MAX_TEXT_LENGTH`, `MAX_CLIENT_MESSAGE_ID_LENGTH`, `MAX_TEXT_BYTES`, `MAX_MANUAL_SIGNAL_BYTES`, `MANUAL_SIGNAL_PREFIX` +7 | Fixed limits and defaults | domain::limits, domain::network | Domain | Ported, tested | When desktop and Android call the Rust engine (M7, M8) | domain unit + vectors |
+| `packages/protocol/src/constants.ts` | 33 | `PROTOCOL_VERSION`, `MAX_TEXT_LENGTH`, `MAX_CLIENT_MESSAGE_ID_LENGTH`, `MAX_TEXT_BYTES`, `MAX_MANUAL_SIGNAL_BYTES`, `MANUAL_SIGNAL_PREFIX` +7 | Fixed limits and defaults | domain::limits, domain::network | Domain | Ported, tested | When desktop and Android call the Rust engine (M7, M8) | domain unit + vectors |
 | `packages/protocol/src/e2ee/envelope.ts` | 367 | `ENVELOPE_VERSION`, `EnvelopeKind`, `DuoEnvelope`, `validateEnvelope`, `envelopeDigest`, `associatedDataFor` +13 | Double Ratchet, envelopes, epoch-keyed group messages | crypto::e2ee::{ratchet,envelope,group_crypto} | Crypto | Ported, tested | M7/M8 | docs/e2ee-vectors.json: TypeScript conversations (out of order, replay, tamper, restart) read by Rust; Rust conversations read by TypeScript |
 | `packages/protocol/src/e2ee/groupCrypto.ts` | 137 | `GroupEpochKey`, `GroupMember`, `GroupMetadata`, `GroupEncryptedMessage`, `GroupSessionManager` | Double Ratchet, envelopes, epoch-keyed group messages | crypto::e2ee::{ratchet,envelope,group_crypto} | Crypto | Ported, tested | M7/M8 | docs/e2ee-vectors.json: TypeScript conversations (out of order, replay, tamper, restart) read by Rust; Rust conversations read by TypeScript |
 | `packages/protocol/src/e2ee/index.ts` | 10 | (none) | Double Ratchet, envelopes, epoch-keyed group messages | crypto::e2ee::{ratchet,envelope,group_crypto} | Crypto | Ported, tested | M7/M8 | docs/e2ee-vectors.json: TypeScript conversations (out of order, replay, tamper, restart) read by Rust; Rust conversations read by TypeScript |
@@ -168,7 +168,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/themes.test.ts` | 64 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/themes.ts` | 162 | `ThemeDef`, `THEMES`, `DEFAULT_PALETTE`, `classicTheme`, `APRICOT`, `themeById` +6 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/updates.test.ts` | 51 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/lib/updates.ts` | 41 | `FoundUpdate`, `SNOOZE_MS`, `mayCheckForUpdates`, `checkForUpdate`, `installUpdate`, `RECHECK_MS` +2 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/desktop/src/lib/updates.ts` | 42 | `FoundUpdate`, `SNOOZE_MS`, `mayCheckForUpdates`, `checkForUpdate`, `installUpdate`, `RECHECK_MS` +2 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/waveform.test.ts` | 22 | (none) | Voice-note waveform bars, receipt and nearby wording, quick-send and drop-to-send target lists | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/waveform.ts` | 43 | `bucketPeaks`, `playedBars`, `waveformFor` | Voice-note waveform bars, receipt and nearby wording, quick-send and drop-to-send target lists | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/main.tsx` | 21 | (none) | App shell | UI | UI | Stays (UI) | Stays | n/a |
@@ -205,14 +205,14 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ble/BleTransport.kt` | 663 | `BleConstants`, `RawLink`, `BleTransport` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/MeshRadio.kt` | 25 | `MeshRadio` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/SecureBleLink.kt` | 131 | `SecureBleLink` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/data/AppUpdate.kt` | 29 | `UpdateInfo`, `AppUpdate` | In-app update: reads the release's android.json, version and privacy rules | UI state (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/data/AppUpdate.kt` | 30 | `UpdateInfo`, `AppUpdate` | In-app update: reads the release's android.json, version and privacy rules | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/AutoBackup.kt` | 116 | `AutoBackup` | Android automatic backups: folder access and Keystore-held passphrase | Backup (platform side) | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Diagnosis.kt` | 77 | `CandidateCounts`, `ConnectionFacts`, `DiagnosisAction`, `Diagnosis`, `diagnoseConnection`, `countSdpCandidates` | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Files.kt` | 270 | `MessageType`, `ReplyRef`, `makeReplyRef`, `FileMeta`, `DeclineReason`, `declinedFrame` +15 | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/MessageStore.kt` | 243 | `MessageStore` | Chat state models and the in-memory message store over Room | engine state (snapshot, events) and storage::SqliteStorage | Engine | Ported, tested | M8: the engine owns this state | engine and storage tests |
 | `apps/android/app/src/main/java/com/duochat/app/data/Models.kt` | 425 | `DeliveryState`, `TransportKind`, `needsDelivery`, `ChatMessage`, `OutboxRow`, `EnginePhase` +39 | Chat state models and the in-memory message store over Room | engine state (snapshot, events) and storage::SqliteStorage | Engine | Ported, tested | M8: the engine owns this state | engine and storage tests |
-| `apps/android/app/src/main/java/com/duochat/app/data/NetworkConfig.kt` | 197 | `TransportMode`, `TurnServer`, `SignalingConfig`, `NetworkConfig`, `TurnShare` | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/data/Preferences.kt` | 165 | `AppSettings`, `SettingsRepository` | App settings storage | UI state (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/data/NetworkConfig.kt` | 195 | `TransportMode`, `TurnServer`, `SignalingConfig`, `NetworkConfig`, `TurnShare` | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/data/Preferences.kt` | 166 | `AppSettings`, `SettingsRepository` | App settings storage | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/QuickWins.kt` | 187 | `minutesLabel`, `HostRow`, `CheckupItem`, `ChatStorage`, `objects`, `parseCheckup` +29 | Small pure helpers for the screens: pinned chats, hosts the app contacts, privacy checkup | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Social.kt` | 106 | `deleteFrame`, `reactFrame`, `parseDelete`, `ReactionEvent`, `parseReact`, `ReactionChip` +3 | Delete/react frames, backup | domain::social, crypto::backup | Domain/Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Themes.kt` | 70 | `ThemeDef`, `themeById`, `channel`, `mixColors`, `luminance`, `contrastRatio` +2 | Themes | UI | UI | Stays (UI) | Stays | n/a |

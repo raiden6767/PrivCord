@@ -39,6 +39,21 @@ fn cases() -> Vec<(&'static str, SealedBlob)> {
             },
         ),
         (
+            // Protocol v3: the anonymous envelope posted to a relay: no sender, recipient or signature outside.
+            "anonymous-v3",
+            SealedBlob {
+                v: 3,
+                to: String::new(),
+                from: String::new(),
+                epk: key("AQID", "BAUG"),
+                iv: "aXY".into(),
+                ct: "Y3Q".into(),
+                sig: String::new(),
+                kem: Some("a2Vt".into()),
+                key: Some("a2V5".into()),
+            },
+        ),
+        (
             // Protocol v2: hybrid key agreement (offline messages sealed to a one-time key).
             "hybrid-v2",
             SealedBlob {

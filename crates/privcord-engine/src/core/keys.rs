@@ -13,7 +13,7 @@ use super::{Core, StorageOp};
 use crate::error::ErrorCode;
 use privcord_crypto::{
     devices::{AccountKeys, Signer},
-    prekeys::{open_v2, seal_v2, OwnKey, PeerKey},
+    prekeys::{open_anon, open_v2, seal_anon, seal_v2, OwnKey, PeerKey},
     seal::Opened,
 };
 use privcord_domain::signaling::PutKind;
@@ -36,9 +36,20 @@ const KEY_LIFETIME_MS: i64 = 30 * 24 * 3600 * 1000;
 /// How long keys handed over through a relay wait there for a friend who is offline.
 const KEYS_TTL_SEC: u32 = 7 * 24 * 3600;
 
+/// A mailbox name as we make them: 64 lowercase hex characters.
+fn is_mailbox_name(m: &str) -> bool {
+    m.len() == 64
+        && m.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 pub(super) struct TheirKeys {
     standing: PeerKey,
     onetime: Vec<PeerKey>,
+    /// Their app opens the anonymous envelope (protocol v3), so what we post to a relay for them can be wrapped in one.
+    anon: bool,
+    /// The private inbox they listen on (see `Core::own_inbox_mailbox`), if they told us.
+    inbox: Option<String>,
 }
 
 #[derive(Default)]
@@ -72,7 +83,7 @@ impl KeyState {
             .map(|(u, t)| {
                 (
                     u.to_string(),
-                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>() }),
+                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>(), "anon": t.anon, "inbox": t.inbox }),
                 )
             })
             .collect();
@@ -114,7 +125,21 @@ impl KeyState {
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(PeerKey::from_value).collect())
                     .unwrap_or_default();
-                state.theirs.insert(uid, TheirKeys { standing, onetime });
+                let anon = t.get("anon").and_then(Value::as_bool) == Some(true);
+                let inbox = t
+                    .get("inbox")
+                    .and_then(Value::as_str)
+                    .filter(|m| is_mailbox_name(m))
+                    .map(str::to_owned);
+                state.theirs.insert(
+                    uid,
+                    TheirKeys {
+                        standing,
+                        onetime,
+                        anon,
+                        inbox,
+                    },
+                );
             }
         }
         state.confirmed = match v.get("confirmed").and_then(Value::as_array) {
@@ -192,7 +217,10 @@ impl Core {
         list.drain(..over);
         let standing = self.keys.standing.first().map(|k| k.public().to_value())?;
         self.save_keys();
-        Some(json!({ "standing": standing, "onetime": publics }))
+        // "anon": this app opens the anonymous envelope, so friends may wrap what they post to a relay for us. "inbox":
+        // where to post for us instead of the mailbox anyone can work out from our public id.
+        let inbox = self.as_me(peer).and_then(|me| self.own_inbox_mailbox(&me));
+        Some(json!({ "standing": standing, "onetime": publics, "anon": true, "inbox": inbox }))
     }
 
     /// A post-quantum link to `peer` is up: hand them our standing key and fresh one-time keys over it.
@@ -260,9 +288,78 @@ impl Core {
                     .collect()
             })
             .unwrap_or_default();
+        let anon = frame.get("anon").and_then(Value::as_bool) == Some(true);
+        let inbox = frame
+            .get("inbox")
+            .and_then(Value::as_str)
+            .filter(|m| is_mailbox_name(m))
+            .map(str::to_owned);
+        self.keys.theirs.insert(
+            peer.clone(),
+            TheirKeys {
+                standing,
+                onetime,
+                anon,
+                inbox,
+            },
+        );
+        self.save_keys();
+    }
+
+    /// The private inbox `peer` told us to post to, if any.
+    pub(super) fn keys_inbox_of(&self, peer: &UserId) -> Option<String> {
+        self.keys.theirs.get(peer).and_then(|t| t.inbox.clone())
+    }
+
+    /// The text to post to a relay for `peer`: the sealed message itself, or, when their app opens it, that message inside
+    /// an anonymous envelope, so the relay sees neither who sent it nor who it is for (only the mailbox it is posted to).
+    pub(super) fn wire_for_relay(&mut self, peer: &UserId, blob: &SealedBlob) -> String {
+        let inner = blob.encode();
+        let Some(standing) = self
+            .keys
+            .theirs
+            .get(peer)
+            .filter(|t| t.anon)
+            .map(|t| t.standing.clone())
+        else {
+            return inner;
+        };
+        match seal_anon(&standing, &inner, &mut *self.ports.entropy) {
+            Ok(envelope) => envelope.encode(),
+            // Too large to wrap: the plain sealed message still goes.
+            Err(_) => inner,
+        }
+    }
+
+    /// The sealed message inside an anonymous envelope made for one of our standing keys. The message inside is checked
+    /// like any other (its sender and signature), so nobody gains anything by sending envelopes.
+    pub(super) fn open_anon_blob(&self, blob: &SealedBlob) -> Option<SealedBlob> {
+        let id = blob.key.as_deref()?;
+        let key = self.keys.standing.iter().find(|k| k.id == id)?;
+        let inner = SealedBlob::decode(&open_anon(blob, key)?)?;
+        // One layer only.
+        (inner.v != 3).then_some(inner)
+    }
+
+    /// For tests: what we hold for each address: (address, opens envelopes, has a private inbox).
+    #[doc(hidden)]
+    pub fn test_known_keys(&self) -> Vec<(String, bool, bool)> {
         self.keys
             .theirs
-            .insert(peer.clone(), TheirKeys { standing, onetime });
+            .iter()
+            .map(|(a, t)| (a.to_string(), t.anon, t.inbox.is_some()))
+            .collect()
+    }
+
+    /// For tests: act as if this person's keys had come from an app that does not open anonymous envelopes.
+    #[doc(hidden)]
+    pub fn test_forget_anon_support(&mut self, person: &UserId) {
+        for (addr, t) in &mut self.keys.theirs {
+            if &Self::person_of(addr) == person {
+                t.anon = false;
+                t.inbox = None;
+            }
+        }
         self.save_keys();
     }
 

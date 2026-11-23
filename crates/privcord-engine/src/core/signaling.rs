@@ -12,7 +12,10 @@ use crate::{
     api::{EngineEvent, SignalMessage},
     error::ErrorCode,
 };
-use privcord_crypto::{group_coordinator::GroupFrame, seal::mailbox_for};
+use privcord_crypto::{
+    group_coordinator::GroupFrame,
+    seal::{inbox_mailbox, mailbox_for},
+};
 use privcord_domain::{
     blob::SealedBlob,
     link_policy::is_initiator,
@@ -62,11 +65,21 @@ impl Core {
         let mut out = Vec::new();
         if let (Some(uid), true) = (&self.uid, self.identity.is_some()) {
             out.push(mailbox_for(uid.as_str()));
+            out.extend(self.own_inbox_mailbox(uid));
         }
         if let Some(a) = self.own_address().filter(|a| Self::device_of(a).is_some()) {
             out.push(mailbox_for(a.as_str()));
+            out.extend(self.own_inbox_mailbox(&a));
         }
         out
+    }
+
+    /// The private inbox of one of our addresses: a name made from that address's own key, handed only to friends (with
+    /// our keys), so unlike [`mailbox_for`] nobody can work it out from our public id.
+    pub(super) fn own_inbox_mailbox(&self, addr: &UserId) -> Option<String> {
+        let key = self.key_for_address(addr)?;
+        let secret = key.derive_secret(&format!("inbox-v1|{addr}")).ok()?;
+        Some(inbox_mailbox(&secret[..]))
     }
 
     /// Acknowledge a delivered message: over the link if it came over the link, sealed through the service if not.
@@ -110,12 +123,18 @@ impl Core {
         ttl_sec: u32,
     ) -> Result<(), ErrorCode> {
         let blob = self.seal_to(peer, payload)?;
-        let mailbox = mailbox_for(peer.as_str());
+        // Their private inbox once they have told us (with their keys); until then the one made from their public id.
+        let mailbox = self
+            .keys_inbox_of(peer)
+            .unwrap_or_else(|| mailbox_for(peer.as_str()));
+        // Through a relay the sealed message goes inside an anonymous envelope when the friend's app opens one; the
+        // mutual-contact path below hands over the sealed message itself, over an encrypted link.
+        let wire = self.wire_for_relay(peer, &blob);
         let sent = self.ports.transport.signal_available()
             && self
                 .ports
                 .transport
-                .signal_put(&mailbox, &blob.encode(), kind, ttl_sec)
+                .signal_put(&mailbox, &wire, kind, ttl_sec)
                 .is_ok();
         // Connection setup and receipts can also go through mutual contacts; messages do that only on purpose
         // (`tick_group_mesh`), never as a side effect of the service being down.

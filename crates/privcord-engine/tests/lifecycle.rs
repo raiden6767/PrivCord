@@ -990,13 +990,21 @@ fn after_a_link_offline_messages_are_sealed_post_quantum_to_one_time_keys_and_v1
         .map(|(_, blob, _)| SealedBlob::decode(blob).unwrap())
         .collect();
     for (blob, t) in decoded.iter().zip(texts) {
-        assert_eq!(blob.v, 2, "post-quantum sealed");
+        // On the relay: an anonymous envelope (Bob's app opens them), post-quantum sealed, naming nobody.
+        assert_eq!(blob.v, 3, "wrapped in an anonymous envelope");
+        assert!(blob.to.is_empty() && blob.from.is_empty() && blob.sig.is_empty());
         assert!(blob.kem.is_some());
         assert!(!blobs.iter().any(|(_, raw, _)| raw.contains(t)));
     }
-    assert_ne!(
+    // The relay sees neither person's id anywhere in what is posted.
+    for (_, raw, _) in &blobs {
+        let shown = String::from_utf8(privcord_domain::codec::decode(raw).unwrap()).unwrap();
+        assert!(!shown.contains(a.uid.as_str()) && !shown.contains(b.uid.as_str()));
+    }
+    // (The message inside each envelope is sealed to its own one-time key; `privcord_crypto::prekeys` tests that.)
+    assert_eq!(
         decoded[0].key, decoded[1].key,
-        "each message has its own one-time key"
+        "both envelopes are for Bob's standing key"
     );
 
     // Bob gets both through the service.

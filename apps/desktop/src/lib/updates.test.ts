@@ -36,7 +36,7 @@ describe('updates', () => {
     expect(snoozeActive(1000, 1000 + 1)).toBe(false);
   });
 
-  it('repeats the automatic check at most every half hour', () => {
+  it('repeats the automatic check at most every six hours', () => {
     expect(dueForCheck(0, 5 * RECHECK_MS)).toBe(true);
     expect(dueForCheck(1000, 1000 + RECHECK_MS - 1)).toBe(false);
     expect(dueForCheck(1000, 1000 + RECHECK_MS)).toBe(true);

@@ -700,9 +700,9 @@ SectionTitle("Appearance")
                     )
                 }
                 Text(
-                    "The default STUN servers are public Google and Cloudflare servers " +
-                        "(third parties). Clear the list to disable STUN; then only " +
-                        "same-network connections work.",
+                    "The default STUN server is a public Cloudflare server (a third " +
+                        "party, which sees this phone's address when a connection starts). Clear the list to " +
+                        "disable STUN; then only same-network connections work.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -882,7 +882,7 @@ val storageJson by androidx.compose.runtime.produceState("[]", state.messages) {
 SectionTitle("Updates")
                 ToggleRow(
                     "Check for updates",
-                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 60_000} minutes while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
+                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 3_600_000} hours while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
                     settings.updateChecks,
                 ) { onUpdateSettings { copy(updateChecks = it) } }
                 UpdateCheckRow(settings.network)
