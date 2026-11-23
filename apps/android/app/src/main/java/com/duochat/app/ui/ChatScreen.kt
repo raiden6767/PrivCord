@@ -187,10 +187,6 @@ fun ChatScreen(
     var clearConfirm by remember { mutableStateOf(false) }
     var sealedOpen by remember { mutableStateOf(false) }
     var detailsFor by remember { mutableStateOf<ChatMessage?>(null) }
-    // "Sent. Undo": for a few seconds after sending, the message can be taken back from everyone.
-    val snackbarHost = remember { androidx.compose.material3.SnackbarHostState() }
-    val undoScope = rememberCoroutineScope()
-    val latestMessages by androidx.compose.runtime.rememberUpdatedState(messages)
     var replyingTo by remember(conversationId) { mutableStateOf<ChatMessage?>(null) }
     val directBlocked = friend != null && !friend.direct
 
@@ -207,7 +203,6 @@ fun ChatScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHost) },
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -316,16 +311,7 @@ fun ChatScreen(
                     onCancelScheduled = onCancelScheduled,
                     onSend = { text, done ->
                         onSend(text, replyingTo?.messageId) { r ->
-                            if (r.isSuccess) {
-                                replyingTo = null
-                                snackbarHost.currentSnackbarData?.dismiss()
-                                undoScope.launch {
-                                    val answer = snackbarHost.showSnackbar("Sent", actionLabel = "Undo", duration = androidx.compose.material3.SnackbarDuration.Short)
-                                    if (answer == androidx.compose.material3.SnackbarResult.ActionPerformed) {
-                                        latestMessages.lastOrNull { it.senderId == state.uid && it.text == text }?.let { onDeleteMessage(it.messageId, true) }
-                                    }
-                                }
-                            }
+                            if (r.isSuccess) replyingTo = null
                             done(r)
                         }
                     },

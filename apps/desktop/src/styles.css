@@ -3721,7 +3721,7 @@ input[type='checkbox'] {
   gap: 12px;
 }
 
-/* Privacy checkup, network list, pinned chats, undo bar */
+/* Privacy checkup, network list, pinned chats */
 .checkup-score { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
 .checkup-bar { height: 6px; border-radius: 999px; background: var(--tonal); overflow: hidden; margin: 6px 0 10px; }
 .checkup-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent-fill); transition: width 0.4s ease; }
@@ -3734,11 +3734,7 @@ input[type='checkbox'] {
 .host-list li { display: grid; gap: 2px; }
 .host-list code { font-size: 0.85rem; word-break: break-all; }
 .chat-row-pin { color: var(--muted); flex-shrink: 0; }
-.undo-bar { display: flex; align-items: center; gap: 12px; margin: 0 14px 8px; padding: 10px 14px; border-radius: 14px; background: var(--ink); color: var(--on-ink); animation: polish-rise 0.2s ease-out both; }
-.undo-bar span { flex: 1; font-size: 0.9rem; }
-.undo-bar button { background: transparent; border: 0; color: inherit; font-weight: 700; cursor: pointer; padding: 4px 8px; border-radius: 8px; text-decoration: underline; }
-@media (prefers-reduced-motion: reduce) { .undo-bar { animation: none; } .checkup-bar span { transition: none; } }
-
+@media (prefers-reduced-motion: reduce) { .checkup-bar span { transition: none; } }
 .quiet-times { display: flex; gap: 12px; }
 .quiet-times .field { flex: 1; }
 
