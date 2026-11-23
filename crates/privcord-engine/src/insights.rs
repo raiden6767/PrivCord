@@ -383,7 +383,6 @@ const WHATS_NEW: &[(&str, &[&str])] = &[(
     &[
         "Link a new device by scanning: the new device shows a code, your phone scans it, and you type six digits.",
         "Pin chats, archive them, and mute one for an hour, a day or for good. They follow you to every device.",
-        "Undo a message right after sending it.",
         "Quiet hours, send later with ready-made times, and a privacy checkup.",
         "See which servers the app can contact, and why.",
         "PrivCord can update itself: Android downloads in the background, Windows installs a signed update.",

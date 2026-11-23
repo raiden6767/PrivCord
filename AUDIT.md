@@ -3,7 +3,8 @@
 This is the file to hand to an auditor, together with a pinned commit. It says what to look at, what we promise, what we
 already did, and what we already know is weak. It is written to be read without talking to us first.
 
-Status: **no independent audit has been done yet.** `SECURITY.md` says so too. An earlier internal five-reviewer pass
+Status: **no independent audit has been done yet.** An internal baseline of the cryptography (what it uses, what was tested against official vectors, and the open
+questions) is in `docs/CRYPTO_BASELINE.md`; start there. `SECURITY.md` says so too. An earlier internal five-reviewer pass
 and its fixes are in the git history; that is not independent.
 
 ## 1. What PrivCord is

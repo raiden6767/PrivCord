@@ -1,5 +1,6 @@
 package com.duochat.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -159,13 +160,17 @@ fun StorageByChatCard(rows: List<com.duochat.app.data.ChatStorage>, onDeleteFile
 /** A small "Sealed" chip for the chat's top bar; tapping it explains what protects this chat. */
 @Composable
 fun SealedChip(onClick: () -> Unit) {
+    // Not Surface(onClick = ...): a tappable Surface is made at least 48 dp tall, which stretched the chat header and left a
+    // big gap between the name and the status line. The chip stays its own small size; the tap still works.
     Surface(
-        onClick = onClick,
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
     ) {
-        Row(Modifier.padding(horizontal = 7.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.clickable(onClick = onClick).padding(horizontal = 7.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(11.dp))
             Spacer(Modifier.width(3.dp))
             Text("Sealed", style = MaterialTheme.typography.labelSmall)

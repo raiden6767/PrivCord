@@ -89,19 +89,6 @@ export function ChatLayout({
   const [detailsFor, setDetailsFor] = useState<UiMessage | null>(null);
   const prefs = state?.prefs ?? NO_PREFS;
   const [showArchived, setShowArchived] = useState(false);
-  /** The message just sent, for a few seconds: "Undo" takes it back from everyone. */
-  const [undo, setUndo] = useState<{ conv: string; text: string } | null>(null);
-  useEffect(() => {
-    if (!undo) return;
-    const t = window.setTimeout(() => setUndo(null), 6000);
-    return () => window.clearTimeout(t);
-  }, [undo]);
-  const undoSend = () => {
-    if (!undo || !state) return;
-    const mine = [...(state.messages[undo.conv] ?? [])].reverse().find((m) => m.own && m.text === undo.text);
-    if (mine) engine?.deleteMessage(mine.messageId, true);
-    setUndo(null);
-  };
   /** Per-device receipts of the message in the details dialog (empty when the engine has none). */
   const [receipts, setReceipts] = useState<DeviceReceipt[]>([]);
   useEffect(() => {
@@ -655,14 +642,6 @@ export function ChatLayout({
               <div className="composer-note">{group!.status === 'removed' ? 'You were removed from this group.' : 'You left this group.'}</div>
             ) : (
               <>
-              {undo && undo.conv === selected ? (
-                <div className="undo-bar" role="status">
-                  <span>Sent.</span>
-                  <button type="button" onClick={undoSend}>
-                    Undo
-                  </button>
-                </div>
-              ) : null}
               <Composer
                 key={selected}
                 disabled={state.phase !== 'ready'}
@@ -678,7 +657,6 @@ export function ChatLayout({
                   const r = (await engine?.send(selected!, text, replying?.messageId)) ?? { ok: false as const, error: 'Not ready.' };
                   if (r.ok) {
                     setReplying(null);
-                    setUndo({ conv: selected!, text });
                   }
                   return r;
                 }}
