@@ -44,7 +44,7 @@ jobs:
           base="${{ steps.pages.outputs.base_url }}"
           find site/dist -type f \( -name '*.html' -o -name '*.js' -o -name '*.txt' -o -name '*.xml' \) -print0 \
             | xargs -0 sed -i "s#__SITE_URL__#${base}#g; s#__REPO__#${{ github.repository }}#g"
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist
       - id: deployment
