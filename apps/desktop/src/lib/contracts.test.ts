@@ -47,4 +47,19 @@ describe('engine and screens agree', () => {
       expect(known, `the desktop app calls "${name}" but nothing in Rust defines it`).toBe(true);
     }
   });
+
+  it('every error the Android screens put in words is also in words on the desktop (the two tables must not drift)', () => {
+    const android = text([join(root, 'apps/android/app/src/main/java/com/duochat/app/rustcore/RustChatEngine.kt')]);
+    const desktop = text([join(root, 'apps/desktop/src/lib/hosted/hostedEngine.ts')]);
+    const mapped = new Set<string>();
+    for (const m of android.matchAll(/FfiException\.([A-Za-z]+) -> "/g)) mapped.add(m[1] as string);
+    expect(mapped.size).toBeGreaterThan(10);
+    const table = new Set<string>();
+    for (const m of desktop.matchAll(/\['([A-Za-z]+)',/g)) table.add(m[1] as string);
+    for (const code of mapped) expect(table.has(code), `Android says "${code}" in words but the desktop shows the raw code`).toBe(true);
+    // The ones a person meets while unlinking a device.
+    for (const code of ['InvalidPhrase', 'UnknownDevice', 'NeedsAccountKey']) {
+      expect(table.has(code), `desktop has no words for ${code}`).toBe(true);
+    }
+  });
 });

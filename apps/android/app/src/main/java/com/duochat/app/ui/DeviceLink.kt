@@ -129,6 +129,7 @@ private fun RemoveDeviceDialog(
     onClose: () -> Unit,
 ) {
     var phrase by remember { mutableStateOf("") }
+    var passphrase by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val run = { action: DeviceRemoval ->
@@ -162,6 +163,17 @@ private fun RemoveDeviceDialog(
                     label = { Text("Recovery phrase (optional)") },
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (phrase.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    DuoTextField(
+                        value = passphrase,
+                        onValueChange = { passphrase = it },
+                        label = { Text("Passphrase (only if your account has one)") },
+                        singleLine = true,
+                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 error?.let {
                     Spacer(Modifier.height(8.dp))
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -172,7 +184,7 @@ private fun RemoveDeviceDialog(
             val withPhrase = phrase.trim().split(Regex("\\s+")).size >= 12
             Button(
                 enabled = !busy,
-                onClick = { run(if (withPhrase) DeviceRemoval.Now(device.id, phrase) else DeviceRemoval.Request(device.id)) },
+                onClick = { run(if (withPhrase) DeviceRemoval.Now(device.id, phrase, passphrase) else DeviceRemoval.Request(device.id)) },
             ) { Text(if (withPhrase) "Remove now" else "Remove in 24 hours") }
         },
         dismissButton = { TextButton(enabled = !busy, onClick = onClose) { Text("Cancel") } },
