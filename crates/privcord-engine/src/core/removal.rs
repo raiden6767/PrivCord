@@ -21,6 +21,9 @@ use privcord_crypto::{
 use privcord_domain::UserId;
 use serde_json::json;
 
+/// When each of our other devices last got in touch (`{ device: ms }`).
+const KV_DEVICE_SEEN: &str = "devices.seen";
+
 /// How long a removal asked for from a device waits, so it can be seen and taken back (risks 45, 104).
 pub const REMOVE_AFTER_MS: i64 = 24 * 60 * 60 * 1000;
 /// A device not heard from for this long is shown with "Remove or reconnect" (risk 113).
@@ -96,7 +99,38 @@ impl Core {
         if self.device_id.as_deref() == Some(device) {
             return Some(self.now());
         }
-        self.sync.as_ref()?.replica().last_heard(device)
+        // What it wrote to the log, or when it last got in touch (a device that only reads writes nothing).
+        let wrote = self
+            .sync
+            .as_ref()
+            .and_then(|s| s.replica().last_heard(device));
+        wrote.max(self.seen_map().get(device).copied())
+    }
+
+    fn seen_map(&self) -> std::collections::BTreeMap<String, i64> {
+        self.ports
+            .storage
+            .kv(KV_DEVICE_SEEN)
+            .ok()
+            .flatten()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    /// A device of ours got in touch (a sync message over a link or the relay): remember when, at most once a minute.
+    pub(super) fn note_device_seen(&mut self, device: &str) {
+        let now = self.now();
+        let mut map = self.seen_map();
+        if map.get(device).is_some_and(|t| now - t < 60_000) {
+            return;
+        }
+        map.insert(device.to_owned(), now);
+        if let Ok(value) = serde_json::to_vec(&map) {
+            let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+                key: KV_DEVICE_SEEN.into(),
+                value,
+            }]);
+        }
     }
 
     fn removable(&self, device: &str) -> Result<(), ErrorCode> {

@@ -15,7 +15,7 @@ import {
   ShieldIcon,
   XIcon,
 } from './Icons';
-import { copyText } from '../lib/clipboard';
+import { copySensitive } from '../lib/clipboard';
 
 export interface RecoveryDialogProps {
   open: boolean;
@@ -166,7 +166,7 @@ export function RecoveryDialog({
                     type="button"
                     className="button ghost small"
                     onClick={() => {
-                      copyText(phrase);
+                      copySensitive(phrase);
                       setCopied(true);
                       setTimeout(() => setCopied(false), 2000);
                     }}

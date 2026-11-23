@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 66 | 9875 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 100 | 18022 |
+| Stays (UI) | 100 | 18068 |
 | Stays (platform adapter) | 71 | 13207 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **242** | **43749** |
+| **All mapped files** | **242** | **43795** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -106,8 +106,8 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/bleFraming.test.ts` | 110 | (none) | BLE chunk framing and rotating tags | domain::ble, crypto::ble | Domain | Ported, tested | M7/M8 | docs/ble-vectors.json: chunking, every reassembly error, 64 KiB, tags |
 | `apps/desktop/src/lib/bleFraming.ts` | 120 | `BLE_HEADER_BYTES`, `BLE_MAX_MESSAGE_BYTES`, `BLE_MIN_CHUNK_BYTES`, `FLAG_START`, `FLAG_END`, `BleFramingError` +8 | BLE chunk framing and rotating tags | domain::ble, crypto::ble | Domain | Ported, tested | M7/M8 | docs/ble-vectors.json: chunking, every reassembly error, 64 KiB, tags |
 | `apps/desktop/src/lib/bleLink.ts` | 134 | `getBleBridge`, `SecureLinkHandlers`, `SecureBleLink` | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/desktop/src/lib/clipboard.test.ts` | 25 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/lib/clipboard.ts` | 24 | `copyText` | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/desktop/src/lib/clipboard.test.ts` | 48 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/desktop/src/lib/clipboard.ts` | 47 | `copyText`, `SENSITIVE_CLEAR_MS`, `copySensitive` | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/contracts.test.ts` | 129 | (none) | Fails when the engine and the screens drift apart (link stages, command names) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.test.ts` | 11 | (none) | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.ts` | 27 | `DeliveryRow`, `stateWords`, `deliveryRows` | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |

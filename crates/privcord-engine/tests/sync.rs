@@ -2655,20 +2655,7 @@ fn messages_go_to_a_private_inbox_that_cannot_be_worked_out_from_the_public_id()
         h.laptop.online(&mut h.relay);
     }
     assert!(!posted.is_empty(), "the message went through the relay");
-    // Only for addresses whose app has handed over its keys (the rest still use the public mailbox, as before).
-    let keyed: Vec<String> = h
-        .fran
-        .core
-        .test_known_keys()
-        .into_iter()
-        .filter(|(_, anon, inbox)| *anon && *inbox)
-        .map(|(a, _, _)| privcord_crypto::seal::mailbox_for(&a))
-        .collect();
-    assert!(!keyed.is_empty(), "keys were exchanged");
     for (i, m) in public_boxes.iter().enumerate() {
-        if !keyed.contains(m) {
-            continue;
-        }
         assert!(
             !posted.contains(m),
             "posted to a mailbox anyone with Pat's id can watch (address #{i}: 0 account, 1 laptop, 2 tablet, 3 phone)"
@@ -2691,4 +2678,121 @@ fn messages_go_to_a_private_inbox_that_cannot_be_worked_out_from_the_public_id()
         h.fran.online(&mut h.relay);
     }
     assert!(h.fran.texts().contains(&"for Fran only".to_owned()));
+}
+
+#[test]
+fn a_device_that_only_reads_still_shows_as_seen_on_the_other() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    phone.core.create_identity().unwrap();
+    let mut laptop = link_laptop(&mut phone, &mut relay, &clock);
+    // The phone writes; the laptop only takes it in.
+    for _ in 0..3 {
+        // Each device says hello every ten minutes, whether or not it has written anything.
+        clock.advance(11 * 60 * 1000);
+        phone.online(&mut relay);
+        laptop.online(&mut relay);
+        phone.online(&mut relay);
+    }
+    let laptop_id = laptop.core.this_device_id().unwrap().to_owned();
+    let seen = phone
+        .core
+        .snapshot()
+        .devices
+        .into_iter()
+        .find(|d| d.id == laptop_id)
+        .expect("the laptop is on the list")
+        .last_seen;
+    assert!(
+        seen.is_some(),
+        "the phone says 'not synced yet' though the laptop has been in touch"
+    );
+}
+
+#[test]
+fn removing_a_contact_moves_the_private_inbox_and_nobody_is_left_behind() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut pat = Device::new("pat", &clock);
+    pat.core.create_identity().unwrap();
+    let pat_uid = pat.core.own_uid().unwrap().clone();
+    let mut fran = Device::new("fran", &clock);
+    fran.core.create_identity().unwrap();
+    let fran_uid = fran.core.own_uid().unwrap().clone();
+    let mut gus = Device::new("gus", &clock);
+    gus.core.create_identity().unwrap();
+    let gus_uid = gus.core.own_uid().unwrap().clone();
+    for friend in [&mut fran, &mut gus] {
+        pat.core
+            .add_contact(
+                &friend.core.own_card(Some("F")).unwrap(),
+                ContactTrust::Verified,
+            )
+            .unwrap();
+        friend
+            .core
+            .add_contact(
+                &pat.core.own_card(Some("Pat")).unwrap(),
+                ContactTrust::Verified,
+            )
+            .unwrap();
+        friend.core.set_store_forward(true).unwrap();
+    }
+    pat.core.set_store_forward(true).unwrap();
+    for _ in 0..6 {
+        pat.online(&mut relay);
+        fran.online(&mut relay);
+        gus.online(&mut relay);
+    }
+    let old_inbox = gus
+        .core
+        .test_inbox_of(&pat_uid)
+        .expect("Gus was told Pat's private inbox");
+    assert_eq!(fran.core.test_inbox_of(&pat_uid).as_ref(), Some(&old_inbox));
+
+    // Pat removes Gus while Fran is offline.
+    pat.core.remove_contact(&gus_uid).unwrap();
+    for _ in 0..3 {
+        pat.online(&mut relay);
+    }
+    // Fran has not heard of the new inbox: her message still gets through (the old one is still listened to).
+    fran.core
+        .send_message(&pat_uid, "while you moved", None)
+        .unwrap();
+    fran.online(&mut relay);
+    for _ in 0..3 {
+        pat.online(&mut relay);
+    }
+    assert!(
+        pat.texts().contains(&"while you moved".to_owned()),
+        "nobody is left behind"
+    );
+
+    // Fran comes online and is told the new inbox; from then on she no longer posts where Gus can watch.
+    for _ in 0..4 {
+        fran.online(&mut relay);
+        pat.online(&mut relay);
+    }
+    let new_inbox = fran
+        .core
+        .test_inbox_of(&pat_uid)
+        .expect("Fran has Pat's new inbox");
+    assert_ne!(new_inbox, old_inbox);
+    let before = counts(&relay);
+    fran.core
+        .send_message(&pat_uid, "after the move", None)
+        .unwrap();
+    fran.online(&mut relay);
+    let posted = posted_since(&relay, &before);
+    assert!(posted.contains(&new_inbox), "posted to the new inbox");
+    assert!(
+        !posted.contains(&old_inbox),
+        "nothing more goes where Gus can watch"
+    );
+    for _ in 0..3 {
+        pat.online(&mut relay);
+    }
+    assert!(pat.texts().contains(&"after the move".to_owned()));
+    let _ = fran_uid;
 }

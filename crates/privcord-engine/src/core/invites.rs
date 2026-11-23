@@ -697,6 +697,8 @@ impl Core {
             StorageOp::DeleteContact(uid.clone()),
         ])?;
         self.forget_contact_devices(uid);
+        // They know our private inbox: move to a new one and tell everyone else.
+        self.rotate_inbox();
         let addrs: Vec<UserId> = self
             .peers
             .keys()

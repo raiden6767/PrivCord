@@ -3268,7 +3268,11 @@ impl Core {
                             let now = self.now();
                             crate::api::DeviceView {
                                 id: d.id.clone(),
-                                name: d.name.clone(),
+                                name: if d.name == devices::FIRST_NAME {
+                                    devices::FIRST_NAME_ELSEWHERE.to_owned()
+                                } else {
+                                    d.name.clone()
+                                },
                                 added_at: d.added_at,
                                 this_device: self.device_id.as_deref() == Some(d.id.as_str()),
                                 last_seen,

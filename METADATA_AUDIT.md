@@ -27,14 +27,17 @@ This is an internal review, not an independent audit (see `AUDIT.md`).
 | # | Status |
 |---|---|
 | M1 | **Fixed** for relay posts when the other app has handed over its keys (anonymous envelope, version 3: no `to`, `from` or signature on the outside). First contact and apps that do not support it still use the old shape. |
-| M2 | **Partly fixed.** Once keys are exchanged, posts go to a private inbox derived from the receiver's own secret, which a past contact cannot compute. Not rotated; not removed on contact removal; unkeyed addresses still use the public mailbox. |
+| M2 | **Mostly fixed.** Once keys are exchanged, posts go to a private inbox derived from the receiver's own secret, which nobody can work out from the public ID. It now **rotates when a contact is removed** (the last two older ones are still listened to, so nobody is left behind), and a device whose keys arrived under the account address is now filed under its own address (that was why one device never got the private inbox). **Still open:** until a contact's keys arrive, the first handover post goes to the public mailbox, and older apps never use the private inbox. |
 | M3 | Mitigated by M1 and M2 only. |
-| M4, M5 | **Not fixed** (device fan-out, event kind and expiry still visible). |
+| M4 | **Not fixed** (device fan-out). |
+| M5 | **Not fixed, on purpose.** All stored posts already share one 7-day expiry. Live signals (2 minutes, a separate event kind) cannot be made to look the same without relays keeping connection offers and network addresses for days. |
 | M6 | **Fixed**: default STUN is Cloudflare only (no Google). |
 | M7 | **Mitigated**: update check every 6 hours instead of more often; still on by default. |
 | M8 | **Fixed**: notification previews off by default. |
 | M9 | By design. |
-| M10-M18 | Not changed. |
+| M10 | **Fixed**: a linked phone defaults to the name "My phone". |
+| M18 | **Fixed (Windows)**: invites, the six words and recovery phrases are cleared from the clipboard after 30 seconds if still there. Not checked on a real Windows machine; Windows clipboard history is not covered. |
+| M11-M17 | Not changed. |
 
 ## Findings
 
