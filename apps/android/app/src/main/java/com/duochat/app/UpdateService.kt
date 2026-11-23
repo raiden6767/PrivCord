@@ -28,16 +28,8 @@ class UpdateService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val info = intent?.let {
-            UpdateInfo(
-                it.getIntExtra("code", 0), it.getStringExtra("name").orEmpty(),
-                it.getStringExtra("url").orEmpty(), it.getStringExtra("sha").orEmpty(),
-            )
-        }
-        if (info == null || info.url.isEmpty() || UpdateSignal.download.value.busy) {
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
+        // Android kills the app unless startForeground() follows startForegroundService() within seconds, whatever else
+        // happens, so this comes first and no early return may skip it.
         createChannel(this)
         val first = notification(0)
         try {
@@ -49,6 +41,21 @@ class UpdateService : Service() {
         } catch (_: Throwable) {
             // Refused: carry on as a plain download, which still works while the app stays open.
         }
+        val info = intent?.let {
+            UpdateInfo(
+                it.getIntExtra("code", 0), it.getStringExtra("name").orEmpty(),
+                it.getStringExtra("url").orEmpty(), it.getStringExtra("sha").orEmpty(),
+            )
+        }
+        if (info == null || info.url.isEmpty()) {
+            UpdateSignal.download.value = UpdateDownload()
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        // One download at a time. This is the service's own flag: the screen sets UpdateSignal.download to busy before
+        // it starts the service, so that cannot tell whether a download is really running. A second start while one
+        // runs does nothing; the first keeps the service alive.
+        if (!running.compareAndSet(false, true)) return START_NOT_STICKY
         UpdateSignal.download.value = UpdateDownload(busy = true)
         val manager = getSystemService(NotificationManager::class.java)
         scope.launch {
@@ -74,8 +81,9 @@ class UpdateService : Service() {
                 .onFailure {
                     UpdateSignal.download.value = UpdateDownload(message = "The download was interrupted. Check your connection and tap Install again.")
                 }
+            running.set(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf(startId)
+            stopSelf()
         }
         return START_NOT_STICKY
     }
@@ -103,6 +111,7 @@ class UpdateService : Service() {
     }
 
     companion object {
+        private val running = java.util.concurrent.atomic.AtomicBoolean(false)
         const val CHANNEL_ID = "privcord_updates"
         const val NOTIFICATION_ID = 9002
         const val READY_ID = 9003

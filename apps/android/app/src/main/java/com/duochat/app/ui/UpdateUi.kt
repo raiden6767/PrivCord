@@ -64,7 +64,9 @@ fun UpdateInstallButton(info: UpdateInfo, modifier: Modifier = Modifier) {
                 } else {
                     message = null
                     UpdateSignal.download.value = UpdateDownload(busy = true)
-                    UpdateService.start(context, info)
+                    runCatching { UpdateService.start(context, info) }.onFailure {
+                        UpdateSignal.download.value = UpdateDownload(message = "Could not start the download. Try again.")
+                    }
                 }
             },
         ) { Text("Install ${info.versionName}") }
