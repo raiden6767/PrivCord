@@ -220,28 +220,22 @@ fun ChatScreen(
                         modifier = Modifier.clickable(onClick = onOpenDetails),
                     ) {
                         val live = friend?.link == LinkStatus.CONNECTED || (group?.connectedCount ?: 0) > 0 || channel?.connected == true
-                        InitialsAvatar(title.removePrefix("# "), 40, group = group != null || channel != null)
+                        // The online dot sits on the avatar, so the status line starts exactly under the name.
+                        InitialsAvatar(title.removePrefix("# "), 40, online = live, group = group != null || channel != null)
                         Spacer(Modifier.width(12.dp))
-                        Column {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                                Spacer(Modifier.width(6.dp))
+                                Spacer(Modifier.width(8.dp))
                                 SealedChip(onClick = { sealedOpen = true })
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    Modifier.size(7.dp).clip(CircleShape)
-                                        .background(if (live) Online else MaterialTheme.colorScheme.outline),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    status,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
+                            Text(
+                                status,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 },

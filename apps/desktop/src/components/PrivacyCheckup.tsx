@@ -5,6 +5,7 @@ import type { ChatEngineApi } from '../lib/engineApi';
 import type { AppSettings } from '../lib/settings';
 import type { ChatState } from '../lib/engine';
 import { isLockEnabled } from '../lib/appLock';
+import { hidesIp } from '../lib/insightInputs';
 import type { SettingsSection } from './SettingsDialog';
 import { AlertIcon, CheckIcon } from './Icons';
 
@@ -46,7 +47,7 @@ export function PrivacyCheckup({
   const input = {
     app_lock: isLockEnabled(),
     last_backup_at: backupAt,
-    hide_ip: loadNetworkConfig().forceRelay === true,
+    hide_ip: hidesIp(loadNetworkConfig()),
     previews_off: !settings.notificationPreviews,
     group_only: settings.groupOnly,
     panic_wipe: settings.panicWipe,

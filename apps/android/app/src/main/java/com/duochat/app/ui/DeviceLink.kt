@@ -448,7 +448,7 @@ fun LinkJoinContent(
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            WrapRow(8.dp) {
                 OutlinedButton(onClick = onBack) { Text("Back") }
                 TextButton(onClick = { manual = !manual }) { Text(if (manual) "Show a code instead" else "Scan their code instead") }
                 if (manual) Button(

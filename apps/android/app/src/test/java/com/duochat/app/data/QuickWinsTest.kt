@@ -32,6 +32,24 @@ class QuickWinsTest {
     }
 
     @Test
+    fun `the hosts question carries Private mode and the update check`() {
+        val o = org.json.JSONObject(hostsInput(NetworkConfig(torMode = true), updateChecks = true))
+        assertEquals(true, o.getBoolean("tor"))
+        assertEquals(true, o.getBoolean("updates"))
+        assertEquals(false, org.json.JSONObject(hostsInput(NetworkConfig())).getBoolean("updates"))
+    }
+
+    @Test
+    fun `the IP is hidden only when something really hides it`() {
+        val turn = listOf(TurnServer(listOf("turn:turn.example.org:3478"), "u", "c"))
+        // The switch with no relay behind it hides nothing (builtinTurn off so a build's own relay does not count).
+        assertEquals(false, hidesIp(NetworkConfig(forceRelay = true, builtinTurn = false)))
+        assertEquals(true, hidesIp(NetworkConfig(forceRelay = true, turn = turn)))
+        assertEquals(false, hidesIp(NetworkConfig(forceRelay = false, turn = turn)))
+        assertEquals(true, hidesIp(NetworkConfig(torMode = true)))
+    }
+
+    @Test
     fun `the engine's answers are read back`() {
         val items = parseCheckup("""[{"id":"lock","label":"App lock","ok":false,"hint":"Turn on"}]""")
         assertEquals(CheckupItem("lock", "App lock", false, "Turn on"), items.single())

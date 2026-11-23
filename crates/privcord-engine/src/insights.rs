@@ -46,7 +46,7 @@ fn privacy_checkup(i: &CheckupInput) -> Vec<CheckupItem> {
     vec![
         item("lock", "App lock", i.app_lock, "Opening the app asks for your own sign-in.", "Anyone holding your unlocked device can read your chats. Turn on the lock."),
         item("backup", "Backup", recent, "A recent backup exists.", "No recent backup. Without one, a lost device means lost chats (your 12 words only restore your identity)."),
-        item("ip", "IP address hidden from friends", i.hide_ip, "Connections go through a relay.", "Friends can see your IP address on a direct connection. Optional, slower."),
+        item("ip", "IP address hidden from friends", i.hide_ip, "Connections go through a relay or Tor, so friends do not see your address.", "Friends can see your IP address on a direct connection. Optional, slower."),
         item("previews", "Notifications hide message text", i.previews_off, "Notifications only say a message arrived.", "Message text can appear on a locked screen. Turn off message previews."),
         item("grouponly", "Group-only with people met in groups", i.group_only, "Strangers from a group cannot message you directly.", "People you only know from a group can message you directly."),
         item("panic", "Panic wipe ready", i.panic_wipe, "One gesture erases this device.", "Optional: a one-gesture wipe for emergencies."),
@@ -72,6 +72,12 @@ struct HostsInput {
     relays: Vec<String>,
     stun: Vec<String>,
     turn: Vec<String>,
+    /// Private mode (Tor): the relays are reached through Tor and nothing is contacted directly.
+    #[serde(default)]
+    tor: bool,
+    /// Update checks are on. They contact GitHub directly, so they are off behind a relay or Tor.
+    #[serde(default)]
+    updates: bool,
 }
 
 fn host_of(url: &str) -> String {
@@ -101,16 +107,25 @@ fn network_hosts(i: &HostsInput) -> Vec<Value> {
         for r in &i.nostr {
             add(
                 host_of(r),
-                "Finds your friend and passes sealed hellos (Nostr relay)",
+                if i.tor {
+                    "Finds your friend and passes sealed hellos (Nostr relay, reached through Tor)"
+                } else {
+                    "Finds your friend and passes sealed hellos (Nostr relay)"
+                },
             );
         }
         for r in &i.relays {
             add(
                 host_of(r),
-                "Finds your friend and passes sealed messages (your own relay)",
+                if i.tor {
+                    "Finds your friend and passes sealed messages (your own relay, reached through Tor)"
+                } else {
+                    "Finds your friend and passes sealed messages (your own relay)"
+                },
             );
         }
-        if !i.force_relay {
+        // Private mode makes no direct connections, so no STUN or TURN server is ever contacted.
+        if !i.force_relay && !i.tor {
             for s in &i.stun {
                 add(
                     host_of(s),
@@ -118,12 +133,22 @@ fn network_hosts(i: &HostsInput) -> Vec<Value> {
                 );
             }
         }
-        for t in &i.turn {
-            add(
-                host_of(t),
-                "Carries encrypted traffic when a direct connection is not possible (TURN)",
-            );
+        if !i.tor {
+            for t in &i.turn {
+                add(
+                    host_of(t),
+                    "Carries encrypted traffic when a direct connection is not possible (TURN)",
+                );
+            }
         }
+    }
+    // Whatever the connection mode: a check for a new version goes to GitHub directly (and to the download servers
+    // it points to), unless a relay or Tor hides this address, when the check is not made at all.
+    if i.updates && !i.force_relay && !i.tor {
+        add(
+            "github.com".to_owned(),
+            "Looks for a new version and downloads it, while update checks are on. GitHub can see your IP address",
+        );
     }
     rows.into_iter()
         .map(|(host, why)| json!({ "host": host, "why": why }))
@@ -361,6 +386,8 @@ const WHATS_NEW: &[(&str, &[&str])] = &[(
         "Undo a message right after sending it.",
         "Quiet hours, send later with ready-made times, and a privacy checkup.",
         "See which servers the app can contact, and why.",
+        "PrivCord can update itself: Android downloads in the background, Windows installs a signed update.",
+        "Remove a linked device from any of your devices: it waits a day (and can be taken back), or happens at once with your recovery phrase.",
     ],
 )];
 
@@ -474,6 +501,42 @@ mod tests {
             rows.as_array().unwrap().last().unwrap()["host"],
             "turn.example.org:3478"
         );
+    }
+
+    #[test]
+    fn private_mode_lists_no_direct_hosts_and_updates_list_github() {
+        let base = json!({"mode": "AUTOMATIC", "force_relay": false, "nostr": ["wss://relay.damus.io"], "relays": [], "stun": ["stun:stun.example.net:3478"], "turn": ["turn:turn.example.org:3478"], "tor": true, "updates": true});
+        let hosts = |v: Value| -> Vec<String> {
+            run("hosts", v)
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["host"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        // Tor: only the relays (through Tor); no STUN, no TURN, and no update check (it would show the address).
+        assert_eq!(hosts(base.clone()), ["relay.damus.io"]);
+        let mut open = base.clone();
+        open["tor"] = json!(false);
+        assert_eq!(
+            hosts(open.clone()),
+            [
+                "relay.damus.io",
+                "stun.example.net:3478",
+                "turn.example.org:3478",
+                "github.com"
+            ]
+        );
+        // Update checks are listed even when no other host is, and not when they are off or behind a relay.
+        let mut bt = open.clone();
+        bt["mode"] = json!("BLUETOOTH_ONLY");
+        assert_eq!(hosts(bt), ["github.com"]);
+        let mut off = open.clone();
+        off["updates"] = json!(false);
+        assert!(!hosts(off).contains(&"github.com".to_owned()));
+        let mut relayed = open;
+        relayed["force_relay"] = json!(true);
+        assert!(!hosts(relayed).contains(&"github.com".to_owned()));
     }
 
     fn health_input(over: Value) -> Value {

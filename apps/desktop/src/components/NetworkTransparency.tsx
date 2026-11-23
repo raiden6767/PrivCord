@@ -4,13 +4,13 @@ import { loadNetworkConfig } from '../lib/network';
 import { networkHosts, type HostRow } from '../lib/networkHosts';
 
 /** Every internet host this device may contact, and why, straight from the settings that decide it. */
-export function NetworkTransparency({ engine }: { engine: ChatEngineApi | null }) {
+export function NetworkTransparency({ engine, updateChecks = false }: { engine: ChatEngineApi | null; updateChecks?: boolean }) {
   const net = loadNetworkConfig();
-  const [rows, setRows] = useState<HostRow[]>(() => networkHosts(net));
+  const [rows, setRows] = useState<HostRow[]>(() => networkHosts(net, updateChecks));
   useEffect(() => {
     let live = true;
     if (!engine?.insight) {
-      setRows(networkHosts(net));
+      setRows(networkHosts(net, updateChecks));
       return;
     }
     // The shared engine works the list out, so it is the same on Windows and Android.
@@ -21,6 +21,8 @@ export function NetworkTransparency({ engine }: { engine: ChatEngineApi | null }
       relays: net.signaling.flatMap((s) => (s.kind === 'relay' ? [s.url] : [])),
       stun: net.stun,
       turn: net.turn.flatMap((t) => t.urls),
+      tor: net.torMode === true,
+      updates: updateChecks,
     };
     void engine.insight('hosts', input).then(
       (raw) => {
@@ -32,7 +34,7 @@ export function NetworkTransparency({ engine }: { engine: ChatEngineApi | null }
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, JSON.stringify(net)]);
+  }, [engine, JSON.stringify(net), updateChecks]);
   return (
     <div className="card-box">
       <div className="card-title">

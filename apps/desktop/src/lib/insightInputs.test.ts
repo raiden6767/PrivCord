@@ -32,3 +32,13 @@ describe('insightInputs', () => {
     expect(badgeText(10)).toBe('9+');
   });
 });
+
+import { hidesIp } from './insightInputs';
+describe('hidesIp', () => {
+  it('a relay switch needs a relay behind it; Private mode always hides', () => {
+    expect(hidesIp({ forceRelay: true, turn: [] })).toBe(false);
+    expect(hidesIp({ forceRelay: true, turn: [{}] })).toBe(true);
+    expect(hidesIp({ forceRelay: false, turn: [{}] })).toBe(false);
+    expect(hidesIp({ forceRelay: false, torMode: true, turn: [] })).toBe(true);
+  });
+});

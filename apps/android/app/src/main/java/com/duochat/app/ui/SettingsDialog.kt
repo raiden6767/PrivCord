@@ -276,7 +276,7 @@ SectionTitle("Appearance")
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                Wrap(8.dp) {
+                WrapRow(8.dp) {
                     ChoiceChip("System", settings.theme == "system") {
                         onUpdateSettings { copy(theme = "system") }
                     }
@@ -294,7 +294,7 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                Wrap(4.dp) {
+                WrapRow(4.dp) {
                     for ((label, value) in ACCENTS) {
                         Box(
                             modifier = Modifier
@@ -379,7 +379,7 @@ SectionTitle("Appearance")
                     fun pick(initial: Int, set: (Int) -> Unit) {
                         android.app.TimePickerDialog(ctx, { _, h, m -> set(h * 60 + m) }, initial / 60, initial % 60, true).show()
                     }
-                    Wrap(8.dp) {
+                    WrapRow(8.dp) {
                         OutlinedButton(onClick = { pick(quiet.from) { v -> onSetQuietHours(true, v, quiet.to) } }) {
                             Text("From ${com.duochat.app.data.minutesLabel(quiet.from)}")
                         }
@@ -437,7 +437,7 @@ SectionTitle("Appearance")
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "There is no push service (that would need a server that knows when you get a message). Instead, " +
-                        "PrivCord asks the relays for waiting messages about every 15 minutes even when it is closed, and " +
+                        "PrivCord asks the relays for waiting messages about every ${com.duochat.app.notifications.BackgroundCheck.PERIOD_MS / 60_000} minutes even when it is closed, and " +
                         "continuously while it is open or \"Keep running\" is on. With store-and-forward on (Connection > " +
                         "Advanced options), messages wait on the relays for 7 days.",
                     style = MaterialTheme.typography.bodySmall,
@@ -453,8 +453,8 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                val hostsJson by androidx.compose.runtime.produceState("[]", settings.network) {
-                    value = insight("hosts", com.duochat.app.data.hostsInput(settings.network))
+                val hostsJson by androidx.compose.runtime.produceState("[]", settings.network, settings.updateChecks) {
+                    value = insight("hosts", com.duochat.app.data.hostsInput(settings.network, settings.updateChecks))
                 }
                 NetworkHostsCard(com.duochat.app.data.parseHosts(hostsJson))
                 Spacer(Modifier.height(8.dp))
@@ -511,7 +511,7 @@ SectionTitle("Appearance")
                     SectionTitle("Communication Mode")
                 Text("How PrivCord reaches your friends. Automatic tries Bluetooth when someone is close and the internet otherwise.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(4.dp))
-                Wrap(6.dp) {
+                WrapRow(6.dp) {
                     ChoiceChip("Automatic", settings.network.transportMode == com.duochat.app.data.TransportMode.AUTOMATIC) {
                         onUpdateSettings { copy(network = network.copy(transportMode = com.duochat.app.data.TransportMode.AUTOMATIC)) }
                     }
@@ -637,7 +637,7 @@ SectionTitle("Appearance")
                     settings.network.bluetooth,
                 ) { onUpdateSettings { copy(network = network.copy(bluetooth = it)) } }
                 Spacer(Modifier.height(4.dp))
-                Wrap(8.dp) {
+                WrapRow(8.dp) {
                     Button(
                         onClick = {
                             val urls = NetworkConfig.parseTurnUrls(turnUrls)
@@ -711,13 +711,13 @@ SectionTitle("Appearance")
 SectionTitle("Security")
                 val staleCount = state.devices.count { it.stale }
                 val checkupJson by androidx.compose.runtime.produceState(
-                    "[]", settings.appLock, settings.lastBackupAt, settings.network.forceRelay, settings.notificationPreviews,
+                    "[]", settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), settings.notificationPreviews,
                     settings.groupOnly, settings.panicWipe, staleCount,
                 ) {
                     value = insight(
                         "checkup",
                         com.duochat.app.data.checkupInput(
-                            settings.appLock, settings.lastBackupAt, settings.network.forceRelay, !settings.notificationPreviews,
+                            settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), !settings.notificationPreviews,
                             settings.groupOnly, settings.panicWipe, staleCount,
                         ),
                     )
@@ -743,7 +743,7 @@ SectionTitle("Security")
                 ToggleRow(
                     title = "Lock with fingerprint, face or screen lock",
                     description = if (lockAvailable) {
-                        "Ask for it every time PrivCord opens, and again after it has been out of sight for 30 seconds. It keeps other people who pick up your phone out; it does not replace the encryption of your chats."
+                        "Ask for it every time PrivCord opens, and again after it has been out of sight for ${com.duochat.app.security.AppLock.GRACE_MS / 1000} seconds. It keeps other people who pick up your phone out; it does not replace the encryption of your chats."
                     } else {
                         "Not available: set a screen lock (PIN, pattern or password) or a fingerprint in your phone's settings first."
                     },
@@ -782,7 +782,7 @@ SectionTitle("Security")
                 )
                 Spacer(Modifier.height(10.dp))
                 if (clearConfirm) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WrapRow(8.dp) {
                         Button(
                             onClick = {
                                 clearing = true
@@ -880,7 +880,7 @@ val storageJson by androidx.compose.runtime.produceState("[]", state.messages) {
 SectionTitle("Updates")
                 ToggleRow(
                     "Check for updates",
-                    "Looks for a new version when the app starts, when you come back to it, and about every half hour while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
+                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 60_000} minutes while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
                     settings.updateChecks,
                 ) { onUpdateSettings { copy(updateChecks = it) } }
                 UpdateCheckRow(settings.network)
@@ -908,8 +908,8 @@ SectionTitle("About PrivCord")
                     }
                 }
                 DetailRow("Rust engine", probe)
-                DetailRow("Created by", "anandkrishna1900")
-                DetailRow("License", "PC-NC (non-commercial)")
+                DetailRow("Created by", AppConfig.CREATED_BY)
+                DetailRow("License", AppConfig.LICENSE_SHORT)
                 Spacer(Modifier.height(12.dp))
                 AboutTools(settings.network, insight, diagnosticsJson, selfTestJson)
                 Spacer(Modifier.height(12.dp))
@@ -942,16 +942,6 @@ private fun SectionTitle(text: String) {
         style = MaterialTheme.typography.titleLarge,
         modifier = Modifier.padding(top = 12.dp, bottom = 10.dp),
     )
-}
-
-/** Items side by side, wrapping onto the next line when the screen or the font size leaves no room. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun Wrap(gap: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
-    androidx.compose.foundation.layout.FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(gap),
-        verticalArrangement = Arrangement.spacedBy(gap),
-    ) { content() }
 }
 
 @Composable
@@ -1077,7 +1067,7 @@ private fun BluetoothBlock(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    WrapRow(8.dp) {
         if (status == BluetoothStatus.NEEDS_PERMISSION) {
             Button(onClick = { rationale = true }) { Text("Allow Bluetooth") }
             if (denied) {

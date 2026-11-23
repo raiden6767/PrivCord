@@ -181,7 +181,7 @@ fun AddFriendScreen(
                 Spacer(Modifier.height(10.dp))
                 SafetyNumberBox(added.safetyNumber)
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WrapRow(8.dp) {
                     Button(onClick = { onChecked(added.uid) }, enabled = !added.checked) {
                         Text(if (added.checked) "Checked" else "The numbers match")
                     }
