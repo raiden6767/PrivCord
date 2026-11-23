@@ -50,6 +50,8 @@ pub(super) struct TheirKeys {
     anon: bool,
     /// The private inbox they listen on (see `Core::own_inbox_mailbox`), if they told us.
     inbox: Option<String>,
+    /// The install that sent them, when it said (see `fresh_keys_for`): filed under its own address once we know it.
+    dev: Option<String>,
 }
 
 #[derive(Default)]
@@ -63,6 +65,10 @@ pub(super) struct KeyState {
     /// Addresses that hold our keys (a link exchanged them, or a v2 blob came from them): a v1 blob from these is
     /// refused, so nobody can force the old protocol on them. Keys that came through a relay say nothing about this.
     confirmed: std::collections::BTreeSet<UserId>,
+    /// Which private inbox we are on (it changes when a contact is removed, so they can no longer watch it), and the
+    /// one each contact address was last told. An address with no entry was told generation 0.
+    inbox_gen: u32,
+    told_gen: BTreeMap<UserId, u32>,
 }
 
 impl KeyState {
@@ -83,7 +89,7 @@ impl KeyState {
             .map(|(u, t)| {
                 (
                     u.to_string(),
-                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>(), "anon": t.anon, "inbox": t.inbox }),
+                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>(), "anon": t.anon, "inbox": t.inbox, "dev": t.dev }),
                 )
             })
             .collect();
@@ -92,6 +98,8 @@ impl KeyState {
             "issued": issued,
             "theirs": theirs,
             "confirmed": self.confirmed.iter().map(UserId::as_str).collect::<Vec<_>>(),
+            "inboxGen": self.inbox_gen,
+            "toldGen": self.told_gen.iter().map(|(u, g)| (u.to_string(), json!(g))).collect::<Map<String, Value>>(),
         })
     }
 
@@ -103,8 +111,23 @@ impl KeyState {
         };
         let mut state = Self {
             standing: own(v.get("standing")),
+            inbox_gen: v
+                .get("inboxGen")
+                .and_then(Value::as_u64)
+                .and_then(|g| u32::try_from(g).ok())
+                .unwrap_or(0),
             ..Self::default()
         };
+        if let Some(m) = v.get("toldGen").and_then(Value::as_object) {
+            for (u, g) in m {
+                if let (Ok(uid), Some(g)) = (
+                    UserId::new(u),
+                    g.as_u64().and_then(|g| u32::try_from(g).ok()),
+                ) {
+                    state.told_gen.insert(uid, g);
+                }
+            }
+        }
         if let Some(m) = v.get("issued").and_then(Value::as_object) {
             for (u, ks) in m {
                 if let Ok(uid) = UserId::new(u) {
@@ -131,6 +154,7 @@ impl KeyState {
                     .and_then(Value::as_str)
                     .filter(|m| is_mailbox_name(m))
                     .map(str::to_owned);
+                let dev = t.get("dev").and_then(Value::as_str).map(str::to_owned);
                 state.theirs.insert(
                     uid,
                     TheirKeys {
@@ -138,6 +162,7 @@ impl KeyState {
                         onetime,
                         anon,
                         inbox,
+                        dev,
                     },
                 );
             }
@@ -216,11 +241,16 @@ impl Core {
         let over = list.len().saturating_sub(MAX_ISSUED_PER_PEER);
         list.drain(..over);
         let standing = self.keys.standing.first().map(|k| k.public().to_value())?;
+        self.keys.told_gen.insert(peer.clone(), self.keys.inbox_gen);
         self.save_keys();
         // "anon": this app opens the anonymous envelope, so friends may wrap what they post to a relay for us. "inbox":
         // where to post for us instead of the mailbox anyone can work out from our public id.
         let inbox = self.as_me(peer).and_then(|me| self.own_inbox_mailbox(&me));
-        Some(json!({ "standing": standing, "onetime": publics, "anon": true, "inbox": inbox }))
+        // "dev": the install these keys belong to, so a friend who still has us under the account address can file
+        // them under the device's own (the account key's holder speaks as the account until they know our list).
+        Some(
+            json!({ "standing": standing, "onetime": publics, "anon": true, "inbox": inbox, "dev": self.device_id }),
+        )
     }
 
     /// A post-quantum link to `peer` is up: hand them our standing key and fresh one-time keys over it.
@@ -246,7 +276,10 @@ impl Core {
             .contacts
             .keys()
             .flat_map(|u| self.addresses_of(u))
-            .filter(|a| !self.keys.issued.contains_key(a))
+            .filter(|a| {
+                !self.keys.issued.contains_key(a)
+                    || self.keys.told_gen.get(a).copied().unwrap_or(0) != self.keys.inbox_gen
+            })
             .collect();
         for addr in due {
             let Some(mut payload) = self.fresh_keys_for(&addr) else {
@@ -261,6 +294,7 @@ impl Core {
             {
                 // Not handed over: try again on a later tick.
                 self.keys.issued.remove(&addr);
+                self.keys.told_gen.remove(&addr);
                 self.save_keys();
             }
         }
@@ -294,16 +328,44 @@ impl Core {
             .and_then(Value::as_str)
             .filter(|m| is_mailbox_name(m))
             .map(str::to_owned);
+        let dev = frame
+            .get("dev")
+            .and_then(Value::as_str)
+            .filter(|d| d.len() <= 64 && d.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .map(str::to_owned);
+        let device_address = dev
+            .as_deref()
+            .filter(|_| Self::device_of(peer).is_none())
+            .and_then(|d| Self::device_address(peer, d))
+            .filter(|a| self.known_address(a));
         self.keys.theirs.insert(
-            peer.clone(),
+            device_address.unwrap_or_else(|| peer.clone()),
             TheirKeys {
                 standing,
                 onetime,
                 anon,
                 inbox,
+                dev,
             },
         );
         self.save_keys();
+    }
+
+    /// Move to a new private inbox: someone who was removed still knows the old one and could watch it. Friends are
+    /// told the new one with fresh keys on the next ticks; the last two older ones are still listened to, so a friend
+    /// who was offline meanwhile still gets through.
+    pub(super) fn rotate_inbox(&mut self) {
+        self.keys.inbox_gen = self.keys.inbox_gen.saturating_add(1);
+        self.save_keys();
+    }
+
+    pub(super) fn inbox_generation(&self) -> u32 {
+        self.keys.inbox_gen
+    }
+
+    #[doc(hidden)]
+    pub fn test_inbox_of(&self, peer: &UserId) -> Option<String> {
+        self.keys_inbox_of(peer)
     }
 
     /// The private inbox `peer` told us to post to, if any.
@@ -381,6 +443,22 @@ impl Core {
         if changed {
             self.save_keys();
         }
+    }
+
+    /// Keys we hold under a friend's account address were sent by one of their devices (it said which): once their list
+    /// has that device, they are filed under its address, so nothing for that device falls back to the public mailbox.
+    pub(super) fn file_keys_under_device(&mut self, uid: &UserId) {
+        let Some(addr) = self
+            .keys
+            .theirs
+            .get(uid)
+            .and_then(|t| t.dev.as_deref())
+            .and_then(|d| Self::device_address(uid, d))
+            .filter(|a| self.known_address(a))
+        else {
+            return;
+        };
+        self.move_keys(uid, &addr);
     }
 
     /// The keys exchanged with one address of a friend belong to another (their account address turned out to be one
@@ -513,7 +591,10 @@ impl Core {
             // A key given to their account address and used by one of their devices: that device is the install the
             // key went to (nobody else has it), so the keys of that address are its keys from now on.
             let was_account = &addr == person && Self::device_of(&from).is_some();
-            if from != addr && !was_account {
+            // The other way round: a key given to a device's address, used by the account key's holder speaking as the
+            // account (it does, to a friend whose app does not know device lists yet). Only that install has both.
+            let account_for_device = &from == person && Self::device_of(&addr).is_some();
+            if from != addr && !was_account && !account_for_device {
                 return None;
             }
             if let Some(list) = self.keys.issued.get_mut(&addr) {

@@ -23,7 +23,10 @@ use zeroize::Zeroizing;
 pub(super) const KV_DEVICE_KEYS: &str = "devices.self";
 pub(super) const KV_DEVICE_LIST: &str = "devices.list";
 /// The name the first device gets until the person names it.
-const FIRST_NAME: &str = "This device";
+pub(super) const FIRST_NAME: &str = "This device";
+/// What a device still carrying that name is shown as: it was never named, and "This device" is about the reader (the
+/// row already says "(this device)" where it is).
+pub(super) const FIRST_NAME_ELSEWHERE: &str = "Original device";
 /// On a device linked by QR code: the account's public keys (`{ "sign", "dh" }`). Its private keys are not here.
 pub(super) const KV_ACCOUNT_PUBLIC: &str = "account.public";
 /// On a device linked by QR code: the account's contact card, as the account signed it when the device was linked.
@@ -165,7 +168,7 @@ impl Core {
         addr.as_str().split_once(ADDR_SEP).map(|(_, d)| d)
     }
 
-    fn device_address(uid: &UserId, device: &str) -> Option<UserId> {
+    pub(super) fn device_address(uid: &UserId, device: &str) -> Option<UserId> {
         UserId::new(format!("{uid}{ADDR_SEP}{device}")).ok()
     }
 
@@ -484,6 +487,7 @@ impl Core {
             // Devices it removed: their keys go (their links close on the next tick).
             self.drop_device_keys(uid, list);
         }
+        self.file_keys_under_device(uid);
     }
 
     /// A friend's device list as a notice (a frame on a link, or sealed to our mailbox).

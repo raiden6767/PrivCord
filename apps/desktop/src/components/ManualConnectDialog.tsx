@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ChatState } from '../lib/engine';
 import type { ChatEngineApi } from '../lib/engineApi';
-import { copyText } from '../lib/clipboard';
+import { copySensitive } from '../lib/clipboard';
 import { Modal } from './Modal';
 import {
   AlertIcon,
@@ -72,7 +72,7 @@ export function ManualConnectDialog({
   }
 
   async function copy(value: string, label: string) {
-    const ok = await copyText(value);
+    const ok = await copySensitive(value);
     setCopied(ok ? label : null);
     if (ok) window.setTimeout(() => setCopied(null), 1800);
   }

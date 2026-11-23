@@ -310,7 +310,7 @@ fun LinkJoinContent(
     var digits by remember { mutableStateOf("") }
     var manual by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf(android.os.Build.MODEL ?: "Phone") }
+    var name by remember { mutableStateOf("My phone") }
     var joined by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }

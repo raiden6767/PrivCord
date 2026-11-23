@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { InviteAnswer } from '../lib/engine';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { parseInviteWords } from '@duochat/protocol';
-import { copyText } from '../lib/clipboard';
+import { copySensitive } from '../lib/clipboard';
 import { Modal } from './Modal';
 import { QrCode } from './QrCode';
 import { CheckIcon, CopyIcon, ShieldIcon } from './Icons';
@@ -186,7 +186,7 @@ export function AddFriendDialog({
                   type="button"
                   className="button secondary small"
                   onClick={async () => {
-                    setWordsCopied(await copyText(words));
+                    setWordsCopied(await copySensitive(words));
                     window.setTimeout(() => setWordsCopied(false), 1800);
                   }}
                 >
@@ -210,7 +210,7 @@ export function AddFriendDialog({
                 type="button"
                 className="button ghost small"
                 onClick={async () => {
-                  setCopied(await copyText(invite));
+                  setCopied(await copySensitive(invite));
                   window.setTimeout(() => setCopied(false), 1800);
                 }}
               >

@@ -885,6 +885,9 @@ impl Core {
     /// the account's list, so what it sends is taken as a post of it would be.
     pub(super) fn on_sync_frame(&mut self, peer: &UserId, frame: &Value) {
         let now = self.now();
+        if let Some((_, device)) = peer.as_str().split_once('.') {
+            self.note_device_seen(device);
+        }
         match frame.get("t").and_then(Value::as_str) {
             Some("hello") => {
                 let theirs: Summary = frame
@@ -1001,6 +1004,9 @@ impl Core {
         if !author.is_some_and(|d| d.active() && signed_by(blob, d)) {
             return;
         }
+        if let Some(device) = payload.get("device").and_then(Value::as_str) {
+            self.note_device_seen(device);
+        }
         if self.learn_list(&list, text) {
             let Some(ours) = self.device_list.clone() else {
                 return;
@@ -1057,6 +1063,9 @@ impl Core {
             .and_then(|d| list.get(d));
         if !author.is_some_and(|d| d.active() && signed_by(blob, d)) {
             return;
+        }
+        if let Some(device) = payload.get("device").and_then(Value::as_str) {
+            self.note_device_seen(device);
         }
         if self.learn_list(&list, text) {
             // A device we did not know: tell it about us, so it starts posting what it writes, and give it our history.

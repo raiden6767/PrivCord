@@ -22,3 +22,26 @@ export async function copyText(value: string): Promise<boolean> {
     return false;
   }
 }
+
+export const SENSITIVE_CLEAR_MS = 30_000;
+
+/**
+ * Copies something secret (an invite, the six words, a recovery phrase) and clears it from the clipboard after
+ * thirty seconds, but only if it is still what is there (never wipe something the person copied since). Android does
+ * the same. If the clipboard cannot be read back (no permission, window not focused), it is left alone.
+ */
+export async function copySensitive(value: string): Promise<boolean> {
+  const ok = await copyText(value);
+  if (ok) {
+    window.setTimeout(() => {
+      void (async () => {
+        try {
+          if ((await navigator.clipboard.readText()) === value) await navigator.clipboard.writeText('');
+        } catch {
+          // Cannot read it back: leave it.
+        }
+      })();
+    }, SENSITIVE_CLEAR_MS);
+  }
+  return ok;
+}

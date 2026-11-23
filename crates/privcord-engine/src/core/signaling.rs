@@ -63,22 +63,39 @@ impl Core {
     /// device has its own and the account's is no use to it) and this device's, once the account has several devices.
     pub(super) fn own_mailboxes(&self) -> Vec<String> {
         let mut out = Vec::new();
+        let gen = self.inbox_generation();
+        // Older generations stay listened to for a while: a friend who has not heard of the new one yet still posts there.
+        let inboxes = |a: &UserId| -> Vec<String> {
+            (gen.saturating_sub(2)..=gen)
+                .filter_map(|g| self.own_inbox_mailbox_gen(a, g))
+                .collect()
+        };
         if let (Some(uid), true) = (&self.uid, self.identity.is_some()) {
             out.push(mailbox_for(uid.as_str()));
-            out.extend(self.own_inbox_mailbox(uid));
+            out.extend(inboxes(uid));
         }
         if let Some(a) = self.own_address().filter(|a| Self::device_of(a).is_some()) {
             out.push(mailbox_for(a.as_str()));
-            out.extend(self.own_inbox_mailbox(&a));
+            out.extend(inboxes(&a));
         }
         out
     }
 
     /// The private inbox of one of our addresses: a name made from that address's own key, handed only to friends (with
-    /// our keys), so unlike [`mailbox_for`] nobody can work it out from our public id.
+    /// our keys), so unlike [`mailbox_for`] nobody can work it out from our public id. It changes (generation) when a
+    /// contact is removed.
     pub(super) fn own_inbox_mailbox(&self, addr: &UserId) -> Option<String> {
+        self.own_inbox_mailbox_gen(addr, self.inbox_generation())
+    }
+
+    fn own_inbox_mailbox_gen(&self, addr: &UserId, gen: u32) -> Option<String> {
         let key = self.key_for_address(addr)?;
-        let secret = key.derive_secret(&format!("inbox-v1|{addr}")).ok()?;
+        let label = if gen == 0 {
+            format!("inbox-v1|{addr}")
+        } else {
+            format!("inbox-v1|{addr}|g{gen}")
+        };
+        let secret = key.derive_secret(&label).ok()?;
         Some(inbox_mailbox(&secret[..]))
     }
 
