@@ -302,10 +302,10 @@ impl Identity {
     /// inbox). It is derived from the private key, so it needs no storage and is the same after the key is restored.
     pub fn derive_secret(&self, label: &str) -> Result<zeroize::Zeroizing<[u8; 32]>, CryptoError> {
         let scalar = zeroize::Zeroizing::new(self.dh.to_bytes());
-        Ok(zeroize::Zeroizing::new(crate::kdf::hkdf_sha256::<32>(
+        let info = format!("duocord-secret-v1|{label}");
+        Ok(zeroize::Zeroizing::new(crate::kdf::hkdf_sha256_info::<32>(
             &scalar[..],
-            b"duocord-secret-v1",
-            label.as_bytes(),
+            info.as_bytes(),
         )?))
     }
 
