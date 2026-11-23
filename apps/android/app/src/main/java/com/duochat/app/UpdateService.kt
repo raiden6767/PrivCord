@@ -88,6 +88,12 @@ class UpdateService : Service() {
         return START_NOT_STICKY
     }
 
+    /** Android 15 stops a "data sync" service after six hours a day and expects it to stop itself when told. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        UpdateSignal.download.value = UpdateDownload(message = "The download took too long. Tap Install to try again.")
+        stopSelf()
+    }
+
     override fun onDestroy() {
         scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         super.onDestroy()

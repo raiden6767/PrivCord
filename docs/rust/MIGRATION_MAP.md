@@ -12,9 +12,9 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
 | Stays (UI) | 100 | 17937 |
-| Stays (platform adapter) | 68 | 13020 |
+| Stays (platform adapter) | 69 | 13076 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **239** | **43480** |
+| **All mapped files** | **240** | **43536** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -107,6 +107,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/bleLink.ts` | 134 | `getBleBridge`, `SecureLinkHandlers`, `SecureBleLink` | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/clipboard.test.ts` | 25 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/clipboard.ts` | 24 | `copyText` | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/desktop/src/lib/contracts.test.ts` | 50 | (none) | Fails when the engine and the screens drift apart (link stages, command names) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.test.ts` | 11 | (none) | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.ts` | 27 | `DeliveryRow`, `stateWords`, `deliveryRows` | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/encryption.ts` | 78 | `TextCipher`, `createTextCipher` | Secure storage and at-rest encryption helpers | SecureStore adapter (Tauri keyring) | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -193,7 +194,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/DuoChatApp.kt` | 25 | `DuoChatApp` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/MainActivity.kt` | 500 | `MainActivity`, `RootScreen`, `exists` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/RustCore.kt` | 16 | `RustCore` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/UpdateService.kt` | 133 | `UpdateService` | In-app update: downloads the APK into Android's installer | Platform adapter (stays) | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/UpdateService.kt` | 139 | `UpdateService` | In-app update: downloads the APK into Android's installer | Platform adapter (stays) | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/AndroidMeshRadio.kt` | 476 | `AndroidMeshRadio` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/BleEnvironment.kt` | 71 | `BleAvailability`, `bluetoothStatusFor`, `BleEnvironment`, `AndroidBleEnvironment` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/BleFraming.kt` | 114 | `BleFramingException`, `BleFraming`, `BleReassembler`, `BleTag` | BLE chunk framing | domain::ble | Domain | Ported, tested | M8 | docs/ble-vectors.json |

@@ -7,6 +7,11 @@ uiverse.io, mobbin.com/discover/apps/ios/latest, magicui.design, ui.watermelon.s
 ask for pasted content. The desktop has no Tailwind, so effects are re-implemented in plain CSS (see
 `apps/desktop/src/polish.css`); keep them cheap and honour `prefers-reduced-motion`. Check licences before copying code.
 
+## Before every push
+Run `scripts/precheck.sh` (add `--quick` to skip the Rust lints): formatting, the migration map, types and unit tests, the
+checks that failed in CI several times this project for want of a local run. `docs/BUG_CLASSES.md` lists the classes of
+bug fixed so far and what guards each; read it before adding a service, a message shape or an engine/screen value.
+
 ## CI minutes are limited
 GitHub Actions minutes are not unlimited, so only run CI when it is needed.
 - Test locally first (type-check, unit tests, builds, Playwright) and push once, not in small pieces: every push to a pull
