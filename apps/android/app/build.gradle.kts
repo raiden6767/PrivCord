@@ -199,7 +199,7 @@ dependencies {
     implementation("com.google.zxing:core:3.5.4")
     // The QR scanner: CameraX for the camera, ZXing core (above) for decoding.
     implementation("androidx.camera:camera-camera2:1.4.1")
-    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.7.0")
     implementation("androidx.camera:camera-view:1.4.1")
 
     testImplementation("junit:junit:4.13.2")
