@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 66 | 9878 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 100 | 17959 |
+| Stays (UI) | 100 | 17961 |
 | Stays (platform adapter) | 69 | 13097 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **240** | **43579** |
+| **All mapped files** | **240** | **43581** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -272,7 +272,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrDecode.kt` | 48 | `QrDecode` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrScanner.kt` | 364 | `rememberQrScanner`, `QrScannerScreen`, `ScanFrame`, `analyze`, `decodeCaptured`, `decodeImage` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrUtils.kt` | 35 | `qrBitmap` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/SettingsDialog.kt` | 1110 | `SettingsDialog`, `SectionTitle`, `DetailRow`, `ToggleRow`, `ChoiceChip`, `parseColor` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/SettingsDialog.kt` | 1112 | `SettingsDialog`, `SectionTitle`, `DetailRow`, `ToggleRow`, `ChoiceChip`, `parseColor` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/StatusScreens.kt` | 125 | `LoadingScreen`, `FatalScreen` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Theme.kt` | 241 | `figtree`, `style`, `mix`, `ensureReadable`, `onColor`, `scheme` +4 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/UpdateUi.kt` | 160 | `UpdateInstallButton`, `DownloadPill`, `UpdateDialog`, `UpdateCheckRow` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |

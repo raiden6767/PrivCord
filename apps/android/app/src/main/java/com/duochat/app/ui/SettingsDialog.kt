@@ -868,7 +868,7 @@ SectionTitle("About PrivCord")
                 DetailRow("Files and photos", "${state.usage.files} · " + android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, state.usage.fileBytes))
                 if (state.usage.syncEntries > 0) DetailRow("Kept for syncing your devices", "${state.usage.syncEntries} entries")
                 Spacer(Modifier.height(10.dp))
-                DetailRow("Version", AppConfig.APP_VERSION)
+                DetailRow("Version", com.duochat.app.BuildConfig.VERSION_NAME)
                 DetailRow("Platform", "Android · Kotlin/Compose")
                 DetailRow("Rust core", com.duochat.app.RustCore.status)
                 val context = androidx.compose.ui.platform.LocalContext.current
@@ -889,7 +889,9 @@ SectionTitle("About PrivCord")
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(10.dp))
+                // This page is its own full-screen window, and on some phones the system does not report the navigation
+                // bar to it, so the last lines would sit under the bar. Room at the end that does not depend on that.
+                Spacer(Modifier.height(96.dp))
             }
         }
     }
