@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 66 | 9878 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 100 | 18009 |
-| Stays (platform adapter) | 69 | 13097 |
+| Stays (UI) | 100 | 18012 |
+| Stays (platform adapter) | 71 | 13129 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **240** | **43629** |
+| **All mapped files** | **242** | **43664** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -91,7 +91,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/QuickSend.tsx` | 172 | `QuickSend` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/RecoveryDialogs.tsx` | 402 | `RecoveryDialogProps`, `RecoveryDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/RequestDialog.tsx` | 57 | `RequestDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
-| `apps/desktop/src/components/SettingsDialog.tsx` | 715 | `SettingsSection`, `SettingsDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/SettingsDialog.tsx` | 718 | `SettingsSection`, `SettingsDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/StorageByChat.tsx` | 69 | `StorageByChat` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/UpdateControl.tsx` | 128 | `UpdateCheck`, `UpdateBanner` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/dialogFocus.test.tsx` | 46 | (none) | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
@@ -100,6 +100,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/hooks/useSettings.ts` | 33 | `useSettings` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/hooks/useWindowEffects.ts` | 67 | `useUnreadTitle`, `useSecureScreen` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/lib/appLock.ts` | 141 | `isLockEnabled`, `lockSupported`, `enableLock`, `disableLock`, `unlock`, `RELOCK_AFTER_MS` | WebAuthn app lock | UI/adapter (stays) | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/appVersion.ts` | 20 | `useAppVersion` | The installed app version, and the connection limit the screens state (checked against the engine) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/ble.test.ts` | 128 | (none) | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/ble.ts` | 170 | `MessageTransport`, `BleBridgeEvent`, `BleBridge`, `BleHandlers`, `BleTransport`, `tauriBleBridge` | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/bleFraming.test.ts` | 110 | (none) | BLE chunk framing and rotating tags | domain::ble, crypto::ble | Domain | Ported, tested | M7/M8 | docs/ble-vectors.json: chunking, every reassembly error, 64 KiB, tags |
@@ -107,7 +108,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/bleLink.ts` | 134 | `getBleBridge`, `SecureLinkHandlers`, `SecureBleLink` | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/clipboard.test.ts` | 25 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/clipboard.ts` | 24 | `copyText` | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/lib/contracts.test.ts` | 65 | (none) | Fails when the engine and the screens drift apart (link stages, command names) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/contracts.test.ts` | 74 | (none) | Fails when the engine and the screens drift apart (link stages, command names) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.test.ts` | 11 | (none) | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.ts` | 27 | `DeliveryRow`, `stateWords`, `deliveryRows` | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/encryption.ts` | 78 | `TextCipher`, `createTextCipher` | Secure storage and at-rest encryption helpers | SecureStore adapter (Tauri keyring) | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -134,6 +135,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/killSwitch.test.ts` | 263 | (none) | Emergency erase steps for the webview (local storage, IndexedDB, files, Tauri commands) | engine::core::privacy runs the plan and the report; these files only call web and OS APIs | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/killSwitch.ts` | 270 | `KillSwitchTargets`, `WebStorageLike`, `DesktopKillSwitchDeps`, `KILL_SWITCH_REPORT_KEY`, `createAppKillSwitchExecutor`, `createConversationKillSwitchExecutor` +3 | Emergency erase steps for the webview (local storage, IndexedDB, files, Tauri commands) | engine::core::privacy runs the plan and the report; these files only call web and OS APIs | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/killSwitchFactory.ts` | 60 | `buildKillSwitchDeps`, `clearPersistedKillSwitchReport` | Emergency erase steps for the webview (local storage, IndexedDB, files, Tauri commands) | engine::core::privacy runs the plan and the report; these files only call web and OS APIs | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/limits.ts` | 3 | `MAX_LIVE_LINKS` | The installed app version, and the connection limit the screens state (checked against the engine) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/localDb.ts` | 423 | `OutboxRow`, `FileMeta`, `StoredMessage`, `LocalStore` | Desktop SQLite schema, encrypted columns, file store | storage::SqliteStorage; privcord-import (desktop importer) | Storage | Ported, tested | M7: after the importer has run on every install | importer and migration tests on generated fixtures (docs/legacy-fixtures.json); the browser file store stays in the adapter |
 | `apps/desktop/src/lib/network.ts` | 85 | `BUILTIN_TURN`, `loadTorMode`, `torModeActive`, `setTorMode`, `loadNetworkConfig`, `saveNetworkConfig` +2 | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/networkHosts.ts` | 36 | `HostRow`, `networkHosts` | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |

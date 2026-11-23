@@ -6,6 +6,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { MAX_LIVE_LINKS } from './limits';
 
 const root = join(__dirname, '../../../..');
 
@@ -61,5 +62,13 @@ describe('engine and screens agree', () => {
     for (const code of ['InvalidPhrase', 'UnknownDevice', 'NeedsAccountKey']) {
       expect(table.has(code), `desktop has no words for ${code}`).toBe(true);
     }
+  });
+
+  it('the connection limit the screens state is the one the engine enforces', () => {
+    const m = /pub const MAX_LINKS: usize = (\d+);/.exec(rust);
+    expect(m, 'MAX_LINKS not found in Rust').not.toBeNull();
+    expect(MAX_LIVE_LINKS).toBe(Number(m?.[1]));
+    const android = text([join(root, 'apps/android/app/src/main/java/com/duochat/app/ui/SettingsDialog.kt')]);
+    expect(android, 'the Android text says a different number of friends').toContain(`at most ${m?.[1]} friends`);
   });
 });

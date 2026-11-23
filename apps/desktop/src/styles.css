@@ -1344,8 +1344,8 @@ textarea:focus {
 }
 
 .modal {
-  width: min(620px, 100%);
-  max-height: min(86dvh, 900px);
+  width: min(38.75rem, 100%);
+  max-height: min(86dvh, 56rem);
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
@@ -1356,7 +1356,7 @@ textarea:focus {
 }
 
 .modal.wide {
-  width: min(900px, 100%);
+  width: min(56rem, 100%);
 }
 
 @keyframes modal-in {
@@ -1530,6 +1530,7 @@ textarea:focus {
 
 .swatches {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 

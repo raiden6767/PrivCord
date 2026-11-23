@@ -20,6 +20,8 @@ import { NO_PREFS } from '../lib/engine';
 import { formatBytes } from '../lib/format';
 import { DeliveryHealth, DevicesStrip, SupportTools, WhatsNew } from './Insights';
 import { AlertIcon, CheckIcon, KeyIcon, TrashIcon } from './Icons';
+import { MAX_LIVE_LINKS } from '../lib/limits';
+import { useAppVersion } from '../lib/appVersion';
 
 export type SettingsSection = 'profile' | 'devices' | 'appearance' | 'notifications' | 'connection' | 'security' | 'backup' | 'about';
 
@@ -300,6 +302,7 @@ export function SettingsDialog({
   }, [open, initialSection]);
 
   const connected = state.contacts.filter((c) => c.conn === 'connected').length;
+  const appVersion = useAppVersion();
 
   return (
     <Modal open={open} onClose={onClose} title="Settings" wide>
@@ -524,7 +527,7 @@ export function SettingsDialog({
               </div>
             </div>
             <p className="muted small">
-              Messages go straight from device to device. A device keeps at most {30} live connections, which
+              Messages go straight from device to device. A device keeps at most {MAX_LIVE_LINKS} live connections, which
               is plenty for groups of a few dozen.
             </p>
             <NetworkTransparency engine={engine} />
@@ -636,7 +639,7 @@ export function SettingsDialog({
                   checked={settings.updateChecks}
                   onChange={(value) => updateSettings({ updateChecks: value })}
                   label="Check for updates"
-                  description="Looks for a new version when the app starts and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on."
+                  description="Looks for a new version when the app starts, when you come back to it, and about every half hour while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on."
                 />
                 <UpdateCheck />
               </div>
@@ -673,7 +676,7 @@ export function SettingsDialog({
               </div>
             ) : null}
             <p>
-              <strong>PrivCord</strong> · version {config.appVersion}
+              <strong>PrivCord</strong> · version {appVersion}
             </p>
             <p className="muted small">
               Private chats and groups with no accounts and no cloud. Messages are end-to-end encrypted and go

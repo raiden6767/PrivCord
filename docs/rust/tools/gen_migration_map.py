@@ -72,6 +72,7 @@ rule(r"desktop/src/lib/(secureStore|encryption|sealedSettings)(\.test)?\.ts", "S
 rule(r"desktop/src/lib/identity\.ts", "Identity load and create", "crypto::identity + engine", "Engine", PORTED, "M7")
 rule(r"desktop/src/lib/insightInputs(\.test)?\.ts", "Shapes app state into inputs of the engine insights (signaling words, quiet-now, unread sum, window title)", "UI glue (stays); the rules live in engine::insights", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/appLock\.ts", "WebAuthn app lock", "UI/adapter (stays)", "Adapter", ADAPTER, "Stays")
+rule(r"desktop/src/lib/(appVersion|limits)\.ts", "The installed app version, and the connection limit the screens state (checked against the engine)", "Desktop adapter + engine host", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/contracts\.test\.ts", "Fails when the engine and the screens drift apart (link stages, command names)", "Desktop adapter + engine host", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/killSwitch.*\.ts", "Emergency erase steps for the webview (local storage, IndexedDB, files, Tauri commands)", "engine::core::privacy runs the plan and the report; these files only call web and OS APIs", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/(outbox)(\.test)?\.ts", "Retry/outbox policy", "engine::core delivery", "Engine", PORTED, "M7", "engine tests")

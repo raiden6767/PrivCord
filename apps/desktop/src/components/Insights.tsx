@@ -159,7 +159,7 @@ export function WhatsNew({ engine, onDismiss }: { engine: ChatEngineApi | null; 
   return (
     <div className={onDismiss ? 'whats-new banner' : 'card-box'}>
       <div className="card-title">
-        <strong>What's new in {w.version}</strong>
+        <strong>What's new</strong>
         {onDismiss ? (
           <button type="button" className="icon-button" aria-label="Dismiss" onClick={onDismiss}>
             <XIcon size={14} />
