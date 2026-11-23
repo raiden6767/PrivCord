@@ -37,7 +37,7 @@ const DEFAULTS: AppSettings = {
   theme: 'system',
   accent: ACCENTS[0].value,
   notificationsEnabled: true,
-  notificationPreviews: true,
+  notificationPreviews: false,
   palette: DEFAULT_PALETTE,
   displayName: '',
   groupOnly: false,

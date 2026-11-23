@@ -1403,20 +1403,29 @@ fn keys_go_ahead_through_the_relay_so_a_first_message_is_sealed_post_quantum() {
     fran.online(&mut relay);
     laptop.online(&mut relay);
     fran.online(&mut relay);
-    let laptop_addr = format!("{pat}.{}", laptop.core.this_device_id().unwrap());
-    let laptop_box = privcord_crypto::seal::mailbox_for(&laptop_addr);
-    let before = relay.boxes.get(&laptop_box).map_or(0, Vec::len);
+    let before = counts(&relay);
 
     fran.core.send_message(&pat, "first ever", None).unwrap();
     fran.online(&mut relay);
-    let new: Vec<privcord_domain::blob::SealedBlob> = relay.boxes[&laptop_box][before..]
+    let new: Vec<privcord_domain::blob::SealedBlob> = relay
+        .boxes
         .iter()
+        .flat_map(|(m, v)| {
+            let n = before.get(m).copied().unwrap_or(0);
+            v[n..].iter()
+        })
         .filter_map(|b| privcord_domain::blob::SealedBlob::decode(b))
         .collect();
     assert!(!new.is_empty());
+    let laptop_addr = format!("{pat}.{}", laptop.core.this_device_id().unwrap());
     assert!(
-        new.iter().all(|b| b.v == 2),
-        "sealed to the laptop's own keys"
+        new.iter()
+            .any(|b| b.v == 3 && b.to.is_empty() && b.from.is_empty()),
+        "an anonymous envelope, sealed to the laptop's own keys"
+    );
+    assert!(
+        new.iter().all(|b| b.to != laptop_addr),
+        "nothing names the laptop"
     );
     laptop.online(&mut relay);
     assert!(laptop.texts().contains(&"first ever".to_owned()));
@@ -2498,4 +2507,188 @@ fn removing_a_device_with_the_phrase_needs_the_passphrase_the_account_was_made_w
         .core
         .remove_device_now(&laptop_id, &phrase, "correct horse battery")
         .unwrap();
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What a relay can see (METADATA_AUDIT.md, M1): no sender, no recipient, no signature in what is posted.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Every blob in the relay, decoded, with the text of what it shows (the blob's own JSON).
+fn everything_the_relay_holds(
+    relay: &Relay,
+) -> Vec<(String, privcord_domain::blob::SealedBlob, String)> {
+    relay
+        .boxes
+        .iter()
+        .flat_map(|(m, v)| v.iter().map(move |b| (m.clone(), b)))
+        .filter_map(|(m, b)| {
+            let blob = privcord_domain::blob::SealedBlob::decode(b)?;
+            let shown = String::from_utf8(privcord_domain::codec::decode(b)?).ok()?;
+            Some((m, blob, shown))
+        })
+        .collect()
+}
+
+#[test]
+fn messages_through_a_relay_name_neither_sender_nor_recipient_once_both_apps_support_it() {
+    let mut h = household();
+    let (pat, fran) = (h.pat.clone(), h.fran_uid.clone());
+    // Fran and Pat's devices have exchanged keys (they were online together), so each knows the other opens envelopes.
+    for _ in 0..3 {
+        h.fran.online(&mut h.relay);
+        h.phone.online(&mut h.relay);
+        h.laptop.online(&mut h.relay);
+    }
+    let before: usize = h.relay.boxes.values().map(Vec::len).sum();
+    h.fran
+        .core
+        .send_message(&pat, "to Pat, via the relay", None)
+        .unwrap();
+    h.fran.online(&mut h.relay);
+    for _ in 0..3 {
+        h.phone.online(&mut h.relay);
+        h.laptop.online(&mut h.relay);
+    }
+    // It arrives.
+    assert!(h
+        .phone
+        .texts()
+        .contains(&"to Pat, via the relay".to_owned()));
+    let posted = everything_the_relay_holds(&h.relay);
+    assert!(posted.len() > before);
+    // What a relay holds names nobody: not Fran, not Pat, not any device of theirs.
+    let names: Vec<String> = vec![
+        fran.to_string(),
+        pat.to_string(),
+        h.tablet_id.clone(),
+        h.laptop.core.this_device_id().unwrap().to_owned(),
+        h.phone.core.this_device_id().unwrap().to_owned(),
+    ];
+    let mut envelopes = 0;
+    for (_, blob, shown) in &posted {
+        if blob.v == 3 {
+            envelopes += 1;
+            assert!(blob.to.is_empty() && blob.from.is_empty() && blob.sig.is_empty());
+        }
+        for n in &names {
+            if blob.v == 3 {
+                assert!(!shown.contains(n.as_str()), "an envelope shows {n}");
+            }
+        }
+    }
+    assert!(
+        envelopes > 0,
+        "something went through the relay as an envelope"
+    );
+}
+
+#[test]
+fn a_friend_whose_app_does_not_open_envelopes_still_gets_the_plain_sealed_message() {
+    // An older app: it never says it opens envelopes, so nothing is wrapped for it.
+    let mut h = household();
+    let fran_uid = h.fran_uid.clone();
+    for _ in 0..3 {
+        h.fran.online(&mut h.relay);
+        h.phone.online(&mut h.relay);
+        h.laptop.online(&mut h.relay);
+    }
+    // Forget that Fran's app opens envelopes (as if her keys had come from an older build).
+    h.phone.core.test_forget_anon_support(&fran_uid);
+    let before = h
+        .relay
+        .boxes
+        .get(&privcord_crypto::seal::mailbox_for(fran_uid.as_str()))
+        .map_or(0, Vec::len);
+    h.phone
+        .core
+        .send_message(&fran_uid, "to an older app", None)
+        .unwrap();
+    h.phone.online(&mut h.relay);
+    let fran_box = privcord_crypto::seal::mailbox_for(fran_uid.as_str());
+    let new: Vec<_> = h
+        .relay
+        .boxes
+        .get(&fran_box)
+        .map(|v| v[before..].to_vec())
+        .unwrap_or_default();
+    // Whatever was posted for her is the old, plain shape (nothing is wrapped for an app that cannot open it).
+    for raw in &new {
+        let blob = privcord_domain::blob::SealedBlob::decode(raw).unwrap();
+        assert_ne!(blob.v, 3, "wrapped for an app that cannot open it");
+    }
+    for _ in 0..3 {
+        h.fran.online(&mut h.relay);
+    }
+    assert!(h.fran.texts().contains(&"to an older app".to_owned()));
+}
+
+#[test]
+fn messages_go_to_a_private_inbox_that_cannot_be_worked_out_from_the_public_id() {
+    let mut h = household();
+    let (pat, fran) = (h.pat.clone(), h.fran_uid.clone());
+    // Keys (and with them each side's private inbox) are exchanged when the two are online together.
+    for _ in 0..10 {
+        h.fran.online(&mut h.relay);
+        h.phone.online(&mut h.relay);
+        h.laptop.online(&mut h.relay);
+    }
+    // The mailboxes anyone who knows Pat's public ids can compute.
+    let public_boxes: Vec<String> = [
+        pat.to_string(),
+        format!("{pat}.{}", h.laptop.core.this_device_id().unwrap()),
+        format!("{pat}.{}", h.tablet_id),
+        format!("{pat}.{}", h.phone.core.this_device_id().unwrap()),
+    ]
+    .iter()
+    .map(|a| privcord_crypto::seal::mailbox_for(a))
+    .collect();
+    let before = counts(&h.relay);
+    h.fran
+        .core
+        .send_message(&pat, "for Pat only", None)
+        .unwrap();
+    h.fran.online(&mut h.relay);
+    // What Fran herself posted, before anyone else gets a turn (Pat's own devices also post, to each other).
+    let posted = posted_since(&h.relay, &before);
+    for _ in 0..3 {
+        h.phone.online(&mut h.relay);
+        h.laptop.online(&mut h.relay);
+    }
+    assert!(!posted.is_empty(), "the message went through the relay");
+    // Only for addresses whose app has handed over its keys (the rest still use the public mailbox, as before).
+    let keyed: Vec<String> = h
+        .fran
+        .core
+        .test_known_keys()
+        .into_iter()
+        .filter(|(_, anon, inbox)| *anon && *inbox)
+        .map(|(a, _, _)| privcord_crypto::seal::mailbox_for(&a))
+        .collect();
+    assert!(!keyed.is_empty(), "keys were exchanged");
+    for (i, m) in public_boxes.iter().enumerate() {
+        if !keyed.contains(m) {
+            continue;
+        }
+        assert!(
+            !posted.contains(m),
+            "posted to a mailbox anyone with Pat's id can watch (address #{i}: 0 account, 1 laptop, 2 tablet, 3 phone)"
+        );
+    }
+    assert!(
+        h.phone.texts().contains(&"for Pat only".to_owned()),
+        "and it still arrived"
+    );
+    // The same the other way: what Pat's devices post for Fran never goes to the mailbox made from Fran's id.
+    let fran_public = privcord_crypto::seal::mailbox_for(fran.as_str());
+    let before = counts(&h.relay);
+    h.phone
+        .core
+        .send_message(&fran, "for Fran only", None)
+        .unwrap();
+    h.phone.online(&mut h.relay);
+    assert!(!posted_since(&h.relay, &before).contains(&fran_public));
+    for _ in 0..3 {
+        h.fran.online(&mut h.relay);
+    }
+    assert!(h.fran.texts().contains(&"for Fran only".to_owned()));
 }

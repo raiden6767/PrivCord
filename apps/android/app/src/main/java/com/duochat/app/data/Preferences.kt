@@ -16,7 +16,8 @@ data class AppSettings(
     /** A built-in colour theme (see Themes.kt), or "classic" for the system light/dark look with the accent picker. */
     val palette: String = CLASSIC_PALETTE,
     val notificationsEnabled: Boolean = true,
-    val notificationPreviews: Boolean = true,
+    // Off unless the person turns it on: message text on a lock screen, and in the system's notification history, is a leak.
+    val notificationPreviews: Boolean = false,
     /** Local nickname the single paired friend had before multi-contact; used once to migrate it. */
     val peerNickname: String = "",
     /** The name friends see on your invite and in groups. */
@@ -114,7 +115,7 @@ class SettingsRepository(context: Context) {
             accent = if (Regex("^#[0-9a-fA-F]{6}$").matches(accent)) accent else ACCENTS.first().second,
             palette = o.optString("palette", CLASSIC_PALETTE).let { if (it == CLASSIC_PALETTE || themeById(it) != null) it else CLASSIC_PALETTE },
             notificationsEnabled = o.optBoolean("notificationsEnabled", true),
-            notificationPreviews = o.optBoolean("notificationPreviews", true),
+            notificationPreviews = o.optBoolean("notificationPreviews", false),
             peerNickname = o.optString("peerNickname", "").trim().take(40),
             displayName = o.optString("displayName", "").trim().take(40),
             groupOnly = o.optBoolean("groupOnly", false),

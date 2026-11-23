@@ -233,6 +233,91 @@ pub fn open_v2(
     signed_by(blob, from, serde_json::from_slice(unpad(&padded)?).ok()?)
 }
 
+/// The anonymous outer envelope (v3). Posted to a relay it shows no sender, no recipient and no signature: those are
+/// inside the sealed message it wraps. It is sealed to the recipient's *standing* key (the one-time keys stay for the
+/// message inside, which keeps its forward secrecy), so what it protects is who talked to whom, not the content.
+const ANON_AAD: &[u8] = b"duocord-anon-v3";
+
+fn anon_key(
+    epk: &PublicJwk,
+    key_id: &str,
+    ecdh: &[u8],
+    kem_ct: &[u8],
+    kem_ss: &[u8; 32],
+) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+    combine(
+        "duocord-anon-v3",
+        ecdh,
+        &[kem_ss],
+        &[thumb(epk)?.as_bytes(), key_id.as_bytes(), kem_ct],
+    )
+}
+
+/// Wrap an already sealed message (`inner`, its encoded text) for one of the recipient's keys, with nothing outside that
+/// names the sender or the recipient.
+pub fn seal_anon(
+    key: &PeerKey,
+    inner: &str,
+    entropy: &mut dyn Entropy,
+) -> Result<SealedBlob, CryptoError> {
+    let ephemeral = random_secret_key(entropy)?;
+    let peer = public_key_from_jwk(&key.dh)?;
+    let shared = diffie_hellman(ephemeral.to_nonzero_scalar(), peer.as_affine());
+    let (kem_ct, kem_ss) = kem_encapsulate(&key.kem, entropy)?;
+    let epk = jwk_of(&ephemeral.public_key());
+    let aead_key = anon_key(&epk, &key.id, shared.raw_secret_bytes(), &kem_ct, &kem_ss)?;
+    let iv: [u8; 12] = random_array(entropy)?;
+    let ct = aead::encrypt(&aead_key[..], &iv, &pad(inner.as_bytes()), ANON_AAD)?;
+    let blob = SealedBlob {
+        v: 3,
+        to: String::new(),
+        from: String::new(),
+        epk,
+        iv: codec::encode(&iv),
+        ct: codec::encode(&ct),
+        sig: String::new(),
+        kem: Some(codec::encode(&kem_ct)),
+        key: Some(key.id.clone()),
+    };
+    if blob.encode().encode_utf16().count() > MAX_SEALED_BLOB_BYTES {
+        return Err(CryptoError::TooLarge);
+    }
+    Ok(blob)
+}
+
+/// The sealed message inside an anonymous envelope, if it is one made for `own_key`. Nothing here says who sent it: the
+/// caller checks that on the message inside.
+pub fn open_anon(blob: &SealedBlob, own_key: &OwnKey) -> Option<String> {
+    if blob.v != 3
+        || !blob.to.is_empty()
+        || !blob.from.is_empty()
+        || !blob.sig.is_empty()
+        || blob.key.as_deref() != Some(own_key.id.as_str())
+    {
+        return None;
+    }
+    let kem_ct = codec::decode(blob.kem.as_deref()?).filter(|c| c.len() == KEM_CIPHERTEXT_BYTES)?;
+    let kem_ss = own_key.kem.decapsulate(&kem_ct).ok()?;
+    let peer = public_key_from_jwk(&blob.epk).ok()?;
+    let shared = diffie_hellman(own_key.dh.to_nonzero_scalar(), peer.as_affine());
+    let aead_key = anon_key(
+        &blob.epk,
+        &own_key.id,
+        shared.raw_secret_bytes(),
+        &kem_ct,
+        &kem_ss,
+    )
+    .ok()?;
+    let padded = aead::decrypt(
+        &aead_key[..],
+        &codec::decode(&blob.iv)?,
+        &codec::decode(&blob.ct)?,
+        ANON_AAD,
+    )
+    .ok()?;
+    String::from_utf8(unpad(&padded)?.to_vec()).ok()
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
@@ -300,5 +385,57 @@ mod tests {
         let mut bad = bob_key.public().to_value();
         bad["kem"] = json!(codec::encode(&[0u8; 10]));
         assert!(PeerKey::from_value(&bad).is_none());
+    }
+
+    #[test]
+    fn an_anonymous_envelope_names_nobody_and_opens_only_with_the_key_it_is_for() {
+        let mut rng = SeededEntropy::new("anon");
+        let key = OwnKey::generate(&mut rng, 1).unwrap();
+        let other = OwnKey::generate(&mut rng, 1).unwrap();
+        let public = PeerKey::from_value(&key.public().to_value()).unwrap();
+        let inner = r#"{"v":2,"to":"alice","from":"bob","ct":"secret-looking"}"#;
+        let envelope = seal_anon(&public, inner, &mut rng).unwrap();
+        // Outside: no sender, no recipient, no signature, and none of the inner text.
+        assert_eq!(
+            (
+                envelope.v,
+                envelope.to.as_str(),
+                envelope.from.as_str(),
+                envelope.sig.as_str()
+            ),
+            (3, "", "", "")
+        );
+        let wire = envelope.encode();
+        let text = String::from_utf8(codec::decode(&wire).unwrap()).unwrap();
+        for needle in ["alice", "bob", "secret-looking"] {
+            assert!(!text.contains(needle), "the envelope shows {needle}");
+        }
+        // It survives the trip as text and opens with its key only.
+        let back = SealedBlob::decode(&wire).unwrap();
+        assert_eq!(open_anon(&back, &key).as_deref(), Some(inner));
+        assert!(open_anon(&back, &other).is_none());
+        // Any change is refused, and so is a blob that is not an anonymous envelope.
+        let flip = |s: &str| {
+            let mut b = codec::decode(s).unwrap();
+            b[5] ^= 1;
+            codec::encode(&b)
+        };
+        for change in 0..4 {
+            let mut b = back.clone();
+            match change {
+                0 => b.ct = flip(&b.ct),
+                1 => b.kem = Some(flip(b.kem.as_deref().unwrap())),
+                2 => b.iv = flip(&b.iv),
+                _ => b.key = Some(other.id.clone()),
+            }
+            assert!(open_anon(&b, &key).is_none(), "change {change}");
+        }
+        let mut named = back.clone();
+        named.from = "bob".into();
+        assert!(open_anon(&named, &key).is_none());
+        // Two envelopes of the same message look unrelated.
+        let again = seal_anon(&public, inner, &mut rng).unwrap();
+        assert_ne!(again.epk, back.epk);
+        assert_ne!(again.ct, back.ct);
     }
 }

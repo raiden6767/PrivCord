@@ -30,7 +30,7 @@ class SealWireVectorsTest {
     private fun json(wire: String) = JSONObject(String(SignatureCodec.base64UrlDecode(wire), Charsets.UTF_8))
 
     @Test fun thereAreVectorsForEveryKind() {
-        assertTrue(blobs.map { it.getString("name") }.containsAll(listOf("link-request", "classic-v1", "hybrid-v2")))
+        assertTrue(blobs.map { it.getString("name") }.containsAll(listOf("link-request", "classic-v1", "hybrid-v2", "anonymous-v3")))
     }
 
     @Test fun everyBlobDecodesAndComesBackUnchanged() {

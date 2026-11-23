@@ -67,7 +67,9 @@ impl SealedBlob {
         // v1: classic ECDH. v2: hybrid, with the ML-KEM ciphertext and the recipient key it was sealed to.
         let (kem, key) = match v {
             1 => (None, None),
-            2 => (
+            // v2: hybrid. v3: the same envelope with no sender, recipient or signature outside (`to`, `from` and `sig`
+            // are empty); the sealed message it wraps carries them inside.
+            2 | 3 => (
                 Some(o.get("kem")?.as_str()?.to_owned()),
                 Some(o.get("key")?.as_str()?.to_owned()),
             ),

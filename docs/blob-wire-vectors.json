@@ -9,6 +9,10 @@
       "wire": "eyJ2IjoxLCJ0byI6InVpZC10byIsImZyb20iOiJ1aWQtZnJvbSIsImVwayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IkFRSUQiLCJ5IjoiQkFVRyJ9LCJpdiI6ImFYWSIsImN0IjoiWTNRIiwic2lnIjoiYzJsbiJ9"
     },
     {
+      "name": "anonymous-v3",
+      "wire": "eyJ2IjozLCJ0byI6IiIsImZyb20iOiIiLCJlcGsiOnsia3R5IjoiRUMiLCJjcnYiOiJQLTI1NiIsIngiOiJBUUlEIiwieSI6IkJBVUcifSwiaXYiOiJhWFkiLCJjdCI6IlkzUSIsInNpZyI6IiIsImtlbSI6ImEyVnQiLCJrZXkiOiJhMlY1In0"
+    },
+    {
       "name": "hybrid-v2",
       "wire": "eyJ2IjoyLCJ0byI6InVpZC10byIsImZyb20iOiJ1aWQtZnJvbSIsImVwayI6eyJrdHkiOiJFQyIsImNydiI6IlAtMjU2IiwieCI6IkFRSUQiLCJ5IjoiQkFVRyJ9LCJpdiI6ImFYWSIsImN0IjoiWTNRIiwic2lnIjoiYzJsbiIsImtlbSI6ImEyVnQiLCJrZXkiOiJhMlY1In0"
     }

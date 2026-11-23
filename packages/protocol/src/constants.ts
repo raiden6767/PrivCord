@@ -14,7 +14,6 @@ export const MAX_MANUAL_SIGNAL_BYTES = 64 * 1024;
 export const MANUAL_SIGNAL_PREFIX = 'DUO1:';
 
 export const DEFAULT_STUN_URLS = [
-  'stun:stun.l.google.com:19302',
   'stun:stun.cloudflare.com:3478',
 ];
 

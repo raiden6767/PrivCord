@@ -640,7 +640,7 @@ export function SettingsDialog({
                   checked={settings.updateChecks}
                   onChange={(value) => updateSettings({ updateChecks: value })}
                   label="Check for updates"
-                  description={`Looks for a new version when the app starts, when you come back to it, and about every ${RECHECK_MS / 60_000} minutes while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.`}
+                  description={`Looks for a new version when the app starts, when you come back to it, and about every ${RECHECK_MS / 3_600_000} hours while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.`}
                 />
                 <UpdateCheck />
               </div>

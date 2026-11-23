@@ -72,10 +72,8 @@ data class NetworkConfig(
     }
 
     companion object {
-        val DEFAULT_STUN = listOf(
-            "stun:stun.l.google.com:19302",
-            "stun:stun.cloudflare.com:3478",
-        )
+        // One public server, not two: every STUN server sees this phone's address each time it starts a connection.
+        val DEFAULT_STUN = listOf("stun:stun.cloudflare.com:3478")
         val DEFAULT_NOSTR_RELAYS = listOf("wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net")
 
         fun isStunUrl(value: String) = isIceUrl(value, "stun", "stuns")

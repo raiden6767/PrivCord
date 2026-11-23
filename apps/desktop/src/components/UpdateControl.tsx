@@ -69,7 +69,7 @@ export function UpdateCheck() {
 
 /**
  * A quiet banner when a newer build exists. The app usually stays running in the tray, so one look at start is not enough:
- * it looks again whenever the window comes back to the front, and on a timer, at most every half hour. A look that fails
+ * it looks again whenever the window comes back to the front, and on a timer, at most every six hours. A look that fails
  * (no network yet) is tried again next time. "Later" is remembered for three days.
  */
 export function UpdateBanner({ settings, updateSettings }: { settings: AppSettings; updateSettings: (patch: Partial<AppSettings>) => void }) {

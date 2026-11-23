@@ -44,6 +44,14 @@ pub fn replay_id(blob: &SealedBlob) -> String {
     signed_part(blob).map_or_else(|_| blob.sig.clone(), |b| sha256_hex(&b))
 }
 
+/// The name of a private inbox made from a secret only its owner holds (see `Identity::derive_secret`). Unlike
+/// [`mailbox_for`] it cannot be worked out from a public id, so only people the owner told can find it.
+pub fn inbox_mailbox(secret: &[u8]) -> String {
+    let mut input = b"duocord-inbox-v1|".to_vec();
+    input.extend_from_slice(secret);
+    sha256_hex(&input)
+}
+
 /// Where a client publishes to and listens on. Hashing keeps the uid out of relay logs.
 pub fn mailbox_for(uid: &str) -> String {
     sha256_hex(format!("{MAILBOX_PREFIX}{uid}").as_bytes())
