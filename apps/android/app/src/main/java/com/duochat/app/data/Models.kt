@@ -418,7 +418,7 @@ sealed interface DeviceRemoval {
     val deviceId: String
     data class Request(override val deviceId: String) : DeviceRemoval
     data class Cancel(override val deviceId: String) : DeviceRemoval
-    data class Now(override val deviceId: String, val phrase: String) : DeviceRemoval
+    data class Now(override val deviceId: String, val phrase: String, val passphrase: String = "") : DeviceRemoval
 }
 
 /** Linking a device, while it happens: "code" (compare [code], the 6 digits), then "done", "failed", "cancelled" or "expired". */

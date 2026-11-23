@@ -13,6 +13,7 @@ function when(ms: number): string {
 export function DeviceRow({ device, engine }: { device: DeviceInfo; engine: ChatEngineApi | null }) {
   const [open, setOpen] = useState(false);
   const [phrase, setPhrase] = useState('');
+  const [passphrase, setPassphrase] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canRemove = !device.thisDevice && !!engine?.requestDeviceRemoval;
@@ -98,12 +99,21 @@ export function DeviceRow({ device, engine }: { device: DeviceInfo; engine: Chat
               onChange={(e) => setPhrase(e.target.value)}
             />
           </label>
+          <label className="field">
+            <span className="small">Passphrase (only if your account was set up with one)</span>
+            <input
+              type="password"
+              value={passphrase}
+              autoComplete="off"
+              onChange={(e) => setPassphrase(e.target.value)}
+            />
+          </label>
           <div className="button-row">
             <button
               type="button"
               className="button danger"
               disabled={busy || phrase.trim().split(/\s+/).length < 12}
-              onClick={() => void run(() => engine?.removeDeviceNow?.(device.id, phrase.trim()))}
+              onClick={() => void run(() => engine?.removeDeviceNow?.(device.id, phrase.trim(), passphrase))}
             >
               Remove now
             </button>

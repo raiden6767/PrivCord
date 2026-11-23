@@ -2224,3 +2224,278 @@ fn preferences_survive_a_restart_and_a_fourth_pin_drops_the_oldest() {
     assert_eq!(again.core.prefs().pins, vec!["b", "c", "d"]);
     assert_eq!(again.core.prefs().quiet.from, 60);
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Unlinking scenarios (docs/BUG_CLASSES.md): the cases around a removal that a real set of devices hits.
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Three devices of one account (phone holds the key) and one friend who has them as a contact and the other way round.
+struct Household {
+    clock: Arc<FakeClock>,
+    relay: Relay,
+    phone: Device,
+    laptop: Device,
+    tablet: Device,
+    fran: Device,
+    phrase: String,
+    pat: UserId,
+    fran_uid: UserId,
+    tablet_id: String,
+}
+
+fn household() -> Household {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    let phrase = phone.core.create_identity().unwrap();
+    let pat = phone.core.own_uid().unwrap().clone();
+    let mut fran = Device::new("fran", &clock);
+    fran.core.create_identity().unwrap();
+    let fran_uid = fran.core.own_uid().unwrap().clone();
+    phone
+        .core
+        .add_contact(
+            &fran.core.own_card(Some("Fran")).unwrap(),
+            ContactTrust::Verified,
+        )
+        .unwrap();
+    fran.core
+        .add_contact(
+            &phone.core.own_card(Some("Pat")).unwrap(),
+            ContactTrust::Verified,
+        )
+        .unwrap();
+    phone.core.set_store_forward(true).unwrap();
+    fran.core.set_store_forward(true).unwrap();
+    let mut laptop = link_laptop(&mut phone, &mut relay, &clock);
+    let mut tablet = link_device(&mut phone, &mut relay, &clock, "tablet");
+    for d in [&mut laptop, &mut tablet] {
+        d.core.set_store_forward(true).unwrap();
+    }
+    for _ in 0..3 {
+        laptop.online(&mut relay);
+        tablet.online(&mut relay);
+        phone.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    let tablet_id = tablet.core.this_device_id().unwrap().to_owned();
+    Household {
+        clock,
+        relay,
+        phone,
+        laptop,
+        tablet,
+        fran,
+        phrase: phrase.to_string(),
+        pat,
+        fran_uid,
+        tablet_id,
+    }
+}
+
+impl Household {
+    fn is_active(&self, d: &Device, id: &str) -> bool {
+        d.core
+            .device_list()
+            .and_then(|l| l.get(id))
+            .is_some_and(privcord_crypto::devices::DeviceEntry::active)
+    }
+}
+
+#[test]
+fn a_removal_that_falls_due_while_the_key_holder_is_away_happens_when_it_returns() {
+    const DAY: i64 = 24 * 60 * 60 * 1000;
+    let mut h = household();
+    h.laptop.core.request_device_removal(&h.tablet_id).unwrap();
+    for _ in 0..2 {
+        h.laptop.online(&mut h.relay);
+        h.tablet.online(&mut h.relay);
+    }
+    // Three days pass with the phone (the only install that can carry it out) switched off.
+    h.clock.advance(3 * DAY);
+    for _ in 0..3 {
+        h.laptop.online(&mut h.relay);
+        h.tablet.online(&mut h.relay);
+    }
+    assert!(h.is_active(&h.laptop, &h.tablet_id), "nothing happened yet");
+    let shown = h
+        .laptop
+        .core
+        .snapshot()
+        .devices
+        .into_iter()
+        .find(|v| v.id == h.tablet_id)
+        .and_then(|v| v.removal_at);
+    assert!(shown.is_some(), "the screens still show it as pending");
+    // The phone comes back: the overdue removal is carried out at once, and the others follow.
+    for _ in 0..3 {
+        h.phone.online(&mut h.relay);
+    }
+    assert!(!h.is_active(&h.phone, &h.tablet_id));
+    for _ in 0..3 {
+        h.laptop.online(&mut h.relay);
+    }
+    assert!(!h.is_active(&h.laptop, &h.tablet_id));
+    h.tablet.online(&mut h.relay);
+    assert!(
+        h.tablet.core.own_uid().is_none(),
+        "the tablet erased itself"
+    );
+}
+
+#[test]
+fn a_device_that_was_away_for_a_removal_catches_up_and_still_syncs() {
+    let mut h = household();
+    let (phrase, tablet_id) = (h.phrase.clone(), h.tablet_id.clone());
+    // The laptop is off while the phone removes the tablet (the sync key changes) and then makes a change.
+    h.phone
+        .core
+        .remove_device_now(&tablet_id, &phrase, "")
+        .unwrap();
+    for _ in 0..2 {
+        h.phone.online(&mut h.relay);
+    }
+    let (card, new_friend) = friend(&h.clock);
+    h.phone
+        .core
+        .add_contact(&card, ContactTrust::Verified)
+        .unwrap();
+    h.phone.online(&mut h.relay);
+    // The laptop returns: it gets the new list and key, and the change written under the new key.
+    for _ in 0..4 {
+        h.laptop.online(&mut h.relay);
+        h.phone.online(&mut h.relay);
+    }
+    assert!(!h.is_active(&h.laptop, &tablet_id));
+    assert!(
+        h.laptop
+            .core
+            .snapshot()
+            .contacts
+            .iter()
+            .any(|c| c.uid == new_friend),
+        "the laptop missed the removal's new sync key and cannot read what the phone writes now"
+    );
+}
+
+#[test]
+fn a_removed_device_can_be_replaced_by_linking_a_fresh_one() {
+    let mut h = household();
+    let (phrase, tablet_id) = (h.phrase.clone(), h.tablet_id.clone());
+    h.phone
+        .core
+        .remove_device_now(&tablet_id, &phrase, "")
+        .unwrap();
+    for _ in 0..3 {
+        h.phone.online(&mut h.relay);
+        h.tablet.online(&mut h.relay);
+    }
+    assert!(h.tablet.core.own_uid().is_none());
+    // The same hardware, set up again from nothing, joins like any new device.
+    let mut again = link_device(&mut h.phone, &mut h.relay, &h.clock, "tablet-again");
+    for _ in 0..3 {
+        again.online(&mut h.relay);
+        h.phone.online(&mut h.relay);
+        h.laptop.online(&mut h.relay);
+    }
+    let new_id = again.core.this_device_id().unwrap().to_owned();
+    assert_ne!(new_id, tablet_id);
+    assert!(h.is_active(&h.phone, &new_id));
+    assert!(!h.is_active(&h.phone, &tablet_id));
+    assert!(again.core.own_uid().is_some());
+    assert_eq!(again.core.own_uid(), h.phone.core.own_uid());
+}
+
+#[test]
+fn repeated_and_stray_removal_calls_are_harmless() {
+    let mut h = household();
+    let (phrase, tablet_id) = (h.phrase.clone(), h.tablet_id.clone());
+    h.laptop.core.request_device_removal(&tablet_id).unwrap();
+    h.laptop.core.request_device_removal(&tablet_id).unwrap();
+    assert_eq!(
+        h.laptop.core.pending_removals().len(),
+        1,
+        "asked twice, pending once"
+    );
+    // Taking back what was never asked, or for a device that is not there, changes nothing.
+    h.laptop.core.cancel_device_removal("not-a-device").unwrap();
+    h.laptop.core.cancel_device_removal(&tablet_id).unwrap();
+    h.laptop.core.cancel_device_removal(&tablet_id).unwrap();
+    assert!(h.laptop.core.pending_removals().is_empty());
+    // Removing an unknown device, or one already removed, is an UnknownDevice, not a crash or a silent success.
+    assert_eq!(
+        h.phone.core.remove_device_now("not-a-device", &phrase, ""),
+        Err(privcord_engine::ErrorCode::UnknownDevice)
+    );
+    h.phone
+        .core
+        .remove_device_now(&tablet_id, &phrase, "")
+        .unwrap();
+    assert_eq!(
+        h.phone.core.remove_device_now(&tablet_id, &phrase, ""),
+        Err(privcord_engine::ErrorCode::UnknownDevice)
+    );
+    assert_eq!(
+        h.phone.core.request_device_removal(&tablet_id),
+        Err(privcord_engine::ErrorCode::UnknownDevice)
+    );
+}
+
+#[test]
+fn a_removed_device_that_has_not_heard_yet_cannot_write_to_a_friend() {
+    let mut h = household();
+    let (phrase, tablet_id) = (h.phrase.clone(), h.tablet_id.clone());
+    h.phone
+        .core
+        .remove_device_now(&tablet_id, &phrase, "")
+        .unwrap();
+    for _ in 0..3 {
+        h.phone.online(&mut h.relay);
+        h.fran.online(&mut h.relay);
+    }
+    let hers = h.fran.core.contact_device_list(&h.pat).unwrap();
+    assert!(
+        !hers.get(&tablet_id).unwrap().active(),
+        "Fran heard of the removal"
+    );
+    // The tablet, which has not been online since, still believes it belongs to the account and writes to Fran.
+    let sent = h
+        .tablet
+        .core
+        .send_message(&h.fran_uid, "from the removed tablet", None);
+    assert!(sent.is_ok(), "the tablet should be able to try: {sent:?}");
+    h.tablet.online(&mut h.relay);
+    for _ in 0..3 {
+        h.fran.online(&mut h.relay);
+    }
+    assert!(
+        !h.fran.texts().contains(&"from the removed tablet".to_owned()),
+        "Fran opened a message from a device her contact's list had removed (send result: {sent:?})"
+    );
+}
+
+#[test]
+fn removing_a_device_with_the_phrase_needs_the_passphrase_the_account_was_made_with() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    // An account restored from a phrase plus an optional passphrase (a different account from the phrase alone).
+    let phrase = Device::new("donor", &clock).core.create_identity().unwrap();
+    let mut phone = Device::new("phone", &clock);
+    phone
+        .core
+        .recover_identity(&phrase, "correct horse battery")
+        .unwrap();
+    let mut laptop = link_laptop(&mut phone, &mut relay, &clock);
+    let laptop_id = laptop.core.this_device_id().unwrap().to_owned();
+    phone.online(&mut relay);
+    laptop.online(&mut relay);
+    // The phrase alone is refused, which is right: but then the screens must ask for the passphrase too.
+    assert_eq!(
+        phone.core.remove_device_now(&laptop_id, &phrase, ""),
+        Err(privcord_engine::ErrorCode::InvalidPhrase)
+    );
+    phone
+        .core
+        .remove_device_now(&laptop_id, &phrase, "correct horse battery")
+        .unwrap();
+}

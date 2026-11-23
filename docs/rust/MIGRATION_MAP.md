@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 66 | 9878 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 100 | 17937 |
-| Stays (platform adapter) | 69 | 13076 |
+| Stays (UI) | 100 | 17959 |
+| Stays (platform adapter) | 69 | 13097 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **240** | **43536** |
+| **All mapped files** | **240** | **43579** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -71,7 +71,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/ChatLayout.tsx` | 805 | `ChatLayout` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/Composer.tsx` | 345 | `Composer` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/DeviceLinkDialog.tsx` | 250 | `DeviceLinkDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
-| `apps/desktop/src/components/DeviceRow.tsx` | 117 | `DeviceRow` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/DeviceRow.tsx` | 127 | `DeviceRow` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/DigitBoxes.tsx` | 65 | `DigitBoxes` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/DropSendDialog.tsx` | 76 | `DropSendDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/FilterPills.tsx` | 30 | `ChatFilter`, `FilterPills` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
@@ -107,7 +107,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/bleLink.ts` | 134 | `getBleBridge`, `SecureLinkHandlers`, `SecureBleLink` | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/clipboard.test.ts` | 25 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/clipboard.ts` | 24 | `copyText` | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/lib/contracts.test.ts` | 50 | (none) | Fails when the engine and the screens drift apart (link stages, command names) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/contracts.test.ts` | 65 | (none) | Fails when the engine and the screens drift apart (link stages, command names) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.test.ts` | 11 | (none) | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/deliveryDetails.ts` | 27 | `DeliveryRow`, `stateWords`, `deliveryRows` | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/encryption.ts` | 78 | `TextCipher`, `createTextCipher` | Secure storage and at-rest encryption helpers | SecureStore adapter (Tauri keyring) | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -119,7 +119,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/format.ts` | 73 | `formatTime`, `formatDay`, `formatLastSeen`, `initials`, `avatarHue`, `truncateMiddle` +1 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/e2e.test.ts` | 360 | (none) | End to end: two hosted engines on real Rust engine processes | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/enable.ts` | 13 | `hostedEngineAvailable`, `hostedEngineEnabled` | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
-| `apps/desktop/src/lib/hosted/hostedEngine.ts` | 1011 | `HostedDeps`, `ENGINE_IDENTITY_KEY`, `friendly`, `HostedChatEngine`, `shapePrefs`, `shapeReceipts` +1 | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
+| `apps/desktop/src/lib/hosted/hostedEngine.ts` | 1017 | `HostedDeps`, `ENGINE_IDENTITY_KEY`, `friendly`, `HostedChatEngine`, `shapePrefs`, `shapeReceipts` +1 | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
 | `apps/desktop/src/lib/hosted/legacyIdentity.ts` | 29 | `legacySecretsHex`, `seedEngineIdentity` | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
 | `apps/desktop/src/lib/hosted/linkByScan.test.ts` | 85 | (none) | Linking a new device by scanning: the commands sent and the stages shown | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/prefsExtras.test.ts` | 26 | (none) | Guards how the screens read silent chats, device receipts and mesh hops from the engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -258,7 +258,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/ChannelsDialog.kt` | 90 | `ChannelsDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/ChatScreen.kt` | 1784 | `ChatScreen`, `Banner`, `MessageList`, `DaySeparator`, `MessageBubble`, `FileContent` +15 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Clipboard.kt` | 34 | `copySensitive` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/DeviceLink.kt` | 476 | `DevicesSection`, `RemoveDeviceDialog`, `LinkHostDialog`, `LinkJoinContent`, `Digits`, `endText` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/DeviceLink.kt` | 488 | `DevicesSection`, `RemoveDeviceDialog`, `LinkHostDialog`, `LinkJoinContent`, `Digits`, `endText` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/GroupScreens.kt` | 423 | `NewGroupScreen`, `FriendCheckRow`, `GroupDetailsScreen`, `FriendDetailsDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/HomeScreen.kt` | 559 | `Filter`, `HomeScreen`, `Header`, `Notice`, `OldGroup`, `SearchField` +6 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/KillSwitchDialogs.kt` | 240 | `statusColor`, `StepList`, `NukeDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |

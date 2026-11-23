@@ -67,6 +67,12 @@ export function friendly(error: unknown): string {
     ['DirectNotAllowed', 'Direct messages with this person are off (group-only).'],
     ['InvalidCard', 'That is not a valid invite. Check the words, or ask your friend to share it again.'],
     ['OwnCard', 'That is your own invite. Send it to a friend instead.'],
+    ['InvalidInvite', 'That is not a valid invite. Check the words, or ask your friend to share it again.'],
+    ['InviteNotFound', 'Could not find that invite. Check the words, or ask your friend to share it again.'],
+    ['InvalidPhrase', "That is not your account's recovery phrase (or its passphrase, if it has one)."],
+    ['UnknownDevice', "That device is not on your account's list any more."],
+    ['NeedsAccountKey', 'Only the device that holds your account key can do that. Use your recovery phrase instead.'],
+    ['SecureStorage', 'This computer could not save that. Check free disk space and try again.'],
     ['UnknownContact', 'That person is not in your friends.'],
     ['NoSuchGroup', 'That group no longer exists.'],
     ['GroupFull', 'That group is full.'],
@@ -547,8 +553,8 @@ export class HostedChatEngine implements ChatEngineApi {
     await this.deviceCall('cancel_device_removal', { device: deviceId });
   }
 
-  async removeDeviceNow(deviceId: string, phrase: string): Promise<void> {
-    await this.deviceCall('remove_device_now', { device: deviceId, phrase, passphrase: '' });
+  async removeDeviceNow(deviceId: string, phrase: string, passphrase = ''): Promise<void> {
+    await this.deviceCall('remove_device_now', { device: deviceId, phrase, passphrase });
   }
 
   private async deviceCall(command: string, args: Record<string, unknown>): Promise<void> {

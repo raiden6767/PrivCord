@@ -1346,7 +1346,7 @@ class RustChatEngine(
         when (action) {
             is com.duochat.app.data.DeviceRemoval.Request -> requestDeviceRemoval(action.deviceId)
             is com.duochat.app.data.DeviceRemoval.Cancel -> cancelDeviceRemoval(action.deviceId)
-            is com.duochat.app.data.DeviceRemoval.Now -> removeDeviceNow(action.deviceId, action.phrase.trim(), "")
+            is com.duochat.app.data.DeviceRemoval.Now -> removeDeviceNow(action.deviceId, action.phrase.trim(), action.passphrase)
         }
     }
 
