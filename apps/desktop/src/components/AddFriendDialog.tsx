@@ -225,7 +225,7 @@ export function AddFriendDialog({
             <textarea
               className="code-area"
               rows={3}
-              placeholder="six words, like: apple river tiger moon cloud seven"
+              placeholder="like: apple river tiger moon cloud seven"
               aria-label="Friend's invite"
               value={pasted}
               onChange={(event) => setPasted(event.target.value)}

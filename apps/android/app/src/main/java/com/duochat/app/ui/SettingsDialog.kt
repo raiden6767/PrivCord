@@ -61,6 +61,12 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.coerceAtLeast
+import androidx.compose.ui.unit.coerceIn
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.window.Dialog
 import com.duochat.app.AppConfig
 import com.duochat.app.ble.BlePermissions
@@ -131,16 +137,25 @@ fun SettingsDialog(
             securePolicy = if (state.prefs.secureScreen) androidx.compose.ui.window.SecureFlagPolicy.SecureOn else androidx.compose.ui.window.SecureFlagPolicy.Inherit,
         ),
     ) {
+        // Sizes come from the screen, not from one phone: side room grows with the width (16 to 32 dp), the text column
+        // stops at a readable width on tablets, foldables and landscape, and the room at the end follows the height.
+        val screen = LocalConfiguration.current
+        val sidePad = (screen.screenWidthDp * 0.06f).dp.coerceIn(16.dp, 32.dp)
+        val endRoom = (screen.screenHeightDp * 0.08f).dp.coerceAtLeast(48.dp)
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
+          Box(
+            Modifier.fillMaxSize().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing),
+            contentAlignment = Alignment.TopCenter,
+          ) {
             Column(
                 modifier = Modifier
+                    .widthIn(max = 640.dp)
                     .fillMaxWidth()
-                    .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.safeDrawing)
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                    .padding(horizontal = sidePad, vertical = 12.dp),
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -164,7 +179,7 @@ fun SettingsDialog(
                         Column(Modifier.weight(1f)) {
                             Text(settings.displayName.ifBlank { "No name yet" }, style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "Settings apply to this device only",
+                                "Most settings are for this device only. Quiet hours, mutes, pins and screen privacy follow you to your linked devices.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -234,19 +249,24 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                // About three to six tiles a row, filling the width exactly, whatever the screen.
+                val columns = (maxWidth / 104.dp).toInt().coerceAtLeast(3)
+                val tileWidth = (maxWidth - 8.dp * (columns - 1)) / columns
                 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                 androidx.compose.foundation.layout.FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    ThemeTile("Plum & paper", listOf(Color(0xFFF7F3EE), Color(0xFF7A3E73), Color(0xFFF2A65A), Color(0xFF131112)), settings.palette == com.duochat.app.data.CLASSIC_PALETTE) {
+                    ThemeTile(tileWidth, "Plum & paper", listOf(Color(0xFFF7F3EE), Color(0xFF7A3E73), Color(0xFFF2A65A), Color(0xFF131112)), settings.palette == com.duochat.app.data.CLASSIC_PALETTE) {
                         onUpdateSettings { copy(palette = com.duochat.app.data.CLASSIC_PALETTE) }
                     }
                     for (t in com.duochat.app.data.THEMES) {
-                        ThemeTile(t.name, listOf(Color(t.bg), Color(t.surface), Color(com.duochat.app.data.accentFill(t.accent))), settings.palette == t.id) {
+                        ThemeTile(tileWidth, t.name, listOf(Color(t.bg), Color(t.surface), Color(com.duochat.app.data.accentFill(t.accent))), settings.palette == t.id) {
                             onUpdateSettings { copy(palette = t.id) }
                         }
                     }
+                }
                 }
                 Spacer(Modifier.height(12.dp))
                 if (settings.palette != com.duochat.app.data.CLASSIC_PALETTE) {
@@ -256,7 +276,7 @@ SectionTitle("Appearance")
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WrapRow(8.dp) {
                     ChoiceChip("System", settings.theme == "system") {
                         onUpdateSettings { copy(theme = "system") }
                     }
@@ -274,10 +294,11 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                WrapRow(4.dp) {
                     for ((label, value) in ACCENTS) {
                         Box(
                             modifier = Modifier
+                                .minimumInteractiveComponentSize()
                                 .size(36.dp)
                                 .clip(CircleShape)
                                 .background(parseColor(value))
@@ -358,7 +379,7 @@ SectionTitle("Appearance")
                     fun pick(initial: Int, set: (Int) -> Unit) {
                         android.app.TimePickerDialog(ctx, { _, h, m -> set(h * 60 + m) }, initial / 60, initial % 60, true).show()
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WrapRow(8.dp) {
                         OutlinedButton(onClick = { pick(quiet.from) { v -> onSetQuietHours(true, v, quiet.to) } }) {
                             Text("From ${com.duochat.app.data.minutesLabel(quiet.from)}")
                         }
@@ -368,14 +389,22 @@ SectionTitle("Appearance")
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onRequestNotifications) {
-                    Icon(
-                        Icons.Filled.Notifications,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
+                if (healthPermission) {
+                    Text(
+                        "Android allows PrivCord to show notifications.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Request notification permission")
+                } else {
+                    OutlinedButton(onClick = onRequestNotifications) {
+                        Icon(
+                            Icons.Filled.Notifications,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Allow notifications")
+                    }
                 }
                 val bgContext = LocalContext.current
                 ToggleRow(
@@ -408,8 +437,9 @@ SectionTitle("Appearance")
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "There is no push service (that would need a server that knows when you get a message). Instead, " +
-                        "PrivCord asks the relays for waiting messages about every 15 minutes even when it is closed, and " +
-                        "continuously while it is open or \"Keep running\" is on. Messages wait on the relays for 7 days.",
+                        "PrivCord asks the relays for waiting messages about every ${com.duochat.app.notifications.BackgroundCheck.PERIOD_MS / 60_000} minutes even when it is closed, and " +
+                        "continuously while it is open or \"Keep running\" is on. With store-and-forward on (Connection > " +
+                        "Advanced options), messages wait on the relays for 7 days.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -423,8 +453,8 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                val hostsJson by androidx.compose.runtime.produceState("[]", settings.network) {
-                    value = insight("hosts", com.duochat.app.data.hostsInput(settings.network))
+                val hostsJson by androidx.compose.runtime.produceState("[]", settings.network, settings.updateChecks) {
+                    value = insight("hosts", com.duochat.app.data.hostsInput(settings.network, settings.updateChecks))
                 }
                 NetworkHostsCard(com.duochat.app.data.parseHosts(hostsJson))
                 Spacer(Modifier.height(8.dp))
@@ -432,7 +462,7 @@ SectionTitle("Appearance")
                 DetailRow("Messages waiting to send", state.queuedCount.toString())
                 DetailRow("Your ID", state.uid.take(16) + "…", monospace = true)
                 Text(
-                    "Most phones can stay connected to about 30 friends at once; beyond that the rest connect when others drop.",
+                    "PrivCord stays connected to at most 30 friends at once; beyond that the rest connect when others drop.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -479,16 +509,16 @@ SectionTitle("Appearance")
                     )
                     Spacer(Modifier.height(14.dp))
                     SectionTitle("Communication Mode")
-                Text("Select how PrivCord connects to peers:", style = MaterialTheme.typography.bodySmall)
+                Text("How PrivCord reaches your friends. Automatic tries Bluetooth when someone is close and the internet otherwise.", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ChoiceChip("1. Auto", settings.network.transportMode == com.duochat.app.data.TransportMode.AUTOMATIC) {
+                WrapRow(6.dp) {
+                    ChoiceChip("Automatic", settings.network.transportMode == com.duochat.app.data.TransportMode.AUTOMATIC) {
                         onUpdateSettings { copy(network = network.copy(transportMode = com.duochat.app.data.TransportMode.AUTOMATIC)) }
                     }
-                    ChoiceChip("2. BLE Only", settings.network.transportMode == com.duochat.app.data.TransportMode.BLUETOOTH_ONLY) {
+                    ChoiceChip("Bluetooth only", settings.network.transportMode == com.duochat.app.data.TransportMode.BLUETOOTH_ONLY) {
                         onUpdateSettings { copy(network = network.copy(transportMode = com.duochat.app.data.TransportMode.BLUETOOTH_ONLY)) }
                     }
-                    ChoiceChip("3. Internet Only", settings.network.transportMode == com.duochat.app.data.TransportMode.INTERNET_ONLY) {
+                    ChoiceChip("Internet only", settings.network.transportMode == com.duochat.app.data.TransportMode.INTERNET_ONLY) {
                         onUpdateSettings { copy(network = network.copy(transportMode = com.duochat.app.data.TransportMode.INTERNET_ONLY)) }
                     }
                 }
@@ -519,7 +549,7 @@ SectionTitle("Appearance")
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "Signaling status: ${state.signaling.name.lowercase()}. Leave both empty to use connection codes only. " +
+                    "Signaling status: ${signalingWords(state.signaling)}. Leave both empty to use connection codes only. " +
                         "Use wss:// addresses (Android blocks plain ws://). Signaling only carries sealed, signed " +
                         "connection setup, never messages.",
                     style = MaterialTheme.typography.bodySmall,
@@ -607,7 +637,7 @@ SectionTitle("Appearance")
                     settings.network.bluetooth,
                 ) { onUpdateSettings { copy(network = network.copy(bluetooth = it)) } }
                 Spacer(Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WrapRow(8.dp) {
                     Button(
                         onClick = {
                             val urls = NetworkConfig.parseTurnUrls(turnUrls)
@@ -681,13 +711,13 @@ SectionTitle("Appearance")
 SectionTitle("Security")
                 val staleCount = state.devices.count { it.stale }
                 val checkupJson by androidx.compose.runtime.produceState(
-                    "[]", settings.appLock, settings.lastBackupAt, settings.network.forceRelay, settings.notificationPreviews,
+                    "[]", settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), settings.notificationPreviews,
                     settings.groupOnly, settings.panicWipe, staleCount,
                 ) {
                     value = insight(
                         "checkup",
                         com.duochat.app.data.checkupInput(
-                            settings.appLock, settings.lastBackupAt, settings.network.forceRelay, !settings.notificationPreviews,
+                            settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), !settings.notificationPreviews,
                             settings.groupOnly, settings.panicWipe, staleCount,
                         ),
                     )
@@ -713,7 +743,7 @@ SectionTitle("Security")
                 ToggleRow(
                     title = "Lock with fingerprint, face or screen lock",
                     description = if (lockAvailable) {
-                        "Ask for it every time PrivCord opens, and again after it has been out of sight for 30 seconds. It keeps other people who pick up your phone out; it does not replace the encryption of your chats."
+                        "Ask for it every time PrivCord opens, and again after it has been out of sight for ${com.duochat.app.security.AppLock.GRACE_MS / 1000} seconds. It keeps other people who pick up your phone out; it does not replace the encryption of your chats."
                     } else {
                         "Not available: set a screen lock (PIN, pattern or password) or a fingerprint in your phone's settings first."
                     },
@@ -752,7 +782,7 @@ SectionTitle("Security")
                 )
                 Spacer(Modifier.height(10.dp))
                 if (clearConfirm) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WrapRow(8.dp) {
                         Button(
                             onClick = {
                                 clearing = true
@@ -850,7 +880,7 @@ val storageJson by androidx.compose.runtime.produceState("[]", state.messages) {
 SectionTitle("Updates")
                 ToggleRow(
                     "Check for updates",
-                    "Looks for a new version when the app starts and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
+                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 60_000} minutes while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
                     settings.updateChecks,
                 ) { onUpdateSettings { copy(updateChecks = it) } }
                 UpdateCheckRow(settings.network)
@@ -868,7 +898,7 @@ SectionTitle("About PrivCord")
                 DetailRow("Files and photos", "${state.usage.files} · " + android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, state.usage.fileBytes))
                 if (state.usage.syncEntries > 0) DetailRow("Kept for syncing your devices", "${state.usage.syncEntries} entries")
                 Spacer(Modifier.height(10.dp))
-                DetailRow("Version", AppConfig.APP_VERSION)
+                DetailRow("Version", com.duochat.app.BuildConfig.VERSION_NAME)
                 DetailRow("Platform", "Android · Kotlin/Compose")
                 DetailRow("Rust core", com.duochat.app.RustCore.status)
                 val context = androidx.compose.ui.platform.LocalContext.current
@@ -878,8 +908,8 @@ SectionTitle("About PrivCord")
                     }
                 }
                 DetailRow("Rust engine", probe)
-                DetailRow("Created by", "anandkrishna1900")
-                DetailRow("License", "PC-NC (non-commercial)")
+                DetailRow("Created by", AppConfig.CREATED_BY)
+                DetailRow("License", AppConfig.LICENSE_SHORT)
                 Spacer(Modifier.height(12.dp))
                 AboutTools(settings.network, insight, diagnosticsJson, selfTestJson)
                 Spacer(Modifier.height(12.dp))
@@ -889,10 +919,20 @@ SectionTitle("About PrivCord")
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(10.dp))
+                // This page is its own full-screen window, and on some phones the system does not report the navigation
+                // bar to it, so the last lines would sit under the bar. Room at the end that does not depend on that.
+                Spacer(Modifier.height(endRoom))
             }
+          }
         }
     }
+}
+
+private fun signalingWords(s: com.duochat.app.signaling.SignalingStatus) = when (s) {
+    com.duochat.app.signaling.SignalingStatus.IDLE -> "not set up"
+    com.duochat.app.signaling.SignalingStatus.CONNECTING -> "connecting"
+    com.duochat.app.signaling.SignalingStatus.ONLINE -> "online"
+    com.duochat.app.signaling.SignalingStatus.ERROR -> "could not connect"
 }
 
 @Composable
@@ -914,13 +954,13 @@ private fun DetailRow(label: String, value: String, monospace: Boolean = false) 
             label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(130.dp),
+            modifier = Modifier.weight(0.42f).padding(end = 12.dp),
         )
         Text(
             value,
             style = MaterialTheme.typography.bodySmall,
             fontFamily = if (monospace) FontFamily.Monospace else null,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(0.58f),
         )
     }
 }
@@ -1027,7 +1067,7 @@ private fun BluetoothBlock(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    WrapRow(8.dp) {
         if (status == BluetoothStatus.NEEDS_PERMISSION) {
             Button(onClick = { rationale = true }) { Text("Allow Bluetooth") }
             if (denied) {
@@ -1079,10 +1119,10 @@ private fun BluetoothBlock(
 
 /** One colour theme in the picker: a small preview of its colours and its name. */
 @Composable
-private fun ThemeTile(name: String, colors: List<Color>, selected: Boolean, onClick: () -> Unit) {
+private fun ThemeTile(width: androidx.compose.ui.unit.Dp, name: String, colors: List<Color>, selected: Boolean, onClick: () -> Unit) {
     Column(
         modifier = Modifier
-            .width(96.dp)
+            .width(width)
             .clip(RoundedCornerShape(16.dp))
             .border(
                 width = if (selected) 2.dp else 1.dp,

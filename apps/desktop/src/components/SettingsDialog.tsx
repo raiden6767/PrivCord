@@ -20,6 +20,9 @@ import { NO_PREFS } from '../lib/engine';
 import { formatBytes } from '../lib/format';
 import { DeliveryHealth, DevicesStrip, SupportTools, WhatsNew } from './Insights';
 import { AlertIcon, CheckIcon, KeyIcon, TrashIcon } from './Icons';
+import { MAX_LIVE_LINKS, MIN_BACKUP_PASSPHRASE, PANIC_PRESSES, PANIC_WINDOW_MS } from '../lib/limits';
+import { RECHECK_MS } from '../lib/updates';
+import { useAppVersion } from '../lib/appVersion';
 
 export type SettingsSection = 'profile' | 'devices' | 'appearance' | 'notifications' | 'connection' | 'security' | 'backup' | 'about';
 
@@ -170,15 +173,15 @@ function BackupControl({ engine }: { engine: ChatEngineApi | null }) {
       <input
         type="password"
         aria-label="Backup passphrase"
-        placeholder="Passphrase (at least 12 characters)"
+        placeholder={`Passphrase (at least ${MIN_BACKUP_PASSPHRASE} characters)`}
         value={pass}
         onChange={(event) => setPass(event.target.value)}
       />
       <div className="button-row">
-        <button type="button" className="button secondary small" disabled={busy || pass.length < 12} onClick={() => void backUp()}>
+        <button type="button" className="button secondary small" disabled={busy || pass.length < MIN_BACKUP_PASSPHRASE} onClick={() => void backUp()}>
           Save a backup
         </button>
-        <button type="button" className="button secondary small" disabled={busy || pass.length < 12} onClick={() => fileRef.current?.click()}>
+        <button type="button" className="button secondary small" disabled={busy || pass.length < MIN_BACKUP_PASSPHRASE} onClick={() => fileRef.current?.click()}>
           Restore from a file
         </button>
         <input
@@ -300,9 +303,10 @@ export function SettingsDialog({
   }, [open, initialSection]);
 
   const connected = state.contacts.filter((c) => c.conn === 'connected').length;
+  const appVersion = useAppVersion();
 
   return (
-    <Modal open={open} onClose={onClose} title="Settings" wide>
+    <Modal open={open} onClose={onClose} title="Settings" wide className="tall">
       <div className="tabs" role="tablist" aria-label="Settings sections">
         {SECTIONS.map((item) => (
           <button
@@ -524,10 +528,10 @@ export function SettingsDialog({
               </div>
             </div>
             <p className="muted small">
-              Messages go straight from device to device. A device keeps at most {30} live connections, which
+              Messages go straight from device to device. A device keeps at most {MAX_LIVE_LINKS} live connections, which
               is plenty for groups of a few dozen.
             </p>
-            <NetworkTransparency engine={engine} />
+            <NetworkTransparency engine={engine} updateChecks={isTauri() && settings.updateChecks} />
             <details className="advanced">
               <summary>Advanced</summary>
               <NetworkSettings engine={engine} state={state} />
@@ -558,7 +562,7 @@ export function SettingsDialog({
             />
             <Toggle
               label="Panic wipe"
-              description="Press Ctrl+Shift+Backspace three times within two seconds and everything on this device is erased immediately, with no confirmation. Your 12 recovery words are the only way back, so keep them somewhere safe first."
+              description={`Press Ctrl+Shift+Backspace ${PANIC_PRESSES} times within ${PANIC_WINDOW_MS / 1000} seconds and everything on this device is erased immediately, with no confirmation. Your 12 recovery words are the only way back, so keep them somewhere safe first.`}
               checked={settings.panicWipe}
               onChange={(value) => updateSettings({ panicWipe: value })}
             />
@@ -636,7 +640,7 @@ export function SettingsDialog({
                   checked={settings.updateChecks}
                   onChange={(value) => updateSettings({ updateChecks: value })}
                   label="Check for updates"
-                  description="Looks for a new version when the app starts and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on."
+                  description={`Looks for a new version when the app starts, when you come back to it, and about every ${RECHECK_MS / 60_000} minutes while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.`}
                 />
                 <UpdateCheck />
               </div>
@@ -673,16 +677,16 @@ export function SettingsDialog({
               </div>
             ) : null}
             <p>
-              <strong>PrivCord</strong> · version {config.appVersion}
+              <strong>PrivCord</strong> · {isTauri() ? `version ${appVersion}` : 'development build'}
             </p>
             <p className="muted small">
               Private chats and groups with no accounts and no cloud. Messages are end-to-end encrypted and go
               straight between devices.
             </p>
             <p className="muted small">
-              Made by anandkrishna1900 · PrivCord Community &amp; Non-Commercial License ·{' '}
-              <a href="https://x.com/AnandKrishnaK1" target="_blank" rel="noreferrer">
-                x.com/AnandKrishnaK1
+              Made by {config.about.author} · {config.about.licenseName} ·{' '}
+              <a href={config.about.authorLink} target="_blank" rel="noreferrer">
+                {config.about.authorLinkLabel}
               </a>
             </p>
             <dl className="detail-grid">

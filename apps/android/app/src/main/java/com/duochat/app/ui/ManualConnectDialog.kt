@@ -147,7 +147,7 @@ fun ManualConnectDialog(
                 }
 
                 Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WrapRow(8.dp) {
                     ModeChip("Create offer", mode == ManualMode.HOST) {
                         mode = ManualMode.HOST
                         error = null
@@ -220,7 +220,7 @@ fun ManualConnectDialog(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Spacer(Modifier.height(8.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WrapRow(8.dp) {
                             Button(
                                 onClick = {
                                     busy = true
@@ -277,7 +277,7 @@ fun ManualConnectDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WrapRow(8.dp) {
                         Button(
                             onClick = {
                                 busy = true

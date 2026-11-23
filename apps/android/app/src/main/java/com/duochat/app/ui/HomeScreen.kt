@@ -151,7 +151,7 @@ fun HomeScreen(
         Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).statusBarsPadding().imePadding()) {
             Header(onOpenSettings = onOpenSettings, onPanic = onPanic)
             state.notice?.let { Notice(it, onClearNotice) }
-            whatsNew?.let { n -> Notice("What's new in ${n.version}: " + n.lines.joinToString(" \u00B7 "), onDismissWhatsNew) }
+            whatsNew?.let { n -> Notice("What's new: " + n.lines.joinToString(" \u00B7 "), onDismissWhatsNew) }
             state.legacyGroups.forEach { g -> OldGroup(g, onRecreate = { onRecreateGroup(g.oldId) }, onDismiss = { onDismissOldGroup(g.oldId) }) }
             if (state.chats.isEmpty()) {
                 EmptyHome(onAddFriend, onChannels)

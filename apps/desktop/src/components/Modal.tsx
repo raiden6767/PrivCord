@@ -11,6 +11,7 @@ export function Modal({
   wide,
   footer,
   dismissible = true,
+  className,
 }: {
   open: boolean;
   onClose: () => void;
@@ -21,6 +22,8 @@ export function Modal({
   footer?: ReactNode;
   /** False for flows that must finish (first-run identity): no close button. */
   dismissible?: boolean;
+  /** Extra classes on the dialog box (for example "tall": a fixed height, so a dialog with tabs does not change size). */
+  className?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocus = useRef<Element | null>(null);
@@ -76,7 +79,7 @@ export function Modal({
       }}
     >
       <div
-        className={`modal ${wide ? 'wide' : ''}`}
+        className={`modal ${wide ? 'wide' : ''} ${className ?? ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

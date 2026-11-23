@@ -44,18 +44,18 @@ const WEEK = 7 * 24 * 3600 * 1000;
 export function privacyCheckup(i: CheckupInput): { items: CheckupItem[]; score: number; total: number } {
   const now = i.now_ms;
   const items: CheckupItem[] = [
-    { id: 'lock', label: 'App lock', ok: i.app_lock, hint: i.app_lock ? 'Opening PrivCord asks for your passkey.' : 'Anyone at this computer can open your chats. Turn on the lock.', section: 'security' },
+    { id: 'lock', label: 'App lock', ok: i.app_lock, hint: i.app_lock ? 'Opening PrivCord asks for your passkey.' : 'Anyone holding your unlocked device can read your chats. Turn on the lock.', section: 'security' },
     {
       id: 'backup',
       label: 'Backup',
       ok: i.last_backup_at > 0 && now - i.last_backup_at < 4 * WEEK,
-      hint: i.last_backup_at > 0 && now - i.last_backup_at < 4 * WEEK ? 'A recent backup exists.' : 'No recent backup. Without one, a lost computer means lost chats (your 12 words only restore your identity).',
+      hint: i.last_backup_at > 0 && now - i.last_backup_at < 4 * WEEK ? 'A recent backup exists.' : 'No recent backup. Without one, a lost device means lost chats (your 12 words only restore your identity).',
       section: 'backup',
     },
-    { id: 'ip', label: 'IP address hidden from friends', ok: i.hide_ip, hint: i.hide_ip ? 'Connections go through a relay.' : 'Friends can see your IP address on a direct connection. Optional, slower.', section: 'connection' },
+    { id: 'ip', label: 'IP address hidden from friends', ok: i.hide_ip, hint: i.hide_ip ? 'Connections go through a relay or Tor, so friends do not see your address.' : 'Friends can see your IP address on a direct connection. Optional, slower.', section: 'connection' },
     { id: 'previews', label: 'Notifications hide message text', ok: i.previews_off, hint: i.previews_off ? 'Notifications only say a message arrived.' : 'Message text can appear on a locked screen. Turn off message previews.', section: 'notifications' },
     { id: 'grouponly', label: 'Group-only with people met in groups', ok: i.group_only, hint: i.group_only ? 'Strangers from a group cannot message you directly.' : 'People you only know from a group can message you directly.', section: 'security' },
-    { id: 'panic', label: 'Panic wipe ready', ok: i.panic_wipe, hint: i.panic_wipe ? 'Three quick Ctrl+Shift+Backspace erases this device.' : 'Optional: a one-gesture wipe for emergencies.', section: 'security' },
+    { id: 'panic', label: 'Panic wipe ready', ok: i.panic_wipe, hint: i.panic_wipe ? 'One gesture erases this device.' : 'Optional: a one-gesture wipe for emergencies.', section: 'security' },
     { id: 'devices', label: 'No forgotten devices', ok: i.stale_devices === 0, hint: i.stale_devices === 0 ? 'Every linked device was seen recently.' : `${i.stale_devices} linked device${i.stale_devices === 1 ? '' : 's'} not seen for 90 days. Remove ${i.stale_devices === 1 ? 'it' : 'them'} if lost.`, section: 'devices' },
   ];
   const score = items.filter((x) => x.ok).length;

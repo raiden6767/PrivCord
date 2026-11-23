@@ -122,7 +122,7 @@ fun AboutTools(
 fun WhatsNewCard(news: WhatsNew) {
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("What's new in ${news.version}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("What's new", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(2.dp))
             news.lines.forEach { Text("\u2022 $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }

@@ -187,7 +187,7 @@ fun NukeDialog(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WrapRow(8.dp) {
                             OutlinedButton(onClick = onDismiss) { Text("Cancel") }
                             Button(
                                 onClick = { launched = true; onRun() },

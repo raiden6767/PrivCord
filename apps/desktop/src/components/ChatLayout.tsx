@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { PANIC_PRESSES, PANIC_WINDOW_MS } from '../lib/limits';
 import type { ChatState, UiMessage } from '../lib/engine';
 import type { ChatEngineApi } from '../lib/engineApi';
 import type { AppSettings } from '../lib/settings';
@@ -161,8 +162,8 @@ export function ChatLayout({
       if (!(e.ctrlKey && e.shiftKey && e.key === 'Backspace')) return;
       const now = Date.now();
       times.push(now);
-      while (times.length && now - times[0]! > 2000) times.shift();
-      if (times.length >= 3) {
+      while (times.length && now - times[0]! > PANIC_WINDOW_MS) times.shift();
+      if (times.length >= PANIC_PRESSES) {
         times.length = 0;
         setPanic(true);
         setDialog('nuke');

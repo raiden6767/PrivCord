@@ -62,3 +62,9 @@ export function markWhatsNewSeen(version: string): void {
     /* no storage */
   }
 }
+
+/** Whether friends are kept from seeing this device's address: a relay carries every link (it needs a TURN server to
+ * carry them), or Private mode sends everything through Tor. A "hide my IP" switch with no relay behind it hides nothing. */
+export function hidesIp(n: { forceRelay?: boolean; torMode?: boolean; turn: unknown[] }): boolean {
+  return (n.forceRelay === true && n.turn.length > 0) || n.torMode === true;
+}

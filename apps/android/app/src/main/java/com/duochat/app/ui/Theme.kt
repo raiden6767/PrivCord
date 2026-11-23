@@ -239,3 +239,16 @@ fun DuoTextField(
         ),
     )
 }
+
+/**
+ * Items side by side (buttons, chips), wrapping onto the next line when the screen or the font size leaves no room,
+ * instead of squeezing them or running off the edge. Used for every row of buttons or chips.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun WrapRow(gap: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(gap),
+        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(gap),
+    ) { content() }
+}

@@ -47,7 +47,7 @@ class BackgroundCheck : JobService() {
 
     companion object {
         private const val JOB_ID = 4711
-        private const val PERIOD_MS = 15 * 60 * 1000L
+        const val PERIOD_MS = 15 * 60 * 1000L
         /** How long the engine is given to connect and collect what is waiting. */
         private const val CHECK_MS = 30_000L
 

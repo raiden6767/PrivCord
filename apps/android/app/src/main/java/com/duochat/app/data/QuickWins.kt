@@ -50,14 +50,22 @@ fun checkupInput(
     .toString()
 
 /** The question the engine answers for the hosts list: the network settings, flattened. */
-fun hostsInput(n: NetworkConfig): String = JSONObject()
+fun hostsInput(n: NetworkConfig, updateChecks: Boolean = false): String = JSONObject()
     .put("mode", n.transportMode.name)
     .put("force_relay", n.forceRelay)
     .put("nostr", JSONArray(n.signaling.flatMap { if (it is SignalingConfig.Nostr) it.relays else emptyList() }))
     .put("relays", JSONArray(n.signaling.mapNotNull { (it as? SignalingConfig.Relay)?.url }))
     .put("stun", JSONArray(n.stun))
     .put("turn", JSONArray(n.turn.flatMap { it.urls }))
+    .put("tor", n.torMode)
+    .put("updates", updateChecks)
     .toString()
+
+/**
+ * Whether friends are kept from seeing this phone's address: a relay carries every link (which needs a TURN server to
+ * carry them), or Private mode sends everything through Tor. The "hide my IP" switch with no relay behind it hides nothing.
+ */
+fun hidesIp(n: NetworkConfig): Boolean = (n.forceRelay && n.hasTurn) || n.torMode
 
 /** A message's delivery state in words. */
 fun deliveryWords(s: DeliveryState): String = when (s) {
