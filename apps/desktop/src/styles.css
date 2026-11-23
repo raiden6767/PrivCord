@@ -3858,3 +3858,16 @@ input::placeholder {
   overflow-wrap: normal;
   word-break: normal;
 }
+
+/* Dialog contents are spaced by the dialog, not by each screen remembering a margin: rows, cards and labels used to sit
+   against each other (friend and group details, public channels). */
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal-body > * {
+  flex-shrink: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
