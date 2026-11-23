@@ -89,6 +89,23 @@ class ManifestRulesTest {
         }
     }
 
+    @Test fun everyReceiverSurvivesAnEmptyOrUnknownIntent() {
+        @Suppress("DEPRECATION")
+        val receivers = (app.packageManager.getPackageInfo(app.packageName, PackageManager.GET_RECEIVERS).receivers ?: emptyArray())
+            .filter { it.name.startsWith("com.duochat.app") }
+        assertTrue("no receivers found: the manifest was not read", receivers.isNotEmpty())
+        for (r in receivers) {
+            val receiver = Class.forName(r.name).getDeclaredConstructor().newInstance() as android.content.BroadcastReceiver
+            for (intent in listOf(Intent(), Intent("com.duochat.app.NOT_A_REAL_ACTION"), Intent(Intent.ACTION_BOOT_COMPLETED))) {
+                try {
+                    receiver.onReceive(app, intent)
+                } catch (e: Exception) {
+                    throw AssertionError("${r.name} crashed on $intent", e)
+                }
+            }
+        }
+    }
+
     @Test fun noServiceIsExported() {
         for (s in ours) assertEquals("${s.name} is exported", false, s.exported)
     }
