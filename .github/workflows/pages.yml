@@ -38,14 +38,14 @@ jobs:
           npm ci
           npm run build
       - id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Fill in the site address and repository
         run: |
           base="${{ steps.pages.outputs.base_url }}"
           find site/dist -type f \( -name '*.html' -o -name '*.js' -o -name '*.txt' -o -name '*.xml' \) -print0 \
             | xargs -0 sed -i "s#__SITE_URL__#${base}#g; s#__REPO__#${{ github.repository }}#g"
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
