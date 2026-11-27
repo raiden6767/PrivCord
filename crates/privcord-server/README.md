@@ -28,6 +28,14 @@ Then in the apps, add `ws://YOUR-ADDRESS:8787` as a relay. For `wss://`, put a c
 proxy such as Caddy (`reverse_proxy 127.0.0.1:8787`, with `trust_proxy = true`). TURN is `turn:YOUR-IP:3478` with credentials from
 `https://YOUR-HOST/turn` (short-lived) or a fixed `name:password` in `turn.users`.
 
+### STUN comes with it
+
+The TURN port also answers STUN Binding requests, over UDP and over TCP, without a login (that is how TURN works: a device asks
+"what address do you see me at?" before it asks for a relay). So a server with `[turn] enabled = true` is also a STUN server:
+list `stun:YOUR-IP:3478` in the apps (Settings, Connection, STUN servers) next to the public ones, or instead of them to keep
+your friends' addresses off third-party servers. The panel's Home page shows the address with a Copy button, and
+`tests/turn_stream.rs` checks the answer on both transports. A STUN-only mode (no relay, no ports to open beyond one) is not built.
+
 ## Nostr
 
 Set `[nostr] enabled = true` and the same port also speaks the Nostr relay protocol (a client that sends a JSON array is

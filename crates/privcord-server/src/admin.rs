@@ -659,6 +659,13 @@ async fn overview(
             "relay": relay_url,
             "nostr": c.nostr.enabled.then(|| relay_url.clone()),
             "turn": app.turn.as_ref().map(|(_, urls)| urls),
+            // The TURN port also answers STUN (no login), so the same server is a STUN server for the apps' address lookup.
+            "stun": app.turn.as_ref().map(|(_, urls)| {
+                urls.iter()
+                    .filter(|u| u.starts_with("turn:") && !u.contains('?'))
+                    .map(|u| u.replacen("turn:", "stun:", 1))
+                    .collect::<Vec<_>>()
+            }),
         },
         "tls": { "https": https, "self_signed": a.state.tls_self_signed },
         "limits": {

@@ -268,3 +268,66 @@ async fn two_phones_on_the_same_server_relay_to_each_other_over_any_mix_of_trans
     assert_eq!(got, b"hello A");
     r.stop().await;
 }
+
+/// A STUN Binding request, as a browser or phone sends it to look up its public address: no login, no allocation.
+fn binding_request() -> Vec<u8> {
+    let mut m = vec![0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xa4, 0x42];
+    let mut tid = [0u8; 12];
+    getrandom::fill(&mut tid).unwrap();
+    m.extend_from_slice(&tid);
+    m
+}
+
+/// The address a Binding answer reports (XOR-MAPPED-ADDRESS), if it is a success.
+fn mapped_address(answer: &[u8]) -> Option<std::net::SocketAddr> {
+    if answer.len() < 20 || answer[..2] != [0x01, 0x01] {
+        return None;
+    }
+    let mut i = 20;
+    while i + 4 <= answer.len() {
+        let (kind, len) = (
+            u16::from_be_bytes([answer[i], answer[i + 1]]),
+            usize::from(u16::from_be_bytes([answer[i + 2], answer[i + 3]])),
+        );
+        let v = answer.get(i + 4..i + 4 + len)?;
+        if kind == 0x0020 && v.len() >= 8 && v[1] == 0x01 {
+            let port = u16::from_be_bytes([v[2], v[3]]) ^ 0x2112;
+            let ip = [v[4] ^ 0x21, v[5] ^ 0x12, v[6] ^ 0xa4, v[7] ^ 0x42];
+            return Some(std::net::SocketAddr::from((ip, port)));
+        }
+        i += 4 + len.div_ceil(4) * 4;
+    }
+    None
+}
+
+#[tokio::test]
+async fn the_turn_ports_are_also_stun_servers_over_udp_and_tcp_with_no_login() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (r, _d, _) = server().await;
+    // UDP: what the server sees is the sender's own address.
+    let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    sock.send_to(
+        &binding_request(),
+        format!("127.0.0.1:{}", r.turn_port().unwrap()),
+    )
+    .await
+    .unwrap();
+    let mut buf = [0u8; 512];
+    let (n, _) = tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf))
+        .await
+        .expect("no answer over UDP")
+        .unwrap();
+    assert_eq!(mapped_address(&buf[..n]), Some(sock.local_addr().unwrap()));
+    // TCP: for networks that block UDP.
+    let (tcp, _) = r.turn_stream_ports();
+    let mut s = TcpStream::connect(format!("127.0.0.1:{}", tcp.unwrap()))
+        .await
+        .unwrap();
+    s.write_all(&binding_request()).await.unwrap();
+    let n = tokio::time::timeout(Duration::from_secs(3), s.read(&mut buf))
+        .await
+        .expect("no answer over TCP")
+        .unwrap();
+    assert_eq!(mapped_address(&buf[..n]), Some(s.local_addr().unwrap()));
+    r.stop().await;
+}
