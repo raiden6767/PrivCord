@@ -547,36 +547,41 @@ impl GroupLog {
                 children.entry(d.as_str()).or_default().push(&e.event_id);
             }
         }
-        let rank = |id: &str| {
-            (
-                u8::from(
-                    self.events
-                        .get(id)
-                        .is_none_or(|e| e.kind != EventType::Remove),
-                ),
-                id.to_owned(),
-            )
+        // A heap, not a re-sort at every step: with thousands of events a re-sort per pop took minutes.
+        #[derive(PartialEq, Eq)]
+        struct Next<'a>(u8, &'a str);
+        impl Ord for Next<'_> {
+            fn cmp(&self, o: &Self) -> std::cmp::Ordering {
+                // BinaryHeap pops the largest, so the order is reversed.
+                o.0.cmp(&self.0).then_with(|| cmp_utf16(o.1, self.1))
+            }
+        }
+        impl PartialOrd for Next<'_> {
+            fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(o))
+            }
+        }
+        let next = |id: &'_ str| -> Option<Next<'_>> {
+            let e = self.events.get_key_value(id)?;
+            Some(Next(u8::from(e.1.kind != EventType::Remove), e.0.as_str()))
         };
-        let mut ready: Vec<&str> = indeg
+        let mut ready: std::collections::BinaryHeap<Next<'_>> = indeg
             .iter()
             .filter(|(_, n)| **n == 0)
-            .map(|(id, _)| *id)
+            .filter_map(|(id, _)| next(id))
             .collect();
         let mut out = Vec::new();
-        while !ready.is_empty() {
-            ready.sort_by(|a, b| {
-                let (ra, rb) = (rank(a), rank(b));
-                ra.0.cmp(&rb.0).then_with(|| cmp_utf16(&ra.1, &rb.1))
-            });
-            let id = ready.remove(0);
+        while let Some(Next(_, id)) = ready.pop() {
             if let Some(e) = self.events.get(id) {
                 out.push(e.clone());
             }
-            for c in children.get(id).cloned().unwrap_or_default() {
+            for c in children.get(id).into_iter().flatten() {
                 if let Some(n) = indeg.get_mut(c) {
                     *n = n.saturating_sub(1);
                     if *n == 0 {
-                        ready.push(c);
+                        if let Some(x) = next(c) {
+                            ready.push(x);
+                        }
                     }
                 }
             }

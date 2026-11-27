@@ -17,7 +17,9 @@ const SERVICE: &str = "com.duochat.desktop";
 /// them (it may only delete the identity, when the person erases it), so script in the page cannot take or replace
 /// the database key.
 fn page_entry(key: &str, deleting: bool) -> Result<keyring::Entry, String> {
-    if key.starts_with("engine-") && !(deleting && key == "engine-identity-v1") {
+    // The shell's own keys (settings file key, automatic-backup passphrase) are as closed to the page as the engine's.
+    let shell_key = key == "network-settings-file-key-v1" || key == "auto-backup-passphrase-v1";
+    if shell_key || (key.starts_with("engine-") && !(deleting && key == "engine-identity-v1")) {
         return Err("not available to the page".into());
     }
     keyring::Entry::new(SERVICE, key).map_err(|error| error.to_string())

@@ -234,11 +234,17 @@ pub struct Who<'a> {
     pub trusted: Option<&'a dyn Fn(&str) -> bool>,
 }
 
+/// How many events one non-member contact may feed a group's log before we stop listening to them (per run).
+const MAX_OUTSIDER_EVENTS: usize = 200;
+
 #[derive(Debug)]
 pub struct GroupCoordinator {
     own_uid: String,
     own_card: ContactCard,
     logs: BTreeMap<String, GroupLog>,
+    /// Events taken from senders who are not (yet) members, per (group, sender), since start: bounds what a contact outside
+    /// the group can make us store and refold.
+    outsider_intake: BTreeMap<(String, String), usize>,
 }
 
 fn name_cut(name: &str) -> String {
@@ -254,6 +260,7 @@ impl GroupCoordinator {
             own_uid: own_uid.to_owned(),
             own_card,
             logs: BTreeMap::new(),
+            outsider_intake: BTreeMap::new(),
         }
     }
 
@@ -611,6 +618,16 @@ impl GroupCoordinator {
                 .unwrap_or(false)
             {
                 continue;
+            }
+            if !self.is_member(&event.group_id, from) {
+                let n = self
+                    .outsider_intake
+                    .entry((event.group_id.clone(), from.to_owned()))
+                    .or_default();
+                *n += 1;
+                if *n > MAX_OUTSIDER_EVENTS {
+                    continue;
+                }
             }
             let is_new = !self.logs.contains_key(&event.group_id);
             let log = self

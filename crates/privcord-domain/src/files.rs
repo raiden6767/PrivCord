@@ -50,7 +50,14 @@ pub fn sanitize_file_name(raw: &str) -> String {
     let replaced: String = raw
         .chars()
         .map(|c| {
-            if c <= '\u{1f}' || c == '\u{7f}' || "\\/:*?\"<>|".contains(c) {
+            // Bidi controls and zero-width characters are replaced too: "invoice\u{202e}txt.exe" would otherwise display reversed.
+            if c <= '\u{1f}'
+                || c == '\u{7f}'
+                || "\\/:*?\"<>|".contains(c)
+                || ('\u{200b}'..='\u{200f}').contains(&c)
+                || ('\u{202a}'..='\u{202e}').contains(&c)
+                || ('\u{2066}'..='\u{2069}').contains(&c)
+            {
                 '_'
             } else {
                 c
