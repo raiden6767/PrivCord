@@ -52,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -589,6 +590,8 @@ SectionTitle("Appearance")
                             else meshPermission.launch(BlePermissions.required())
                         },
                     )
+                    Spacer(Modifier.height(14.dp))
+                    MyServerBlock(settings, onUpdateSettings)
                     Spacer(Modifier.height(14.dp))
                     SectionTitle("Communication Mode")
                 Text("How PrivCord reaches your friends. Automatic tries Bluetooth when someone is close and the internet otherwise.", style = MaterialTheme.typography.bodySmall)
@@ -1203,5 +1206,80 @@ private fun ThemeTile(width: androidx.compose.ui.unit.Dp, name: String, colors: 
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             color = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+
+/** "Use my server": one address (and a token if asked); the relay and call servers come from the server itself. */
+@Composable
+private fun MyServerBlock(settings: AppSettings, onUpdateSettings: (AppSettings.() -> AppSettings) -> Unit) {
+    var address by remember { mutableStateOf("") }
+    var token by remember { mutableStateOf("") }
+    var needsToken by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    SectionTitle("Use my server")
+    Text(
+        "Type the address of a PrivCord server you or a friend runs. The relay and call servers come from it, so there is " +
+            "nothing else to fill in. Your messages stay sealed: the server only carries them.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    settings.servers.forEach { server ->
+        val info = com.duochat.app.data.MyServerState.get(server.base)
+        Spacer(Modifier.height(6.dp))
+        DetailRow(
+            server.name,
+            info?.error ?: if (info == null) "Checking\u2026" else if (info.turn != null) "Connected. Calls can use its relay." else "Connected. Messages only.",
+        )
+        TextButton(onClick = { onUpdateSettings { copy(servers = servers.filter { it.base != server.base }) } }) {
+            Text("Remove ${server.name}")
+        }
+    }
+    if (settings.servers.size < com.duochat.app.data.MyServer.MAX_SERVERS) {
+        Spacer(Modifier.height(6.dp))
+        DuoTextField(
+            value = address,
+            onValueChange = { address = it },
+            label = { Text("Server address") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (needsToken || token.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            DuoTextField(
+                value = token,
+                onValueChange = { token = it },
+                label = { Text("Access token") },
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        Button(
+            enabled = !busy && address.isNotBlank(),
+            onClick = {
+                busy = true
+                error = null
+                scope.launch {
+                    val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching { com.duochat.app.data.MyServer.discover(address, token.trim(), com.duochat.app.data.MyServer::httpGet) }
+                    }
+                    busy = false
+                    result.onSuccess { (saved, info) ->
+                        com.duochat.app.data.MyServerState.set(saved.base, info)
+                        onUpdateSettings { copy(servers = (servers.filter { it.base != saved.base } + saved).takeLast(com.duochat.app.data.MyServer.MAX_SERVERS)) }
+                        address = ""
+                        token = ""
+                        needsToken = false
+                    }.onFailure {
+                        val kind = (it as? com.duochat.app.data.MyServerException)?.kind
+                        if (kind == com.duochat.app.data.MyServerException.Kind.NEEDS_TOKEN || kind == com.duochat.app.data.MyServerException.Kind.UNAUTHORIZED) needsToken = true
+                        error = it.message ?: "Could not add that server."
+                    }
+                }
+            },
+        ) { Text(if (busy) "Looking\u2026" else "Add server") }
     }
 }
