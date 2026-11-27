@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub struct Config {
     pub admin: AdminConfig,
     pub tls: TlsConfig,
+    pub storage: StorageConfig,
     pub nostr: NostrConfig,
     pub server: ServerConfig,
     pub relay: RelayConfig,
@@ -382,6 +383,33 @@ impl Default for AdminConfig {
             tls: false,
             allow_plain_http: false,
             token_days: 90,
+        }
+    }
+}
+
+/// How the server's logs are written to disk (see `record.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// A check on every record, so damage in the middle of a log is noticed (and reported) instead of silently skipped or,
+    /// worse, believed. Off writes plain lines as the earlier versions did, which the Node relay can also read.
+    pub checksums: bool,
+    /// Encrypt every record (AES-256-GCM) with a key kept outside `data_dir`. The key is 32 random bytes as 64 hex
+    /// characters: make one with `privcord-server store-key --out FILE`. Lose the key and the data is gone.
+    pub encrypt: bool,
+    /// A file holding the key (for example a systemd credential or a file on another volume).
+    pub key_file: String,
+    /// Or an environment variable holding it, when no `key_file` is set.
+    pub key_env: String,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            checksums: true,
+            encrypt: false,
+            key_file: String::new(),
+            key_env: "PRIVCORD_STORE_KEY".into(),
         }
     }
 }

@@ -646,6 +646,15 @@ async fn overview(
     if c.nostr.enabled && c.nostr.allowed_pubkeys.is_empty() && !app.requires_token() {
         warnings.push(json!({ "text": "The Nostr side accepts events from anyone. Set allowed authors under Rules if this relay is for your own use.", "go": "rules" }));
     }
+    let damaged = app.relay.as_ref().map_or(0, |r| {
+        r.queue_corrupt()
+            + r.nostr()
+                .and_then(|n| n.store())
+                .map_or(0, |s| s.corrupt_lines())
+    });
+    if damaged > 0 {
+        warnings.push(json!({ "text": format!("{damaged} damaged records were skipped when the server started: the files had been changed or corrupted. A copy of each damaged file was kept next to it (named .damaged-…)."), "go": null }));
+    }
     let mut counters = app.relay.as_ref().map_or(json!({}), |r| r.health());
     if let Some(o) = counters.as_object_mut() {
         o.remove("ok");
@@ -668,6 +677,7 @@ async fn overview(
             }),
         },
         "tls": { "https": https, "self_signed": a.state.tls_self_signed },
+        "storage": { "encrypted": c.storage.encrypt, "checksums": c.storage.checksums, "damaged_records": damaged },
         "limits": {
             "max_connections_per_address": c.relay.max_conns_per_ip, "messages_kept_at_most": c.relay.max_queued,
             "store_and_forward": c.relay.store_and_forward, "nostr_durable": c.nostr.durable,

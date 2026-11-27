@@ -36,6 +36,13 @@ enum Cmd {
     },
     /// Check this machine and network for what would stop the server working.
     Doctor,
+    /// Make a storage key (32 random bytes as 64 hex characters) in a new file, for `storage.encrypt = true`. The key is not
+    /// printed. Keep the file away from the data folder and back it up: without it, encrypted data cannot be read.
+    StoreKey {
+        /// The file to create (it must not exist).
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
     /// Make a one-time setup code for another admin (works while the server runs). They enter it on the panel's login page
     /// and get their own token there; nothing long-lived is printed.
     AdminInvite {
@@ -147,6 +154,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Init { turn } => init(&cli.config, turn),
         Cmd::Serve => rt.block_on(serve(&cli.config)),
         Cmd::Doctor => rt.block_on(doctor(&cli.config)),
+        Cmd::StoreKey { out } => store_key(&out),
         Cmd::AdminInvite { name, role } => admin_invite(&cli.config, &name, &role),
     };
     match result {
@@ -185,6 +193,36 @@ fn load(path: &std::path::Path) -> Result<Config, String> {
     } else {
         Ok(Config::default())
     }
+}
+
+fn store_key(out: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    let mut raw = [0u8; 32];
+    getrandom::fill(&mut raw).map_err(|e| format!("no randomness: {e}"))?;
+    let hex: String = raw.iter().map(|b| format!("{b:02x}")).collect();
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o400);
+    }
+    let mut f = o.open(out).map_err(|e| {
+        format!(
+            "could not create {} (it must not exist yet): {e}",
+            out.display()
+        )
+    })?;
+    f.write_all(format!("{hex}\n").as_bytes())
+        .and_then(|()| f.sync_all())
+        .map_err(|e| format!("could not write {}: {e}", out.display()))?;
+    println!(
+        "storage key written to {} (read-only for this user). Set storage.encrypt = true and storage.key_file = \"{}\", \
+         and keep a copy somewhere safe: without it, the encrypted data cannot be read.",
+        out.display(),
+        out.display()
+    );
+    Ok(())
 }
 
 fn admin_invite(path: &std::path::Path, name: &str, role: &str) -> Result<(), String> {

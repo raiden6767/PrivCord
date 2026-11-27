@@ -12,18 +12,56 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// The secret that signs credentials: made once and kept in the data folder.
 pub fn load_or_make_secret(dir: &std::path::Path) -> Result<Vec<u8>, String> {
+    load_or_make_secret_with(dir, &crate::record::Codec::plain())
+}
+
+/// The same, written through the settings' codec: encrypted at rest when a storage key is set (an older plain file is read, and
+/// written again encrypted).
+pub fn load_or_make_secret_with(
+    dir: &std::path::Path,
+    codec: &crate::record::Codec,
+) -> Result<Vec<u8>, String> {
     let path = dir.join("turn-secret");
     if let Ok(text) = std::fs::read_to_string(&path) {
-        let hex = text.trim();
-        if hex.len() == 64 {
-            return Ok(hex.as_bytes().to_vec());
+        let line = text.trim();
+        let hex = match codec.decode("turn-secret", line) {
+            crate::record::Decoded::Payload(p) => Some(p),
+            crate::record::Decoded::NeedsKey => {
+                return Err(format!(
+                    "{} is encrypted but no storage key is set (storage.key_file, or the storage.key_env variable)",
+                    path.display()
+                ))
+            }
+            // A plain secret (the shape before encryption was an option) is just the hex; an encrypted one that does not open
+            // is the wrong key: nothing is replaced.
+            crate::record::Decoded::Corrupt if line.starts_with("e1 ") => {
+                return Err(format!(
+                    "{} cannot be read with this storage key (nothing was changed)",
+                    path.display()
+                ))
+            }
+            crate::record::Decoded::Corrupt => Some(line.to_owned()),
+        };
+        if let Some(hex) = hex.filter(|h| h.len() == 64) {
+            if codec.encrypts() && !line.starts_with("e1 ") {
+                crate::fsutil::write_private_atomic(
+                    &path,
+                    codec.encode("turn-secret", &hex).as_bytes(),
+                )?;
+            }
+            return Ok(hex.into_bytes());
         }
     }
     let mut raw = [0u8; 32];
     getrandom::fill(&mut raw).map_err(|e| format!("no randomness: {e}"))?;
     let hex: String = raw.iter().map(|b| format!("{b:02x}")).collect();
     crate::fsutil::create_private_dir(dir)?;
-    crate::fsutil::write_private_atomic(&path, hex.as_bytes())?;
+    let written = if codec.encrypts() {
+        codec.encode("turn-secret", &hex)
+    } else {
+        hex.clone()
+    };
+    crate::fsutil::write_private_atomic(&path, written.as_bytes())?;
     Ok(hex.into_bytes())
 }
 

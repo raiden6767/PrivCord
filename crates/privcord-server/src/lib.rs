@@ -8,6 +8,7 @@ pub mod fsutil;
 pub mod nat;
 pub mod net;
 pub mod nostr;
+pub mod record;
 pub mod relay;
 pub mod store;
 pub mod tls;
@@ -98,17 +99,23 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     } else {
         None
     };
+    // How the logs are written: a check on every record and, with a key, encryption (see record.rs).
+    let codec = Arc::new(record::Codec::from_config(&cfg.storage)?);
     let relay = if cfg.relay.enabled || cfg.nostr.enabled {
         let store = if cfg.relay.enabled && cfg.relay.store_and_forward {
-            Some(store::Store::open(&cfg.server.data_dir)?)
+            Some(store::Store::open_with(
+                &cfg.server.data_dir,
+                codec.clone(),
+            )?)
         } else {
             None
         };
         let mut r = Relay::new(cfg.relay.clone(), store, net::now_ms());
         if cfg.nostr.enabled {
-            r = r.with_nostr(Arc::new(nostr::Nostr::new(
+            r = r.with_nostr(Arc::new(nostr::Nostr::with_codec(
                 cfg.nostr.clone(),
                 &cfg.server.data_dir,
+                codec.clone(),
             )?));
         }
         Some(Arc::new(r))
@@ -117,7 +124,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     };
     #[cfg(feature = "turn")]
     let turn = if cfg.turn.enabled {
-        let secret = turn_role::load_or_make_secret(&cfg.server.data_dir)?;
+        let secret = turn_role::load_or_make_secret_with(&cfg.server.data_dir, &codec)?;
         let ip: std::net::IpAddr = cfg
             .turn
             .public_ip

@@ -2,6 +2,7 @@
 
 use super::event::{Event, Id};
 use super::filter::Filter;
+use crate::record::{Codec, Decoded};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
@@ -52,7 +53,13 @@ pub struct Store {
     /// The most bytes of events to hold (0: no limit); the oldest go first when it is exceeded.
     max_bytes: usize,
     lines: std::sync::atomic::AtomicUsize,
+    /// How each record is written (a check, and encryption with a key).
+    codec: Arc<Codec>,
+    /// Records that could not be trusted when the log was read (skipped).
+    corrupt: std::sync::atomic::AtomicUsize,
 }
+
+const LABEL: &str = "nostr-events";
 
 impl std::fmt::Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -237,15 +244,27 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Store {
-    /// A store that keeps its log in `dir` (or only in memory when `dir` is `None`), reading back what it finds.
+    /// A store that keeps its log in `dir` (or only in memory when `dir` is `None`), reading back what it finds. Plain lines
+    /// with no check: use [`Store::open_with`] for the settings' codec.
     pub fn open(dir: Option<&std::path::Path>, max_bytes: usize) -> Result<Self, String> {
+        Self::open_with(dir, max_bytes, Arc::new(Codec::plain()))
+    }
+
+    pub fn open_with(
+        dir: Option<&std::path::Path>,
+        max_bytes: usize,
+        codec: Arc<Codec>,
+    ) -> Result<Self, String> {
         let mut store = Self {
             inner: RwLock::new(Inner::default()),
             log: None,
             path: None,
             max_bytes,
             lines: std::sync::atomic::AtomicUsize::new(0),
+            codec,
+            corrupt: std::sync::atomic::AtomicUsize::new(0),
         };
+        let mut rewrite = false;
         if let Some(dir) = dir {
             crate::fsutil::create_private_dir(dir)?;
             let path = dir.join("nostr-events.jsonl");
@@ -259,9 +278,28 @@ impl Store {
                 );
             }
             if let Ok(text) = std::fs::read_to_string(&path) {
-                let mut n = 0;
-                for line in text.lines() {
-                    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                crate::record::check_key(&store.codec, LABEL, &text, &path.display().to_string())?;
+                let (mut n, mut corrupt, mut old) = (0, 0usize, 0usize);
+                for line in text.lines().filter(|l| !l.is_empty()) {
+                    let payload = match store.codec.decode(LABEL, line) {
+                        Decoded::Payload(p) => p,
+                        Decoded::Corrupt => {
+                            corrupt += 1;
+                            continue;
+                        }
+                        Decoded::NeedsKey => {
+                            return Err(format!(
+                            "{} is encrypted but no storage key is set (storage.key_file or {})",
+                            path.display(),
+                            "the storage.key_env variable"
+                        ))
+                        }
+                    };
+                    if !store.codec.is_current(line) {
+                        old += 1;
+                    }
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload) else {
+                        corrupt += 1;
                         continue;
                     };
                     if let Some(id) = v
@@ -277,13 +315,41 @@ impl Store {
                     }
                 }
                 store.lines.store(n, std::sync::atomic::Ordering::Relaxed);
+                store
+                    .corrupt
+                    .store(corrupt, std::sync::atomic::Ordering::Relaxed);
+                if corrupt > 0 {
+                    // Kept as it was, before the next compaction drops what could not be read: the damage can be looked at.
+                    let keep = dir.join(format!(
+                        "nostr-events.jsonl.damaged-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_secs())
+                    ));
+                    let _ = std::fs::copy(&path, &keep);
+                    eprintln!(
+                        "privcord-server: {corrupt} damaged records in {} were skipped (a copy is in {})",
+                        path.display(),
+                        keep.display()
+                    );
+                }
+                rewrite = old > 0 && store.codec.frames();
             }
             let file = crate::fsutil::open_private_append(&path)
                 .map_err(|e| format!("could not open {}: {e}", path.display()))?;
             store.log = Some(Mutex::new(file));
             store.path = Some(path);
         }
+        // An older log is rewritten in the shape the settings ask for (checksummed, or encrypted) right away.
+        if rewrite {
+            store.compact(true);
+        }
         Ok(store)
+    }
+
+    /// How many records could not be trusted when the log was read.
+    pub fn corrupt_lines(&self) -> usize {
+        self.corrupt.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn insert_inner(&self, e: Arc<Event>, log: bool) -> Put {
@@ -354,7 +420,7 @@ impl Store {
         drop(w);
         if log {
             if let Some(f) = &self.log {
-                let mut line = e.json.to_string();
+                let mut line = self.codec.encode(LABEL, &e.json);
                 line.push('\n');
                 let mut file = lock(f);
                 let before = file.metadata().map(|m| m.len()).ok();
@@ -394,8 +460,11 @@ impl Store {
         let had = self.ban_inner(*id);
         // Written to the log, so the ban survives a restart (and a crash, which would otherwise reload the event).
         if let Some(f) = &self.log {
-            let mut line = format!("{{\"ban\":\"{}\"}}\n", super::event::hex(id));
-            let _ = lock(f).write_all(std::mem::take(&mut line).as_bytes());
+            let mut line = self
+                .codec
+                .encode(LABEL, &format!("{{\"ban\":\"{}\"}}", super::event::hex(id)));
+            line.push('\n');
+            let _ = lock(f).write_all(line.as_bytes());
             self.lines
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -584,11 +653,16 @@ impl Store {
         let r = self.inner.read().unwrap_or_else(PoisonError::into_inner);
         let mut text = String::new();
         for id in &r.banned {
-            text.push_str(&format!("{{\"ban\":\"{}\"}}\n", super::event::hex(id)));
+            text.push_str(
+                &self
+                    .codec
+                    .encode(LABEL, &format!("{{\"ban\":\"{}\"}}", super::event::hex(id))),
+            );
+            text.push('\n');
         }
         for key in &r.by_time {
             if let Some(e) = r.by_id.get(&key.1) {
-                text.push_str(&e.json);
+                text.push_str(&self.codec.encode(LABEL, &e.json));
                 text.push('\n');
             }
         }

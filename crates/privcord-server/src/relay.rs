@@ -175,6 +175,11 @@ impl Relay {
         relay
     }
 
+    /// Records in the offline-message queue that could not be trusted when it was read.
+    pub fn queue_corrupt(&self) -> usize {
+        self.store.as_ref().map_or(0, |s| lock(s).corrupt_lines())
+    }
+
     pub fn stats(&self) -> &Stats {
         &self.stats
     }

@@ -65,6 +65,29 @@ back, and that an event written after the torn line is kept. (A power cut itself
 disk honouring its sync.) What SQLite adds that this does not have: page checksums, so silent corruption in the middle of a file
 is not detected: lines that cannot be read are skipped.
 
+### Checked and encrypted on disk
+
+Every record in the logs (`nostr-events.jsonl`, `queue.jsonl`) is written with a check, so damage in the middle of a file is
+noticed: a record whose check fails is skipped, counted (the panel's Home page warns), and a copy of the whole file is kept as
+`….damaged-<time>` before anything is rewritten. Settings:
+
+```toml
+[storage]
+checksums = true        # false writes plain lines (the Node relay can read those)
+encrypt = false         # true: AES-256-GCM on every record, and on turn-secret
+key_file = ""           # a file holding the key (64 hex characters), or ...
+key_env = "PRIVCORD_STORE_KEY"   # ... an environment variable
+```
+
+`privcord-server store-key --out /etc/privcord/store.key` makes a key in a new file (read-only; it is never printed). Keep it off
+the data volume and back it up: without it the encrypted data cannot be read. With encryption on, a stolen disk or a copy of the
+data folder is noise; the GCM tag is also the check (a changed byte, a record moved to another log, or a wrong key all fail).
+**A wrong or missing key stops the server at start and changes nothing**: it does not skip every record and then rewrite an empty
+log. Logs written by earlier versions (plain lines) are read, and rewritten in the new shape at the next start.
+What it does not do: the key lives in the server's memory while it runs, so it protects a copy of the disk and not a
+compromised running server; `admin.json` holds only hashes and is not encrypted; events published to Nostr are readable by the
+server by design.
+
 ### Durable mode
 
 By default an event is confirmed as soon as it is in memory and handed to the operating system, and the log is synced to disk

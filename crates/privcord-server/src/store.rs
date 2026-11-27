@@ -10,23 +10,48 @@ use std::path::PathBuf;
 pub struct Store {
     path: PathBuf,
     file: Option<File>,
+    codec: std::sync::Arc<crate::record::Codec>,
+    /// Records that could not be trusted when the log was read (skipped).
+    corrupt: usize,
 }
+
+const LABEL: &str = "queue";
 
 /// `(mailbox, id, blob, stored at, expires at)`, in milliseconds.
 pub type Held = (String, String, String, i64, i64);
 
 impl Store {
     pub fn open(dir: &std::path::Path) -> Result<Self, String> {
+        Self::open_with(dir, std::sync::Arc::new(crate::record::Codec::plain()))
+    }
+
+    pub fn open_with(
+        dir: &std::path::Path,
+        codec: std::sync::Arc<crate::record::Codec>,
+    ) -> Result<Self, String> {
         crate::fsutil::create_private_dir(dir)?;
         let path = dir.join("queue.jsonl");
         // Half a line left by a crash is cut off, or the next message would be glued to it and lost.
         crate::fsutil::trim_torn_tail(&path)
             .map_err(|e| format!("could not check {}: {e}", path.display()))?;
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            crate::record::check_key(&codec, LABEL, &text, &path.display().to_string())?;
+        }
+        if !codec.encrypts()
+            && std::fs::read_to_string(&path).is_ok_and(|t| t.lines().any(|l| l.starts_with("e1 ")))
+        {
+            return Err(format!(
+                "{} is encrypted but no storage key is set (storage.key_file, or the storage.key_env variable)",
+                path.display()
+            ));
+        }
         let file = crate::fsutil::open_private_append(&path)
             .map_err(|e| format!("could not open {}: {e}", path.display()))?;
         Ok(Self {
             path,
             file: Some(file),
+            codec,
+            corrupt: 0,
         })
     }
 
@@ -36,8 +61,17 @@ impl Store {
             return Vec::new();
         };
         let mut held: Vec<Held> = Vec::new();
+        let mut corrupt = 0usize;
         for line in text.lines().filter(|l| !l.is_empty()) {
-            let Ok(r) = serde_json::from_str::<Value>(line) else {
+            let payload = match self.codec.decode(LABEL, line) {
+                crate::record::Decoded::Payload(p) => p,
+                _ => {
+                    corrupt += 1;
+                    continue;
+                }
+            };
+            let Ok(r) = serde_json::from_str::<Value>(&payload) else {
+                corrupt += 1;
                 continue;
             };
             let (Some(mailbox), Some(id)) = (
@@ -64,12 +98,36 @@ impl Store {
                 _ => {}
             }
         }
+        self.corrupt = corrupt;
+        if corrupt > 0 {
+            // Kept as it was, before the next rewrite drops what could not be read.
+            let keep = self.path.with_extension(format!(
+                "jsonl.damaged-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs())
+            ));
+            let _ = std::fs::copy(&self.path, &keep);
+            eprintln!(
+                "privcord-server: {corrupt} damaged records in {} were skipped (a copy is in {})",
+                self.path.display(),
+                keep.display()
+            );
+        }
         held
+    }
+
+    /// How many records could not be trusted when the log was read.
+    pub fn corrupt_lines(&self) -> usize {
+        self.corrupt
     }
 
     /// False when it could not be written (the put is then refused: better than a promise that cannot be kept).
     pub fn append_put(&mut self, mailbox: &str, id: &str, blob: &str, ts: i64, exp: i64) -> bool {
-        let mut line = json!({ "op": "put", "mailbox": mailbox, "id": id, "blob": blob, "ts": ts, "exp": exp }).to_string();
+        let mut line = self.codec.encode(
+            LABEL,
+            &json!({ "op": "put", "mailbox": mailbox, "id": id, "blob": blob, "ts": ts, "exp": exp }).to_string(),
+        );
         line.push('\n');
         let Some(f) = self.file.as_mut() else {
             return false;
@@ -97,7 +155,10 @@ impl Store {
     pub fn rewrite(&mut self, live: &[Held]) {
         let mut body = String::new();
         for (mailbox, id, blob, ts, exp) in live {
-            body.push_str(&json!({ "op": "put", "mailbox": mailbox, "id": id, "blob": blob, "ts": ts, "exp": exp }).to_string());
+            body.push_str(&self.codec.encode(
+                LABEL,
+                &json!({ "op": "put", "mailbox": mailbox, "id": id, "blob": blob, "ts": ts, "exp": exp }).to_string(),
+            ));
             body.push('\n');
         }
         // Synced to disk, renamed over the log, and the folder synced: never a half-written queue.

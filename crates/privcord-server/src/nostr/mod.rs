@@ -174,9 +174,18 @@ fn frame_event(sub: &str, e: &Event) -> Arc<str> {
 
 impl Nostr {
     pub fn new(cfg: NostrConfig, data_dir: &std::path::Path) -> Result<Self, String> {
+        Self::with_codec(cfg, data_dir, Arc::new(crate::record::Codec::plain()))
+    }
+
+    /// With the settings' way of writing the log (a check on every record, and encryption when a key is set).
+    pub fn with_codec(
+        cfg: NostrConfig,
+        data_dir: &std::path::Path,
+        codec: Arc<crate::record::Codec>,
+    ) -> Result<Self, String> {
         let store = cfg
             .store_events
-            .then(|| Store::open(cfg.persist.then_some(data_dir), cfg.max_store_bytes))
+            .then(|| Store::open_with(cfg.persist.then_some(data_dir), cfg.max_store_bytes, codec))
             .transpose()?;
         let policy = Policy::from_config(&cfg);
         Ok(Self {
