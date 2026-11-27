@@ -188,11 +188,42 @@ pub fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0))
 }
 
+/// What an app (a desktop window is a web page) needs to ask this server about itself from another origin: `GET` with an
+/// `Authorization` header. `/turn` still needs the access token (when there is one); nothing is opened that was closed.
+async fn cors(mut r: Response) -> Response {
+    let h = r.headers_mut();
+    for (k, v) in [
+        ("access-control-allow-origin", "*"),
+        (
+            "access-control-allow-headers",
+            "authorization, content-type",
+        ),
+        ("access-control-allow-methods", "GET, OPTIONS"),
+        ("access-control-max-age", "600"),
+    ] {
+        h.insert(
+            axum::http::HeaderName::from_static(k),
+            axum::http::HeaderValue::from_static(v),
+        );
+    }
+    r
+}
+
+async fn preflight() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
 pub fn router(app: Arc<App>) -> Router {
+    let open = Router::new()
+        .route(
+            "/.well-known/privcord-server",
+            get(about).options(preflight),
+        )
+        .route("/turn", get(turn_credentials).options(preflight))
+        .layer(axum::middleware::map_response(cors));
     Router::new()
         .route("/healthz", get(healthz))
-        .route("/.well-known/privcord-server", get(about))
-        .route("/turn", get(turn_credentials))
+        .merge(open)
         .route("/metrics", get(metrics))
         // NIP-86: management calls are POSTs to the relay's own address; a GET there is still the relay's socket.
         .route(

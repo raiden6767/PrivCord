@@ -12,6 +12,7 @@ import type { ChatState } from '../lib/engine';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { BUILTIN_TURN, loadNetworkConfig, saveNetworkConfig, setTorMode, torModeActive } from '../lib/network';
 import { CheckIcon, InfoIcon } from './Icons';
+import { MyServerSettings } from './MyServerSettings';
 
 const lines = (text: string) =>
   text
@@ -141,6 +142,8 @@ export function NetworkSettings({ engine, state }: { engine: ChatEngineApi | nul
           PrivCord operates peer-to-peer without central accounts. Select your preferred transport mode below.
         </p>
       </header>
+
+      <MyServerSettings engine={engine} />
 
       <div className="field">
         <span>Transport Selector</span>

@@ -6,7 +6,7 @@
  * server) there is no shell, and they stay in local storage.
  */
 
-const KEYS = { settings: 'duochat.settings.v1', network: 'duochat.network.v1' } as const;
+const KEYS = { settings: 'duochat.settings.v1', network: 'duochat.network.v1', servers: 'privcord.servers.v1' } as const;
 export type SealedName = keyof typeof KEYS;
 
 const copy = new Map<SealedName, string | null>();

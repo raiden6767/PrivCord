@@ -561,3 +561,61 @@ async fn an_ipv6_visitor_counts_as_one_however_many_addresses_it_has() {
     let v4: std::net::IpAddr = "203.0.113.5".parse().unwrap();
     assert_eq!(ip_group(v4), v4);
 }
+
+/// One request with any method: (status, the head in lower case, the body).
+async fn raw_request(
+    addr: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    extra: &str,
+) -> (u16, String, String) {
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    s.write_all(
+        format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{extra}\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    let (head, body) = out.split_once("\r\n\r\n").unwrap_or((&out, ""));
+    (
+        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+        head.to_lowercase(),
+        body.to_owned(),
+    )
+}
+
+#[tokio::test]
+async fn an_app_in_a_web_view_may_ask_the_server_about_itself_from_another_origin() {
+    let dir = tempfile::tempdir().unwrap();
+    let (r, _url) = spawn(config(dir.path())).await;
+    // the preflight a browser makes before a GET with an Authorization header
+    let (status, head, _) = raw_request(
+        r.addr,
+        "OPTIONS",
+        "/turn",
+        "Origin: https://app.example\r\nAccess-Control-Request-Method: GET\r\nAccess-Control-Request-Headers: authorization\r\n",
+    )
+    .await;
+    assert_eq!(status, 204, "{head}");
+    assert!(
+        head.contains("access-control-allow-origin: *") && head.contains("authorization"),
+        "{head}"
+    );
+    // and the answer itself carries the permission
+    let (status, head, body) = raw_request(
+        r.addr,
+        "GET",
+        "/.well-known/privcord-server",
+        "Origin: https://app.example\r\n",
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(head.contains("access-control-allow-origin: *"), "{head}");
+    assert!(body.contains("privcord-server"));
+    // the counters get no such permission
+    let (_, head, _) =
+        raw_request(r.addr, "GET", "/healthz", "Origin: https://app.example\r\n").await;
+    assert!(!head.contains("access-control-allow-origin"), "{head}");
+}

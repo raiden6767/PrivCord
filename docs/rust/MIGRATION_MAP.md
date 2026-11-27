@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 67 | 10122 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 101 | 18575 |
-| Stays (platform adapter) | 77 | 13869 |
+| Stays (UI) | 102 | 18687 |
+| Stays (platform adapter) | 80 | 14251 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **250** | **45211** |
+| **All mapped files** | **254** | **45705** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -83,7 +83,8 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/ManualConnectDialog.tsx` | 327 | `ManualConnectDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/MessageList.tsx` | 660 | `MessageList` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/Modal.tsx` | 113 | `Modal` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
-| `apps/desktop/src/components/NetworkSettings.tsx` | 289 | `NetworkSettings` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/MyServerSettings.tsx` | 106 | `MyServerSettings` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/NetworkSettings.tsx` | 292 | `NetworkSettings` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/NetworkTransparency.tsx` | 62 | `NetworkTransparency` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/PersonDialog.tsx` | 161 | `PersonDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/PrivacyCheckup.tsx` | 110 | `LAST_BACKUP_KEY`, `PrivacyCheckup` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
@@ -96,7 +97,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/UpdateControl.tsx` | 128 | `UpdateCheck`, `UpdateBanner` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/dialogFocus.test.tsx` | 46 | (none) | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/config.ts` | 19 | `config`, `isTauri` | App shell | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/hooks/useChatEngine.ts` | 107 | `UseChatEngine`, `useChatEngine` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/hooks/useChatEngine.ts` | 110 | `UseChatEngine`, `useChatEngine` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/hooks/useSettings.ts` | 33 | `useSettings` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/hooks/useWindowEffects.ts` | 67 | `useUnreadTitle`, `useSecureScreen` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/lib/appLock.ts` | 141 | `isLockEnabled`, `lockSupported`, `enableLock`, `disableLock`, `unlock`, `RELOCK_AFTER_MS` | WebAuthn app lock | UI/adapter (stays) | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -139,7 +140,10 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/killSwitchFactory.ts` | 60 | `buildKillSwitchDeps`, `clearPersistedKillSwitchReport` | Emergency erase steps for the webview (local storage, IndexedDB, files, Tauri commands) | engine::core::privacy runs the plan and the report; these files only call web and OS APIs | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/limits.ts` | 10 | `MAX_LIVE_LINKS`, `MIN_BACKUP_PASSPHRASE`, `PANIC_PRESSES`, `PANIC_WINDOW_MS` | The installed app version, and the connection limit the screens state (checked against the engine) | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/localDb.ts` | 423 | `OutboxRow`, `FileMeta`, `StoredMessage`, `LocalStore` | Desktop SQLite schema, encrypted columns, file store | storage::SqliteStorage; privcord-import (desktop importer) | Storage | Ported, tested | M7: after the importer has run on every install | importer and migration tests on generated fixtures (docs/legacy-fixtures.json); the browser file store stays in the adapter |
-| `apps/desktop/src/lib/network.ts` | 85 | `BUILTIN_TURN`, `loadTorMode`, `torModeActive`, `setTorMode`, `loadNetworkConfig`, `saveNetworkConfig` +2 | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/myServer.test.ts` | 92 | (none) | "Use my server": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login | UI/settings glue (stays); the server side is crates/privcord-server | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/myServer.ts` | 232 | `SavedServer`, `ServerInfo`, `MAX_SERVERS`, `REFRESH_BEFORE_MS`, `RECHECK_MS`, `MyServerError` +11 | "Use my server": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login | UI/settings glue (stays); the server side is crates/privcord-server | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/myServerLoop.ts` | 29 | `refreshMyServers`, `watchMyServers` | "Use my server": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login | UI/settings glue (stays); the server side is crates/privcord-server | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/network.ts` | 114 | `loadMyServers`, `saveMyServers`, `serverInfo`, `setServerInfo`, `BUILTIN_TURN`, `loadTorMode` +6 | WebRTC peer connection and BLE link on the desktop | Transport adapters (stay); link policy moves to engine | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/networkHosts.ts` | 47 | `HostRow`, `networkHosts` | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/notifications.ts` | 60 | `takeRecentNotified`, `ensureNotificationPermission`, `notifyIncoming` | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/outbox.test.ts` | 15 | (none) | Retry/outbox policy | engine::core delivery | Engine | Ported, tested | M7 | engine tests |

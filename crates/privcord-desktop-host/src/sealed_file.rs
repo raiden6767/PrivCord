@@ -40,7 +40,7 @@ pub fn is_sealed(file: &[u8]) -> bool {
 
 /// The settings the page keeps (and may ask for by name): nothing else is ever read or written, so a name cannot point
 /// outside the folder.
-const BLOBS: [&str; 2] = ["settings", "network"];
+const BLOBS: [&str; 3] = ["settings", "network", "servers"];
 
 fn blob_path(dir: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     BLOBS
