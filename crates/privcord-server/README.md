@@ -60,6 +60,23 @@ delivered, slowest 0.23 s. Run it on your own hardware:
 Raise the open-files limit (`ulimit -n 65536`, or `LimitNOFILE=` in systemd) for many thousands of connections. TURN
 capacity is bounded by your network bandwidth; use `max_kbps` to cap each relayed connection.
 
+### Against the Node relay
+
+`scripts/bench-relay.sh` runs the same load (1,000 listeners, 1,000 senders, 20,000 messages of 2 KiB, same limits)
+against the Node relay and this one. One run on a shared 2-vCPU container, the load generator on the same machine:
+
+| | Node 22 | Rust |
+|---|---|---|
+| start until it answers | 86-106 ms | 8-9 ms |
+| idle memory | 63 MB | 5 MB |
+| peak memory under load | 87-90 MB | 29-35 MB |
+| CPU time for the run | 1.25-1.3 s | 0.5-0.55 s |
+| throughput | about 14,500 msg/s | about 15,000 msg/s (the load generator is the limit) |
+| slowest delivery | 35-50 ms | 100-145 ms |
+
+Rust wins on start-up, memory and CPU. Throughput is a tie here because the test client is the bottleneck, and the Node
+relay's worst-case delivery is currently faster; that is a known gap, not hidden. Numbers vary by machine: run it on yours.
+
 ## Docker
 
 ```sh
