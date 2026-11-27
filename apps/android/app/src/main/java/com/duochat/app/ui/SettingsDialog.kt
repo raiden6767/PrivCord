@@ -1257,8 +1257,14 @@ private fun MyServerBlock(settings: AppSettings, onUpdateSettings: (AppSettings.
             )
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        if (settings.network.torMode) {
+            Text(
+                "Private mode (Tor) is on: the app will not contact the server directly to look it up. Turn it off to add a server.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         Button(
-            enabled = !busy && address.isNotBlank(),
+            enabled = !busy && address.isNotBlank() && !settings.network.torMode,
             onClick = {
                 busy = true
                 error = null

@@ -78,7 +78,10 @@ object EngineHost {
         newScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             while (true) {
                 var changed = false
-                for (server in settings.settings.value.servers) {
+                // Tor mode: this phone makes no direct request to anyone (the relay sockets go through Tor; this HTTP call
+                // does not), so what a server offers is not asked for. Its relay address is still used, through Tor.
+                val servers = if (settings.settings.value.network.torMode) emptyList() else settings.settings.value.servers
+                for (server in servers) {
                     val before = com.duochat.app.data.MyServerState.get(server.base)
                     if (!com.duochat.app.data.MyServer.needsRefresh(before)) continue
                     com.duochat.app.data.MyServerState.set(

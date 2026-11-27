@@ -742,6 +742,8 @@ class RustChatEngine(
             }
             SignalKindDto.OFFER -> {
                 if (sdp == null) return
+                // Private mode (Tor): never answer. The answer carries this phone's addresses to the other side.
+                if (networkConfig().torMode) return
                 val t = newTransport(peer)
                 val answer = runCatching { t.acceptOffer(sdp) }.getOrNull() ?: return
                 signal(peer, SignalKindDto.ANSWER, answer)
