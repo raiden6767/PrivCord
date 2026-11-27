@@ -38,7 +38,7 @@ jobs:
           npm ci
           npm run build
       - id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Fill in the site address and repository
         run: |
           base="${{ steps.pages.outputs.base_url }}"
