@@ -135,8 +135,7 @@ impl AdminState {
         app: Arc<App>,
         tls_self_signed: bool,
     ) -> Result<(Arc<Self>, Option<String>), String> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        crate::fsutil::create_private_dir(dir)?;
         let path = dir.join("admin.json");
         let stored: Stored = match std::fs::read_to_string(&path) {
             Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", path.display()))?,
@@ -177,7 +176,7 @@ impl AdminState {
         name: &str,
         role: Role,
     ) -> Result<String, String> {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        crate::fsutil::create_private_dir(dir)?;
         let path = dir.join("admin.json");
         let mut stored: Stored = match std::fs::read_to_string(&path) {
             Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", path.display()))?,
@@ -283,14 +282,7 @@ impl AdminState {
 
 fn write_atomic(path: &std::path::Path, stored: &Stored) -> Result<(), String> {
     let text = serde_json::to_string_pretty(stored).map_err(|e| e.to_string())?;
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, text).map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
-    std::fs::rename(&tmp, path).map_err(|e| format!("could not save {}: {e}", path.display()))
+    crate::fsutil::write_private_atomic(path, text.as_bytes())
 }
 
 fn policy_from_json(p: &PolicyJson) -> crate::nostr::Policy {

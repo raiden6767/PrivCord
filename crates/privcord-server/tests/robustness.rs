@@ -82,7 +82,7 @@ fn event_json(rng: &mut Rng) -> Value {
 fn the_event_store_keeps_its_promises_under_random_events_deletions_and_queries() {
     for seed in 1..=300u64 {
         let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
-        let store = Store::open(None).unwrap();
+        let store = Store::open(None, 0).unwrap();
         // deletions that were stored: (author, target id) must never be visible afterwards
         let mut deleted: Vec<(String, String)> = Vec::new();
         let mut history: Vec<String> = Vec::new();

@@ -22,13 +22,8 @@ pub fn load_or_make_secret(dir: &std::path::Path) -> Result<Vec<u8>, String> {
     let mut raw = [0u8; 32];
     getrandom::fill(&mut raw).map_err(|e| format!("no randomness: {e}"))?;
     let hex: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-    std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    std::fs::write(&path, &hex).map_err(|e| format!("could not write {}: {e}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::fsutil::create_private_dir(dir)?;
+    crate::fsutil::write_private_atomic(&path, hex.as_bytes())?;
     Ok(hex.into_bytes())
 }
 
@@ -172,6 +167,9 @@ pub mod server {
     /// One relayed connection: refuses to send to addresses it should not, and keeps to a speed limit.
     struct Guard {
         inner: Arc<dyn Conn + Send + Sync>,
+        /// The relay ports in use, and this one's own, so the allocation can be taken off the list when it ends.
+        live: LivePorts,
+        port: u16,
         /// This server's address as phones see it. Traffic between two of our own allocations is delivered locally, because
         /// many routers (and some clouds) cannot loop a packet back to their own public address.
         public_ip: std::net::IpAddr,
@@ -187,8 +185,17 @@ pub mod server {
 
     impl Guard {
         /// A packet that came from this machine itself is, to everybody else, from the public address.
+        fn is_live_port(&self, port: u16) -> bool {
+            self.live
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&port)
+        }
+
         fn as_seen_from_outside(&self, from: SocketAddr) -> SocketAddr {
-            if from.ip().is_loopback() {
+            // Only another allocation of ours can be the source: anything else on this machine that happens to use a
+            // loopback address is not presented as a legitimate peer.
+            if from.ip().is_loopback() && self.is_live_port(from.port()) {
                 SocketAddr::new(self.public_ip, from.port())
             } else {
                 from
@@ -236,9 +243,11 @@ pub mod server {
                 // Dropped, as a congested network would: the sender is told it went.
                 return Ok(buf.len());
             }
-            // To our own public address: deliver it here instead (the receiving side maps it back, see `recv_from`).
+            // To our own public address and another allocation's port: deliver it here instead (the receiving side maps it
+            // back, see `recv_from`). Only for a live relay port: a client must not be able to aim a packet at any other
+            // port on this machine's loopback (a local resolver, a database) by naming our public address.
             let target = match (target.ip() == self.public_ip, self.public_ip) {
-                (true, std::net::IpAddr::V4(_)) => {
+                (true, std::net::IpAddr::V4(_)) if self.is_live_port(target.port()) => {
                     SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), target.port())
                 }
                 _ => target,
@@ -259,10 +268,14 @@ pub mod server {
         }
     }
 
+    /// The relay ports of the allocations that exist now (shared by every transport).
+    type LivePorts = Arc<Mutex<std::collections::HashSet<u16>>>;
+
     struct Gen {
         inner: RelayAddressGeneratorRanges,
         allow_private: bool,
         kbps: u64,
+        live: LivePorts,
     }
 
     #[async_trait]
@@ -286,15 +299,100 @@ pub mod server {
                     per_sec: self.kbps as f64 * 125.0,
                 })
             });
+            self.live
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(addr.port());
             Ok((
                 Arc::new(Guard {
                     inner: conn,
+                    live: self.live.clone(),
+                    port: addr.port(),
                     public_ip: self.inner.relay_address,
                     allow_private: self.allow_private,
                     bucket,
                 }),
                 addr,
             ))
+        }
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.live
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&self.port);
+        }
+    }
+
+    /// A stand-in for a relay socket, for tests: remembers where packets were sent and plays back sources it is given.
+    #[cfg(test)]
+    #[derive(Clone, Default, Debug)]
+    pub struct MockConn {
+        sent: Arc<Mutex<Vec<SocketAddr>>>,
+        incoming: Arc<Mutex<Vec<SocketAddr>>>,
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    impl MockConn {
+        pub fn sent(&self) -> Vec<SocketAddr> {
+            self.sent.lock().unwrap().clone()
+        }
+        pub fn queue_incoming(&self, a: SocketAddr) {
+            self.incoming.lock().unwrap().push(a);
+        }
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    #[async_trait]
+    impl Conn for MockConn {
+        async fn connect(&self, _: SocketAddr) -> webrtc_util::Result<()> {
+            Ok(())
+        }
+        async fn recv(&self, b: &mut [u8]) -> webrtc_util::Result<usize> {
+            self.recv_from(b).await.map(|x| x.0)
+        }
+        async fn recv_from(&self, _: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
+            let mut q = self.incoming.lock().unwrap();
+            if q.is_empty() {
+                return Err(webrtc_util::Error::ErrUseClosedNetworkConn);
+            }
+            Ok((0, q.remove(0)))
+        }
+        async fn send(&self, b: &[u8]) -> webrtc_util::Result<usize> {
+            Ok(b.len())
+        }
+        async fn send_to(&self, b: &[u8], t: SocketAddr) -> webrtc_util::Result<usize> {
+            self.sent.lock().unwrap().push(t);
+            Ok(b.len())
+        }
+        fn local_addr(&self) -> webrtc_util::Result<SocketAddr> {
+            Ok("0.0.0.0:0".parse().unwrap())
+        }
+        fn remote_addr(&self) -> Option<SocketAddr> {
+            None
+        }
+        async fn close(&self) -> webrtc_util::Result<()> {
+            Ok(())
+        }
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    pub fn test_guard(inner: MockConn, public_ip: &str, live_ports: &[u16]) -> impl Conn {
+        Guard {
+            inner: Arc::new(inner),
+            live: Arc::new(Mutex::new(live_ports.iter().copied().collect())),
+            port: 0,
+            public_ip: public_ip.parse().unwrap(),
+            allow_private: false,
+            bucket: None,
         }
     }
 
@@ -347,6 +445,7 @@ pub mod server {
             .filter_map(|u| u.split_once(':').map(|(n, p)| (n.to_owned(), p.to_owned())))
             .collect();
         // Every transport relays the same way: its own generator (they share the port range; a taken port is retried).
+        let live: LivePorts = Arc::new(Mutex::new(std::collections::HashSet::new()));
         let generator = || -> Box<dyn RelayAddressGenerator + Send + Sync> {
             Box::new(Gen {
                 inner: RelayAddressGeneratorRanges {
@@ -359,6 +458,7 @@ pub mod server {
                 },
                 allow_private: cfg.allow_private_peers,
                 kbps: cfg.max_kbps,
+                live: live.clone(),
             })
         };
         let mut conn_configs = vec![ConnConfig {
@@ -459,5 +559,58 @@ mod block_tests {
                 "{fine} should be allowed"
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "turn"))]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod local_delivery_tests {
+    use super::server::{test_guard, MockConn};
+    use std::net::SocketAddr;
+    use webrtc_util::Conn;
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_packet_to_our_own_public_address_goes_to_loopback_only_for_a_live_relay_port() {
+        let mock = MockConn::default();
+        let g = test_guard(mock.clone(), "203.0.113.10", &[49300]);
+        g.send_to(b"x", addr("203.0.113.10:49300")).await.unwrap();
+        g.send_to(b"y", addr("203.0.113.10:53")).await.unwrap(); // not an allocation: must not become 127.0.0.1:53
+        g.send_to(b"z", addr("8.8.8.8:53")).await.unwrap();
+        g.send_to(b"w", addr("127.0.0.1:53")).await.unwrap(); // loopback itself is refused outright
+        assert_eq!(
+            mock.sent(),
+            vec![
+                addr("127.0.0.1:49300"),
+                addr("203.0.113.10:53"),
+                addr("8.8.8.8:53")
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_live_relay_port_on_loopback_is_shown_as_coming_from_the_public_address() {
+        let mock = MockConn::default();
+        let g = test_guard(mock.clone(), "203.0.113.10", &[49300]);
+        mock.queue_incoming(addr("127.0.0.1:49300"));
+        mock.queue_incoming(addr("127.0.0.1:53")); // some other program on this machine
+        mock.queue_incoming(addr("198.51.100.7:4000"));
+        let mut buf = [0u8; 8];
+        assert_eq!(
+            g.recv_from(&mut buf).await.unwrap().1,
+            addr("203.0.113.10:49300")
+        );
+        assert_eq!(
+            g.recv_from(&mut buf).await.unwrap().1,
+            addr("127.0.0.1:53"),
+            "must not be presented as the public address"
+        );
+        assert_eq!(
+            g.recv_from(&mut buf).await.unwrap().1,
+            addr("198.51.100.7:4000")
+        );
     }
 }

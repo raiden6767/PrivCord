@@ -107,6 +107,14 @@ impl Filter {
         })
     }
 
+    /// How many values this filter carries (each is checked against every candidate event).
+    pub fn value_count(&self) -> usize {
+        self.ids.len()
+            + self.authors.len()
+            + self.kinds.len()
+            + self.tags.iter().map(|(_, v)| v.len()).sum::<usize>()
+    }
+
     /// An id when the filter names exactly one whole event.
     pub fn exact_ids(&self) -> Option<Vec<Id>> {
         if self.ids.is_empty() || self.ids.iter().any(|s| s.len() != 64) {

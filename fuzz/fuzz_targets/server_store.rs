@@ -8,7 +8,7 @@ use privcord_server::nostr::store::Store;
 use std::sync::Arc;
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(store) = Store::open(None) else {
+    let Ok(store) = Store::open(None, 0) else {
         return;
     };
     let mut filters = Vec::new();

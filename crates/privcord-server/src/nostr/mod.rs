@@ -73,7 +73,11 @@ pub struct Policy {
 
 impl Policy {
     pub fn from_config(c: &NostrConfig) -> Self {
-        let keys = |v: &[String]| v.iter().filter_map(|s| unhex::<32>(s)).collect();
+        let keys = |v: &[String]| {
+            v.iter()
+                .filter_map(|s| unhex::<32>(&s.trim().to_lowercase()))
+                .collect()
+        };
         Self {
             allowed_pubkeys: keys(&c.allowed_pubkeys),
             blocked_pubkeys: keys(&c.blocked_pubkeys),
@@ -122,6 +126,38 @@ fn shard_of(k: &SubKey) -> usize {
     (h.finish() % SHARDS as u64) as usize
 }
 
+/// A relay address reduced to what identifies it: host and port (scheme only decides the default port), lower case.
+fn relay_key(url: &str) -> Option<(String, u16)> {
+    let u = url.trim().to_lowercase();
+    let (scheme, rest) = u.split_once("://")?;
+    let default = match scheme {
+        "wss" | "https" => 443,
+        "ws" | "http" => 80,
+        _ => return None,
+    };
+    let host_port = rest.split(['/', '?', '#']).next()?;
+    if let Some(v6) = host_port.strip_prefix('[') {
+        let (host, after) = v6.split_once(']')?;
+        let port = after
+            .strip_prefix(':')
+            .map_or(Some(default), |p| p.parse().ok())?;
+        return Some((host.to_owned(), port));
+    }
+    match host_port.rsplit_once(':') {
+        Some((h, p)) => Some((h.to_owned(), p.parse().ok()?)),
+        None => Some((host_port.to_owned(), default)),
+    }
+}
+
+/// NIP-42: the `relay` tag must name this relay. Otherwise another relay could hand a client our challenge, get it signed
+/// for itself, and replay it here as that client.
+fn relay_matches(tag: Option<&str>, configured: &str) -> bool {
+    match (tag.and_then(relay_key), relay_key(configured)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
 fn frame_event(sub: &str, e: &Event) -> Arc<str> {
     format!("[\"EVENT\",{},{}]", Value::from(sub), e.json).into()
 }
@@ -130,7 +166,7 @@ impl Nostr {
     pub fn new(cfg: NostrConfig, data_dir: &std::path::Path) -> Result<Self, String> {
         let store = cfg
             .store_events
-            .then(|| Store::open(cfg.persist.then_some(data_dir)))
+            .then(|| Store::open(cfg.persist.then_some(data_dir), cfg.max_store_bytes))
             .transpose()?;
         let policy = Policy::from_config(&cfg);
         Ok(Self {
@@ -400,6 +436,7 @@ impl Nostr {
                         )
                     }
                     Put::Deleted => return reject("blocked: this event was deleted"),
+                    Put::Full => return reject("blocked: this relay's storage is full"),
                 }
             }
         }
@@ -423,17 +460,16 @@ impl Nostr {
     }
 
     fn fan_out(&self, e: &Arc<Event>) {
-        let mut seen: Vec<(u64, Arc<str>)> = Vec::new();
+        let mut seen: HashSet<(u64, Arc<str>)> = HashSet::new();
         for key in Self::keys_for(e) {
             let candidates: Vec<SubRef> = lock(self.shard(&key))
                 .get(&key)
                 .cloned()
                 .unwrap_or_default();
             for s in candidates {
-                if seen.iter().any(|(c, i)| *c == s.conn.id && **i == *s.id) {
+                if !seen.insert((s.conn.id, s.id.clone())) {
                     continue;
                 }
-                seen.push((s.conn.id, s.id.clone()));
                 if any_match(&s.filters, e)
                     && self.visible(e, *s.auth.read().unwrap_or_else(PoisonError::into_inner))
                 {
@@ -487,6 +523,20 @@ impl Nostr {
         }
     }
 
+    /// A cap on how fast one connection may ask (REQ and COUNT both cost the store work).
+    fn req_allowed(&self, sess: &mut Session, now: i64) -> bool {
+        let cap = self.cfg.reqs_per_minute_per_conn;
+        if cap == 0 {
+            return true;
+        }
+        let now_ms = now * 1000;
+        if sess.req_window.1 <= now_ms {
+            sess.req_window = (0, now_ms + 60_000);
+        }
+        sess.req_window.0 += 1;
+        sess.req_window.0 <= cap
+    }
+
     fn parse_filters(&self, msg: &[Value], from: usize) -> Result<Vec<Filter>, String> {
         let raw = msg.get(from..).unwrap_or(&[]);
         if raw.is_empty() {
@@ -495,9 +545,14 @@ impl Nostr {
         if raw.len() > self.cfg.max_filters {
             return Err("invalid: too many filters".into());
         }
-        raw.iter()
+        let filters: Vec<Filter> = raw
+            .iter()
             .map(|v| Filter::parse(v).map_err(str::to_owned))
-            .collect()
+            .collect::<Result<_, _>>()?;
+        if filters.iter().map(Filter::value_count).sum::<usize>() > self.cfg.max_filter_values {
+            return Err("invalid: too many values in the filters".into());
+        }
+        Ok(filters)
     }
 
     fn on_req(&self, conn: &Conn, sess: &mut Session, msg: &[Value], now: i64) {
@@ -515,15 +570,8 @@ impl Nostr {
         if !sess.subs.contains_key(sub) && sess.subs.len() >= self.cfg.max_subs_per_conn {
             return closed("error: too many subscriptions");
         }
-        if self.cfg.reqs_per_minute_per_conn > 0 {
-            let now_ms = now * 1000;
-            if sess.req_window.1 <= now_ms {
-                sess.req_window = (0, now_ms + 60_000);
-            }
-            sess.req_window.0 += 1;
-            if sess.req_window.0 > self.cfg.reqs_per_minute_per_conn {
-                return closed("rate-limited: too many subscriptions requested, slow down");
-            }
+        if !self.req_allowed(sess, now) {
+            return closed("rate-limited: too many subscriptions requested, slow down");
         }
         let filters = match self.parse_filters(msg, 2) {
             Ok(f) => f,
@@ -566,13 +614,16 @@ impl Nostr {
         conn.send(json!(["EOSE", sub]).to_string());
     }
 
-    fn on_count(&self, conn: &Conn, sess: &Session, msg: &[Value], now: i64) {
+    fn on_count(&self, conn: &Conn, sess: &mut Session, msg: &[Value], now: i64) {
         let Some(sub) = msg.get(1).and_then(Value::as_str) else {
             return conn.send(json!(["NOTICE", "error: COUNT needs an id"]).to_string());
         };
         if self.cfg.auth_required && sess.auth().is_none() {
             return conn
                 .send(json!(["CLOSED", sub, "auth-required: authenticate first"]).to_string());
+        }
+        if !self.req_allowed(sess, now) {
+            return conn.send(json!(["CLOSED", sub, "rate-limited: slow down"]).to_string());
         }
         match self.parse_filters(msg, 2) {
             Ok(f) => {
@@ -585,7 +636,7 @@ impl Nostr {
                                 limit: None,
                                 ..g.clone()
                             };
-                            for e in s.query(&g, now, usize::MAX) {
+                            for e in s.query(&g, now, 100_000) {
                                 if self.visible(&e, sess.auth()) {
                                     seen.insert(e.id);
                                 }
@@ -623,7 +674,7 @@ impl Nostr {
         if e.kind != AUTH_KIND
             || !challenge_ok
             || (e.created_at - now).abs() > 600
-            || e.tag("relay").is_none()
+            || !relay_matches(e.tag("relay"), &self.cfg.relay_url)
         {
             return fail("invalid: not a valid authentication for this connection");
         }

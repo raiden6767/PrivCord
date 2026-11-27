@@ -4,6 +4,7 @@
 
 pub mod admin;
 pub mod config;
+pub mod fsutil;
 pub mod nat;
 pub mod net;
 pub mod nostr;

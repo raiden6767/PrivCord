@@ -116,7 +116,7 @@ async fn a_connection_that_never_finishes_its_handshake_does_not_hold_up_others(
     let (r, _d) = server().await;
     // Some stalled connections: connected, silent.
     let _stalled: Vec<_> = futures_util::future::join_all(
-        (0..20).map(|_| tokio::net::TcpStream::connect(r.tls_addr().unwrap())),
+        (0..10).map(|_| tokio::net::TcpStream::connect(r.tls_addr().unwrap())),
     )
     .await;
     let started = std::time::Instant::now();
@@ -141,4 +141,29 @@ async fn asking_for_tls_without_a_certificate_is_an_error_in_words() {
     c.tls.https_listen = "127.0.0.1:0".into();
     let e = start(c).await.unwrap_err();
     assert!(e.contains("no certificate"), "{e}");
+}
+
+#[tokio::test]
+async fn one_address_cannot_hold_every_handshake_slot() {
+    // Found in review: with only a global limit, one host's silent connections could fill every slot.
+    let (r, _d) = server().await;
+    let stalled: Vec<_> = futures_util::future::join_all(
+        (0..40).map(|_| tokio::net::TcpStream::connect(r.tls_addr().unwrap())),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Past 16 from one address, the rest are dropped at once: those sockets are closed by the server.
+    let mut closed = 0;
+    for s in stalled.into_iter().flatten() {
+        let mut s = s;
+        let mut b = [0u8; 1];
+        if matches!(
+            tokio::time::timeout(Duration::from_millis(100), s.read(&mut b)).await,
+            Ok(Ok(0)) | Ok(Err(_))
+        ) {
+            closed += 1;
+        }
+    }
+    assert!(closed >= 20, "only {closed} of 40 were cut");
+    r.stop().await;
 }

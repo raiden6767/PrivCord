@@ -27,6 +27,10 @@ pub struct ServerConfig {
     /// With `trust_proxy`: the header that carries the client's address (the last entry is used), for example
     /// `cf-connecting-ip` behind Cloudflare.
     pub real_ip_header: String,
+    /// With `trust_proxy`: the addresses of your proxy. The header is believed only from these; from anyone else it is
+    /// ignored (so a visitor who reaches the server directly cannot pick the address limits are counted against). Empty:
+    /// believed from any caller, which is only safe if nothing but your proxy can reach this port.
+    pub trusted_proxies: Vec<String>,
     /// Serve Prometheus-style counters at `/metrics` (needs an access token if tokens are set).
     pub metrics: bool,
     /// Who may use this server. Empty: anyone. Otherwise a visitor must present one of these (as `?token=...` on the relay
@@ -55,6 +59,9 @@ pub struct RelayConfig {
     /// When this much is waiting to be written across all connections, senders are slowed down (their sockets are not
     /// read) until listeners catch up. Keeps memory flat under a flood.
     pub backpressure_bytes: usize,
+    /// A connection that has been sent something but has not taken any of it for this long is closed (a client that stops
+    /// reading must not be able to hold the relay's memory). 0: never.
+    pub stall_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +98,7 @@ impl Default for ServerConfig {
             data_dir: PathBuf::from("./data"),
             trust_proxy: false,
             real_ip_header: "x-forwarded-for".into(),
+            trusted_proxies: Vec::new(),
             metrics: false,
             access_tokens: Vec::new(),
             admin_contact: String::new(),
@@ -111,6 +119,7 @@ impl Default for RelayConfig {
             max_queued_bytes: 256 * 1024 * 1024,
             max_buffered_per_conn: 64 * 1024 * 1024,
             backpressure_bytes: 32 * 1024 * 1024,
+            stall_secs: 30,
         }
     }
 }
@@ -159,6 +168,12 @@ impl Config {
                 "server.listen \"{}\" is not an address like 0.0.0.0:8787",
                 self.server.listen
             ));
+        }
+        if self.nostr.enabled
+            && (self.nostr.auth_required || self.nostr.auth_dms)
+            && self.nostr.relay_url.trim().is_empty()
+        {
+            out.push("nostr.relay_url is needed when auth_required or auth_dms is on (NIP-42 checks the client signed for this relay), for example \"wss://relay.example.org\"".into());
         }
         for k in self
             .nostr
@@ -241,6 +256,13 @@ pub struct NostrConfig {
     pub events_per_second_global: u64,
     /// Subscriptions (REQ) one connection may open per minute. 0: no cap.
     pub reqs_per_minute_per_conn: u64,
+    /// Most values (ids, authors, kinds, tag values) in one filter. Each costs work on every stored event.
+    pub max_filter_values: usize,
+    /// The most bytes of events kept in memory and on disk; the oldest go first. 0: no limit (not for a public relay).
+    pub max_store_bytes: usize,
+    /// This relay's own address, for example `wss://relay.example.org`. NIP-42 authentication checks the client signed for
+    /// it, so another relay cannot pass a challenge on. Required when `auth_required` or `auth_dms` is on.
+    pub relay_url: String,
     /// Confirm an event (and hand it to subscribers) only after it is safely on disk. Batched, so it stays fast.
     pub durable: bool,
     /// Keep events on disk at all. Off: memory only, gone at restart.
@@ -282,7 +304,10 @@ impl Default for NostrConfig {
             max_subid_len: 256,
             events_per_minute_per_ip: 600,
             events_per_second_global: 0,
-            reqs_per_minute_per_conn: 0,
+            reqs_per_minute_per_conn: 600,
+            max_filter_values: 256,
+            max_store_bytes: 512 * 1024 * 1024,
+            relay_url: String::new(),
             durable: false,
             persist: true,
             auth_dms: false,

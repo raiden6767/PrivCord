@@ -52,7 +52,12 @@ fn read_pair(cert_file: &Path, key_file: &Path) -> Result<Arc<CertifiedKey>, Str
     let key = PrivateKeyDer::from_pem_file(key_file)
         .map_err(|e| format!("could not read the private key {}: {e}", key_file.display()))?;
     let signing = any_supported_type(&key).map_err(|e| format!("unsupported private key: {e}"))?;
-    Ok(Arc::new(CertifiedKey::new(chain, signing)))
+    let certified = CertifiedKey::new(chain, signing);
+    // A renewal that wrote the certificate and the key at different moments must not be installed half-way.
+    certified
+        .keys_match()
+        .map_err(|e| format!("the certificate and the private key do not belong together: {e}"))?;
+    Ok(Arc::new(certified))
 }
 
 /// What the web side and TURN-over-TLS use to accept connections.
@@ -82,8 +87,7 @@ impl Tls {
             let dir = data_dir.join("tls");
             let (c, k) = (dir.join("selfsigned.crt"), dir.join("selfsigned.key"));
             if !c.exists() || !k.exists() {
-                std::fs::create_dir_all(&dir)
-                    .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+                crate::fsutil::create_private_dir(&dir)?;
                 let mut names = vec!["localhost".to_owned(), "127.0.0.1".to_owned()];
                 for n in [cfg.domain.as_str(), public_ip] {
                     if !n.is_empty() && !names.iter().any(|x| x == n) {
@@ -92,15 +96,9 @@ impl Tls {
                 }
                 let made = rcgen::generate_simple_self_signed(names)
                     .map_err(|e| format!("could not make a certificate: {e}"))?;
-                std::fs::write(&c, made.cert.pem())
-                    .map_err(|e| format!("could not write {}: {e}", c.display()))?;
-                std::fs::write(&k, made.key_pair.serialize_pem())
-                    .map_err(|e| format!("could not write {}: {e}", k.display()))?;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&k, std::fs::Permissions::from_mode(0o600));
-                }
+                // The key first, private from its first byte; the certificate (public) after it.
+                crate::fsutil::write_private_atomic(&k, made.key_pair.serialize_pem().as_bytes())?;
+                crate::fsutil::write_private_atomic(&c, made.cert.pem().as_bytes())?;
             }
             (c, k, true)
         } else {
@@ -191,6 +189,9 @@ impl TlsListener {
         let addr = listener.local_addr()?;
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         let limit = Arc::new(tokio::sync::Semaphore::new(512));
+        // Handshakes under way per visitor: one machine cannot fill every slot (an IPv6 visitor counts as its whole /64).
+        let per_ip: Arc<Mutex<std::collections::HashMap<std::net::IpAddr, usize>>> =
+            Arc::new(Mutex::new(std::collections::HashMap::new()));
         tokio::spawn(async move {
             loop {
                 let Ok((tcp, peer)) = listener.accept().await else {
@@ -202,13 +203,31 @@ impl TlsListener {
                 let Ok(permit) = limit.clone().try_acquire_owned() else {
                     continue; // too many handshakes under way: drop this one
                 };
-                let (acceptor, tx) = (acceptor.clone(), tx.clone());
+                let group = crate::net::ip_group(peer.ip());
+                {
+                    let mut m = per_ip.lock().unwrap_or_else(PoisonError::into_inner);
+                    let n = m.entry(group).or_insert(0);
+                    if *n >= 16 {
+                        continue;
+                    }
+                    *n += 1;
+                }
+                let (acceptor, tx, per_ip) = (acceptor.clone(), tx.clone(), per_ip.clone());
                 tokio::spawn(async move {
                     let done = tokio::time::timeout(
                         std::time::Duration::from_secs(10),
                         acceptor.accept(tcp),
                     )
                     .await;
+                    {
+                        let mut m = per_ip.lock().unwrap_or_else(PoisonError::into_inner);
+                        if let Some(n) = m.get_mut(&group) {
+                            *n = n.saturating_sub(1);
+                            if *n == 0 {
+                                m.remove(&group);
+                            }
+                        }
+                    }
                     drop(permit);
                     if let Ok(Ok(stream)) = done {
                         let _ = tx.send((stream, peer)).await;

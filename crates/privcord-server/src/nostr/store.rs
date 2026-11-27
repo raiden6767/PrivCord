@@ -37,12 +37,16 @@ pub enum Put {
     /// A newer event already holds this replaceable slot.
     Stale,
     Deleted,
+    /// The store is at its size limit and this event alone is too big to keep.
+    Full,
 }
 
 pub struct Store {
     inner: RwLock<Inner>,
     log: Option<Mutex<std::fs::File>>,
     path: Option<PathBuf>,
+    /// The most bytes of events to hold (0: no limit); the oldest go first when it is exceeded.
+    max_bytes: usize,
     lines: std::sync::atomic::AtomicUsize,
 }
 
@@ -52,7 +56,12 @@ impl std::fmt::Debug for Store {
     }
 }
 
-const MAX_TOMBSTONES: usize = 200_000;
+const MAX_TOMBSTONES: usize = 500_000;
+/// The most index entries one query looks at, however many events there are: a wide or hostile filter cannot hold the
+/// store's lock for long.
+const MAX_SCAN: usize = 200_000;
+/// The most events COUNT will count.
+const MAX_COUNT: usize = 100_000;
 
 fn tag_keys(e: &Event) -> impl Iterator<Item = (char, String)> + '_ {
     e.tags.iter().filter_map(|t| {
@@ -131,7 +140,8 @@ impl Inner {
     /// NIP-09: a kind 5 event removes the events it names, if they are the author's own, and refuses them if they arrive
     /// later. Whether the target is known yet does not matter.
     fn apply_deletion(&mut self, d: &Event) {
-        for t in &d.tags {
+        // One deletion names at most this many targets: a single event must not be able to fill the record of deletions.
+        for t in d.tags.iter().take(128) {
             match (t.first().map(String::as_str), t.get(1)) {
                 (Some("e"), Some(id)) => {
                     if let Some(id) = super::event::unhex::<32>(id) {
@@ -193,34 +203,38 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl Store {
     /// A store that keeps its log in `dir` (or only in memory when `dir` is `None`), reading back what it finds.
-    pub fn open(dir: Option<&std::path::Path>) -> Result<Self, String> {
+    pub fn open(dir: Option<&std::path::Path>, max_bytes: usize) -> Result<Self, String> {
         let mut store = Self {
             inner: RwLock::new(Inner::default()),
             log: None,
             path: None,
+            max_bytes,
             lines: std::sync::atomic::AtomicUsize::new(0),
         };
         if let Some(dir) = dir {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+            crate::fsutil::create_private_dir(dir)?;
             let path = dir.join("nostr-events.jsonl");
             if let Ok(text) = std::fs::read_to_string(&path) {
                 let mut n = 0;
                 for line in text.lines() {
-                    if let Some(e) = serde_json::from_str(line)
-                        .ok()
-                        .and_then(|v| Event::parse_trusted(&v))
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                        continue;
+                    };
+                    if let Some(id) = v
+                        .get("ban")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(super::event::unhex::<32>)
                     {
+                        store.ban_inner(id);
+                        n += 1;
+                    } else if let Some(e) = Event::parse_trusted(&v) {
                         store.insert_inner(Arc::new(e), false);
                         n += 1;
                     }
                 }
                 store.lines.store(n, std::sync::atomic::Ordering::Relaxed);
             }
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
+            let file = crate::fsutil::open_private_append(&path)
                 .map_err(|e| format!("could not open {}: {e}", path.display()))?;
             store.log = Some(Mutex::new(file));
             store.path = Some(path);
@@ -261,6 +275,28 @@ impl Store {
             w.apply_deletion(&e);
         }
         w.add(e.clone());
+        if self.max_bytes > 0 && w.bytes > self.max_bytes {
+            // Over the size limit: the oldest events go first (never the one just added, unless it alone is too big).
+            let mut over = w.bytes - self.max_bytes;
+            let oldest: Vec<Id> = w
+                .by_time
+                .iter()
+                .filter(|k| k.1 != e.id)
+                .map(|k| k.1)
+                .collect();
+            for id in oldest {
+                if over == 0 {
+                    break;
+                }
+                if let Some(gone) = w.remove(&id) {
+                    over = over.saturating_sub(gone.size());
+                }
+            }
+            if over > 0 {
+                w.remove(&e.id);
+                return Put::Full;
+            }
+        }
         drop(w);
         if log {
             if let Some(f) = &self.log {
@@ -287,10 +323,22 @@ impl Store {
 
     /// An administrator removes an event for good (moderation): it goes, and nobody can publish it again.
     pub fn ban_event(&self, id: &Id) -> bool {
+        let had = self.ban_inner(*id);
+        // Written to the log, so the ban survives a restart (and a crash, which would otherwise reload the event).
+        if let Some(f) = &self.log {
+            let mut line = format!("{{\"ban\":\"{}\"}}\n", super::event::hex(id));
+            let _ = lock(f).write_all(std::mem::take(&mut line).as_bytes());
+            self.lines
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        had
+    }
+
+    fn ban_inner(&self, id: Id) -> bool {
         let mut w = self.inner.write().unwrap_or_else(PoisonError::into_inner);
-        let had = w.remove(id).is_some();
+        let had = w.remove(&id).is_some();
         if w.banned.len() < MAX_TOMBSTONES {
-            w.banned.insert(*id);
+            w.banned.insert(id);
         }
         had
     }
@@ -363,7 +411,10 @@ impl Store {
                     break;
                 }
                 let mut taken = 0;
-                for key in set.range(lo..=hi).rev() {
+                for (steps, key) in set.range(lo..=hi).rev().enumerate() {
+                    if steps >= MAX_SCAN {
+                        break;
+                    }
                     if let Some(e) = r.by_id.get(&key.1) {
                         if live(e) {
                             found.push(e.clone());
@@ -390,7 +441,7 @@ impl Store {
                 limit: None,
                 ..f.clone()
             };
-            for e in self.query(&g, now, usize::MAX) {
+            for e in self.query(&g, now, MAX_COUNT) {
                 seen.insert(e.id);
             }
         }
@@ -446,6 +497,9 @@ impl Store {
         }
         let r = self.inner.read().unwrap_or_else(PoisonError::into_inner);
         let mut text = String::new();
+        for id in &r.banned {
+            text.push_str(&format!("{{\"ban\":\"{}\"}}\n", super::event::hex(id)));
+        }
         for key in &r.by_time {
             if let Some(e) = r.by_id.get(&key.1) {
                 text.push_str(&e.json);

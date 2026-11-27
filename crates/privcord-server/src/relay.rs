@@ -515,6 +515,10 @@ impl Relay {
         &self.out_total
     }
 
+    pub fn stall_ms(&self) -> u64 {
+        self.cfg.stall_secs.saturating_mul(1000)
+    }
+
     pub fn out_limit(&self) -> (usize, usize) {
         (self.cfg.max_buffered_per_conn, self.cfg.backpressure_bytes)
     }

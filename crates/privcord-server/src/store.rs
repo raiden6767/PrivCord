@@ -17,13 +17,9 @@ pub type Held = (String, String, String, i64, i64);
 
 impl Store {
     pub fn open(dir: &std::path::Path) -> Result<Self, String> {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        crate::fsutil::create_private_dir(dir)?;
         let path = dir.join("queue.jsonl");
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
+        let file = crate::fsutil::open_private_append(&path)
             .map_err(|e| format!("could not open {}: {e}", path.display()))?;
         Ok(Self {
             path,

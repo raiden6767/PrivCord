@@ -57,6 +57,7 @@ impl StreamMux {
     }
 
     fn admit(&self, ip: IpAddr) -> bool {
+        let ip = crate::net::ip_group(ip);
         let mut m = self.per_ip.lock().unwrap_or_else(PoisonError::into_inner);
         let n = m.entry(ip).or_insert(0);
         if *n >= MAX_PER_IP {
@@ -67,6 +68,7 @@ impl StreamMux {
     }
 
     fn release(&self, ip: IpAddr) {
+        let ip = crate::net::ip_group(ip);
         let mut m = self.per_ip.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(n) = m.get_mut(&ip) {
             *n = n.saturating_sub(1);

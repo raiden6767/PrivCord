@@ -32,6 +32,7 @@ pub struct App {
     /// SHA-256 of each accepted token (empty: open to anyone): the ones in the settings file plus those the admin panel made.
     tokens: std::sync::RwLock<Vec<[u8; 32]>>,
     base_tokens: Vec<[u8; 32]>,
+    pub trusted_proxies: Vec<std::net::IpAddr>,
     pub started: std::time::Instant,
     next_conn: AtomicU64,
     turn_asks: Mutex<HashMap<String, (u32, u64)>>,
@@ -43,6 +44,12 @@ impl App {
         relay: Option<Arc<Relay>>,
         turn: Option<(Vec<u8>, Vec<String>)>,
     ) -> Self {
+        let cfg_trusted: Vec<std::net::IpAddr> = cfg
+            .server
+            .trusted_proxies
+            .iter()
+            .filter_map(|a| a.trim().parse().ok())
+            .collect();
         let tokens: Vec<[u8; 32]> = cfg
             .server
             .access_tokens
@@ -55,6 +62,7 @@ impl App {
             turn,
             tokens: std::sync::RwLock::new(tokens.clone()),
             base_tokens: tokens,
+            trusted_proxies: cfg_trusted,
             started: std::time::Instant::now(),
             next_conn: AtomicU64::new(1),
             turn_asks: Mutex::new(HashMap::new()),
@@ -105,21 +113,50 @@ fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     a.iter().zip(b.iter()).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
-pub fn client_ip(addr: SocketAddr, headers: &HeaderMap, trust_proxy: bool, header: &str) -> String {
-    if trust_proxy {
-        if let Some(xff) = headers.get(header).and_then(|v| v.to_str().ok()) {
-            // The rightmost entry is the one our proxy appended; earlier ones are whatever the visitor claimed.
-            if let Some(last) = xff
-                .rsplit(',')
-                .next()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                return last.to_owned();
+/// The address limits are counted against. An IPv6 visitor controls a whole /64, so that is what counts as one visitor
+/// (otherwise one machine could present billions of "different" addresses).
+pub fn ip_group(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip {
+        std::net::IpAddr::V4(_) => ip,
+        std::net::IpAddr::V6(v6) => {
+            let mut o = v6.octets();
+            for b in o.iter_mut().skip(8) {
+                *b = 0;
             }
+            std::net::IpAddr::V6(std::net::Ipv6Addr::from(o))
         }
     }
-    addr.ip().to_string()
+}
+
+pub fn client_ip(
+    addr: SocketAddr,
+    headers: &HeaderMap,
+    trust_proxy: bool,
+    header: &str,
+    trusted_proxies: &[std::net::IpAddr],
+) -> String {
+    let believe =
+        trust_proxy && (trusted_proxies.is_empty() || trusted_proxies.contains(&addr.ip()));
+    if believe {
+        // A proxy may add a header line of its own instead of extending the visitor's: the LAST value is the one our
+        // proxy wrote; earlier ones are whatever the visitor claimed.
+        let last = headers
+            .get_all(header)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .next_back()
+            .and_then(|v| v.rsplit(',').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(last) = last {
+            return match last.parse::<std::net::IpAddr>() {
+                Ok(ip) => ip_group(ip).to_string(),
+                // Not an address: still one key, but never an unbounded string.
+                Err(_) => last.chars().take(64).collect(),
+            };
+        }
+    }
+    ip_group(addr.ip()).to_string()
 }
 
 pub fn now_ms() -> i64 {
@@ -140,7 +177,9 @@ pub fn router(app: Arc<App>) -> Router {
 
 async fn healthz(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
     // Asked through a proxy: a minimal answer, and no counters.
-    if headers.contains_key("x-forwarded-for") {
+    if headers.contains_key(app.cfg.server.real_ip_header.as_str())
+        || headers.contains_key("x-forwarded-for")
+    {
         return Json(json!({ "ok": true }));
     }
     Json(
@@ -231,6 +270,7 @@ async fn turn_credentials(
         &headers,
         app.cfg.server.trust_proxy,
         &app.cfg.server.real_ip_header,
+        &app.trusted_proxies,
     );
     let now = now_ms().max(0) as u64 / 1000;
     {
@@ -294,6 +334,7 @@ async fn socket(
         &headers,
         app.cfg.server.trust_proxy,
         &app.cfg.server.real_ip_header,
+        &app.trusted_proxies,
     );
     let biggest = if app.cfg.nostr.enabled {
         app.cfg.nostr.max_message_bytes
@@ -332,13 +373,18 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
     };
     let total = relay.out_total().clone();
     let writer_pending = pending.clone();
+    // When the last write to this client completed: a client that takes nothing for a long time is cut off.
+    let progress = Arc::new(AtomicU64::new(now_ms().unsigned_abs()));
+    let writer_progress = progress.clone();
     let writer = tokio::spawn(async move {
         let pending = writer_pending;
+        let progress = writer_progress;
         while let Some(out) = rx.recv().await {
             match out {
                 Out::Text(t) => {
                     let n = t.len();
                     let sent = sink.send(Message::Text(t.as_ref().into())).await;
+                    progress.store(now_ms().unsigned_abs(), Ordering::Relaxed);
                     pending.fetch_sub(n.min(pending.load(Ordering::Relaxed)), Ordering::Relaxed);
                     total.fetch_sub(n.min(total.load(Ordering::Relaxed)), Ordering::Relaxed);
                     if sent.is_err() {
@@ -368,11 +414,16 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
     let mut beat = tokio::time::interval(HEARTBEAT);
     beat.tick().await;
     let soft = relay.out_limit().1;
+    let stall_ms = relay.stall_ms();
+    let mut reaper = tokio::time::interval(Duration::from_millis((stall_ms / 3).clamp(250, 5000)));
+    reaper.tick().await;
     loop {
         // A flood is slowed at the door: while too much is waiting to be written, this socket is not read, so the
         // sender's own connection fills up and it slows down, instead of the relay growing.
+        // (For a quarter of a second at most per frame: a client that never reads is cut off by the stall check below, so
+        // it cannot keep everyone else slowed down.)
         let mut waited = 0;
-        while relay.out_total().load(Ordering::Relaxed) > soft && waited < 2000 {
+        while relay.out_total().load(Ordering::Relaxed) > soft && waited < 250 {
             tokio::time::sleep(Duration::from_millis(1)).await;
             waited += 1;
         }
@@ -387,6 +438,14 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
                     _ => continue,
                 };
                 relay.frame(&conn, &mut session, &ip, &text, now_ms());
+            }
+            _ = reaper.tick() => {
+                if stall_ms > 0
+                    && pending.load(Ordering::Relaxed) > 0
+                    && now_ms().unsigned_abs().saturating_sub(progress.load(Ordering::Relaxed)) > stall_ms
+                {
+                    break;
+                }
             }
             _ = beat.tick() => {
                 // Nothing heard since the last beat (not even a pong): the other end is gone.

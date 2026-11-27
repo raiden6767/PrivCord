@@ -207,6 +207,7 @@ fn admin_token(path: &std::path::Path, name: &str, role: &str) -> Result<(), Str
 async fn serve(path: &std::path::Path) -> Result<(), String> {
     let cfg = load(path)?;
     let (relay, turn) = (cfg.relay.enabled, cfg.turn.enabled);
+    let admin_tls = cfg.admin.tls;
     let running = privcord_server::start(cfg).await?;
     println!(
         "privcord-server {} listening on {} (relay: {relay}, turn: {turn}). Ctrl-C to stop.",
@@ -214,7 +215,10 @@ async fn serve(path: &std::path::Path) -> Result<(), String> {
         running.addr
     );
     if let Some(a) = running.admin_addr() {
-        println!("admin panel: http://{a}/admin");
+        println!(
+            "admin panel: {}://{a}/admin",
+            if admin_tls { "https" } else { "http" }
+        );
         if let Some(t) = running.admin_first_token() {
             println!("admin token (shown only now, save it): {t}");
         }

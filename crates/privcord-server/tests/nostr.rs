@@ -475,7 +475,11 @@ fn unhex(s: &str) -> [u8; 32] {
 
 #[tokio::test]
 async fn a_relay_that_wants_authentication_asks_and_checks() {
-    let (r, url, _d) = server(|c| c.nostr.auth_required = true).await;
+    let (r, url, _d) = server(|c| {
+        c.nostr.auth_required = true;
+        c.nostr.relay_url = "ws://x".into();
+    })
+    .await;
     let (k, mut c) = (key(), C::open(&url).await);
     c.send(json!(["REQ", "s", { "kinds": [1] }])).await;
     let challenge = c.next().await;
@@ -690,7 +694,11 @@ async fn in_durable_mode_the_confirmation_comes_after_the_event_is_on_disk() {
 #[tokio::test]
 async fn direct_messages_go_only_to_their_sender_and_recipient_when_asked() {
     let (alice, bob, eve) = (key(), key(), key());
-    let (r, url, _d) = server(|c| c.nostr.auth_dms = true).await;
+    let (r, url, _d) = server(|c| {
+        c.nostr.auth_dms = true;
+        c.nostr.relay_url = "ws://x".into();
+    })
+    .await;
     let dm = make(&alice, 4, now(), vec![vec!["p", &pk(&bob)]], "secret");
     let mut a = C::open(&url).await;
     // the AUTH challenge comes first on a relay that cares
@@ -835,5 +843,156 @@ async fn somebody_else_naming_a_deleted_event_cannot_bring_it_back() {
         "the deleted event came back: {why}"
     );
     assert!(c.req("x", vec![json!({ "kinds": [1] })]).await.is_empty());
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn an_authentication_signed_for_another_relay_is_refused() {
+    // A malicious relay can hand a client our challenge and replay what the client signs. The relay tag must be this relay.
+    let (r, url, _d) = server(|c| {
+        c.nostr.auth_required = true;
+        c.nostr.relay_url = "wss://relay.example.org".into();
+    })
+    .await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    let challenge = c.next().await;
+    let sign = |relay: &str| {
+        make(
+            &k,
+            22242,
+            now(),
+            vec![
+                vec!["relay", relay],
+                vec!["challenge", challenge[1].as_str().unwrap()],
+            ],
+            "",
+        )
+    };
+    for wrong in [
+        "wss://evil.example",
+        "wss://relay.example.org:8443",
+        "ws://relay.example.org:8080",
+        "not a url",
+        "",
+    ] {
+        c.send(json!(["AUTH", sign(wrong)])).await;
+        assert_eq!(c.next().await[2], false, "{wrong}");
+    }
+    // the right name, in the ways a client might write it
+    c.send(json!(["AUTH", sign("wss://RELAY.example.org/")]))
+        .await;
+    assert_eq!(c.next().await[2], true);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn authentication_without_a_relay_address_in_the_settings_is_an_error_in_words() {
+    let mut c = Config::default();
+    c.server.listen = "127.0.0.1:0".into();
+    c.nostr.enabled = true;
+    c.nostr.auth_dms = true;
+    let e = start(c).await.unwrap_err();
+    assert!(e.contains("nostr.relay_url"), "{e}");
+}
+
+#[tokio::test]
+async fn filters_with_too_many_values_and_counts_and_requests_beyond_the_rate_are_refused() {
+    let (r, url, _d) = server(|c| {
+        c.nostr.max_filter_values = 10;
+        c.nostr.reqs_per_minute_per_conn = 4;
+    })
+    .await;
+    let mut c = C::open(&url).await;
+    let many: Vec<String> = (0..11).map(|i| format!("{i:064x}")).collect();
+    c.send(json!(["REQ", "a", { "authors": many }])).await;
+    let m = c.next().await;
+    assert_eq!(m[0], "CLOSED");
+    assert!(m[2].as_str().unwrap().contains("too many values"), "{m}");
+    c.send(json!(["COUNT", "c", { "authors": many }])).await;
+    assert_eq!(c.next().await[0], "CLOSED");
+    // that was three requests (two refused for size count too); the fourth is the last allowed, the fifth is limited
+    c.req("b", vec![json!({ "kinds": [1] })]).await;
+    c.send(json!(["COUNT", "d", { "kinds": [1] }])).await;
+    assert_eq!(
+        c.next().await[0],
+        "COUNT",
+        "the fourth request is still within the limit"
+    );
+    c.send(json!(["COUNT", "e", { "kinds": [1] }])).await;
+    let m = c.next().await;
+    assert!(m[2].as_str().unwrap().starts_with("rate-limited"), "{m}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_store_keeps_to_its_size_limit_by_dropping_the_oldest_and_an_oversized_event_is_refused(
+) {
+    let (r, url, _d) = server(|c| c.nostr.max_store_bytes = 3000).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    let base = now() - 100;
+    let mut ids = Vec::new();
+    for i in 0..10u64 {
+        let ev = make(&k, 1, base + i as i64, vec![], &"x".repeat(400));
+        ids.push(ev["id"].as_str().unwrap().to_owned());
+        assert!(c.publish(&ev).await.0);
+    }
+    let got = c.req("a", vec![json!({ "kinds": [1] })]).await;
+    assert!(got.len() < 10 && !got.is_empty(), "kept {}", got.len());
+    // the newest are the ones kept
+    assert_eq!(got[0]["id"], ids[9]);
+    assert!(
+        !ids[..2]
+            .iter()
+            .any(|old| got.iter().any(|e| e["id"] == *old)),
+        "the oldest should have gone"
+    );
+    let huge = make(&k, 1, now(), vec![], &"y".repeat(5000));
+    let (ok, why) = c.publish(&huge).await;
+    assert!(!ok && why.contains("storage is full"), "{why}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn an_admin_ban_survives_a_crash_and_a_restart_and_nothing_accepts_odd_hex() {
+    let dir = tempfile::tempdir().unwrap();
+    let k = key();
+    let ev = make(&k, 1, now(), vec![], "to be banned");
+    let id = ev["id"].as_str().unwrap().to_owned();
+    {
+        let mut c = Config::default();
+        c.server.listen = "127.0.0.1:0".into();
+        c.server.data_dir = dir.path().into();
+        c.nostr.enabled = true;
+        c.nostr.events_per_minute_per_ip = 0;
+        let r = start(c).await.unwrap();
+        let mut cl = C::open(&format!("ws://{}", r.addr)).await;
+        assert!(cl.publish(&ev).await.0);
+        r.relay().unwrap().nostr().unwrap().ban_event(&id).unwrap();
+        // no graceful stop: the log must already say so
+        let log = std::fs::read_to_string(dir.path().join("nostr-events.jsonl")).unwrap();
+        assert!(
+            log.contains(&format!("\"ban\":\"{id}\"")),
+            "the ban was not written down"
+        );
+        std::mem::forget(r); // as after a crash: no compaction at shutdown
+    }
+    let mut c = Config::default();
+    c.server.listen = "127.0.0.1:0".into();
+    c.server.data_dir = dir.path().into();
+    c.nostr.enabled = true;
+    c.nostr.events_per_minute_per_ip = 0;
+    let r = start(c).await.unwrap();
+    let mut cl = C::open(&format!("ws://{}", r.addr)).await;
+    assert!(
+        cl.req("a", vec![json!({ "ids": [id] })]).await.is_empty(),
+        "a banned event must not come back after a restart"
+    );
+    let (ok, why) = cl.publish(&ev).await;
+    assert!(!ok && why.starts_with("blocked"), "{why}");
+    // a leading + (which `from_str_radix` accepts) is not hex
+    let mut odd = make(&key(), 1, now(), vec![], "odd");
+    let id_odd = odd["id"].as_str().unwrap().to_owned();
+    odd["id"] = json!(format!("+{}", &id_odd[1..]));
+    assert!(!cl.publish(&odd).await.0);
     r.stop().await;
 }
