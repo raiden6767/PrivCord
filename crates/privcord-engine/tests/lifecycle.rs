@@ -1539,3 +1539,109 @@ fn what_waits_on_the_senders_phone_goes_out_when_the_link_is_back_whatever_drops
         }
     }
 }
+
+/// Every message text in a node's chats.
+fn texts(n: &Node) -> Vec<String> {
+    n.core
+        .snapshot()
+        .messages
+        .into_iter()
+        .flat_map(|(_, v)| v)
+        .map(|m| m.text)
+        .collect()
+}
+
+#[test]
+fn after_a_qr_scan_and_one_tap_both_can_send_and_both_receive_through_the_service() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut phone, mut laptop) = (node("phone", &clock), node("laptop", &clock));
+    phone.transport.set_signaling(true);
+    laptop.transport.set_signaling(true);
+    phone.core.set_store_forward(true).unwrap();
+    laptop.core.set_store_forward(true).unwrap();
+    // The phone scans the laptop's QR code (its card); the laptop has not scanned anything.
+    let card = laptop.core.own_card(Some("Laptop")).unwrap();
+    phone.core.accept_invite(&card).unwrap();
+    // The phone can already send: the message goes to the laptop's mailbox.
+    phone
+        .core
+        .send_message(&laptop.uid, "hello from the phone", None)
+        .unwrap();
+    phone.core.tick();
+    // The laptop gets the hello (a request) and the person taps Add.
+    for (m, blob, _) in put_blobs(&phone) {
+        laptop.core.signal_blob(&m, &blob);
+    }
+    assert!(laptop
+        .core
+        .snapshot()
+        .requests
+        .iter()
+        .any(|r| r.uid == phone.uid));
+    laptop.core.accept_request(&phone.uid).unwrap();
+    // Now the laptop sends. The phone must receive it, and the phone's message must have arrived too.
+    laptop
+        .core
+        .send_message(&phone.uid, "hello from the laptop", None)
+        .unwrap();
+    laptop.core.tick();
+    for (m, blob, _) in put_blobs(&laptop) {
+        phone.core.signal_blob(&m, &blob);
+    }
+    for _ in 0..3 {
+        clock.advance(30_000);
+        phone.core.tick();
+        laptop.core.tick();
+        for (m, blob, _) in put_blobs(&phone) {
+            laptop.core.signal_blob(&m, &blob);
+        }
+        for (m, blob, _) in put_blobs(&laptop) {
+            phone.core.signal_blob(&m, &blob);
+        }
+    }
+    assert!(
+        texts(&laptop).contains(&"hello from the phone".to_owned()),
+        "laptop got: {:?}",
+        texts(&laptop)
+    );
+    assert!(
+        texts(&phone).contains(&"hello from the laptop".to_owned()),
+        "phone got: {:?}",
+        texts(&phone)
+    );
+}
+
+#[test]
+fn after_a_qr_scan_and_one_tap_a_direct_link_carries_messages_both_ways() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut phone, mut laptop) = (node("phone", &clock), node("laptop", &clock));
+    phone.transport.set_signaling(true);
+    laptop.transport.set_signaling(true);
+    // Store-and-forward stays off (the default): only a live link carries messages.
+    let card = laptop.core.own_card(Some("Laptop")).unwrap();
+    phone.core.accept_invite(&card).unwrap();
+    for (m, blob, _) in put_blobs(&phone) {
+        laptop.core.signal_blob(&m, &blob);
+    }
+    laptop.core.accept_request(&phone.uid).unwrap();
+    connect(&mut phone, &mut laptop);
+    phone
+        .core
+        .send_message(&laptop.uid, "from the phone", None)
+        .unwrap();
+    laptop
+        .core
+        .send_message(&phone.uid, "from the laptop", None)
+        .unwrap();
+    pass_time(&mut phone, &mut laptop, 10_000);
+    assert!(
+        texts(&laptop).contains(&"from the phone".to_owned()),
+        "laptop got {:?}",
+        texts(&laptop)
+    );
+    assert!(
+        texts(&phone).contains(&"from the laptop".to_owned()),
+        "phone got {:?}",
+        texts(&phone)
+    );
+}
