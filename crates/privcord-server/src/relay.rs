@@ -22,7 +22,7 @@ pub const MAX_BUFFERED: usize = 2 * MAX_PER_MAILBOX * MAX_BLOB;
 /// What a connection's writer is told to do.
 #[derive(Debug)]
 pub enum Out {
-    Text(String),
+    Text(Arc<str>),
     Ping,
     Close(u16, &'static str),
 }
@@ -32,16 +32,23 @@ pub enum Out {
 pub struct Conn {
     pub id: u64,
     pub tx: tokio::sync::mpsc::UnboundedSender<Out>,
+    /// Bytes queued for this connection and not yet written.
     pub pending: Arc<AtomicUsize>,
+    /// Bytes queued for every connection together (what the senders are slowed down by).
+    pub total: Arc<AtomicUsize>,
+    pub limit: usize,
 }
 
 impl Conn {
-    fn send(&self, text: String) {
-        if self.pending.load(Ordering::Relaxed) > MAX_BUFFERED {
+    /// Queues text for this connection. One allocation is shared by everyone who receives the same event.
+    pub fn send(&self, text: impl Into<Arc<str>>) {
+        let text: Arc<str> = text.into();
+        if self.pending.load(Ordering::Relaxed) > self.limit {
             let _ = self.tx.send(Out::Close(1013, "too slow"));
             return;
         }
         self.pending.fetch_add(text.len(), Ordering::Relaxed);
+        self.total.fetch_add(text.len(), Ordering::Relaxed);
         let _ = self.tx.send(Out::Text(text));
     }
 }
@@ -74,6 +81,7 @@ pub struct Stats {
 #[derive(Default, Debug)]
 pub struct Session {
     pub mailboxes: HashSet<String>,
+    pub nostr: crate::nostr::Session,
 }
 
 pub struct Relay {
@@ -86,6 +94,8 @@ pub struct Relay {
     rates: Mutex<HashMap<String, (u64, i64)>>,
     conn_counts: Mutex<HashMap<String, usize>>,
     store: Option<Mutex<Store>>,
+    out_total: Arc<AtomicUsize>,
+    nostr: Option<crate::nostr::Nostr>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -126,6 +136,8 @@ impl Relay {
             rates: Mutex::new(HashMap::new()),
             conn_counts: Mutex::new(HashMap::new()),
             store: store.map(Mutex::new),
+            out_total: Arc::new(AtomicUsize::new(0)),
+            nostr: None,
         };
         if let Some(s) = &relay.store {
             let items = lock(s).load(now_ms);
@@ -176,7 +188,22 @@ impl Relay {
     }
 
     /// A connection ended: forget its subscriptions.
-    pub fn leave(&self, ip: &str, conn_id: u64, session: &Session) {
+    /// Adds the Nostr protocol to this relay.
+    #[must_use]
+    pub fn with_nostr(mut self, n: crate::nostr::Nostr) -> Self {
+        self.nostr = Some(n);
+        self
+    }
+
+    pub fn nostr(&self) -> Option<&crate::nostr::Nostr> {
+        self.nostr.as_ref()
+    }
+
+    pub fn leave(&self, ip: &str, conn: &Conn, session: &mut Session) {
+        let conn_id = conn.id;
+        if let Some(n) = &self.nostr {
+            n.leave(&mut session.nostr, conn);
+        }
         {
             let mut counts = lock(&self.conn_counts);
             if let Some(n) = counts.get_mut(ip) {
@@ -212,6 +239,18 @@ impl Relay {
 
     /// One frame from a connection.
     pub fn frame(&self, conn: &Conn, session: &mut Session, ip: &str, raw: &str, now: i64) {
+        // A JSON array is a Nostr message, an object is ours.
+        if let Some(n) = &self.nostr {
+            if raw.trim_start().starts_with('[') {
+                return n.frame(conn, &mut session.nostr, ip, raw, now);
+            }
+        }
+        if !self.cfg.enabled {
+            return conn.send(
+                json!({ "op": "err", "reason": "the PrivCord protocol is off on this server" })
+                    .to_string(),
+            );
+        }
         if self.limited(ip, now) {
             self.stats.rejected.fetch_add(1, Ordering::Relaxed);
             return conn.send(json!({ "op": "err", "reason": "rate limited" }).to_string());
@@ -386,7 +425,7 @@ impl Relay {
             .cloned()
             .unwrap_or_default();
         if !listeners.is_empty() {
-            let event = json!({ "op": "event", "mailbox": mailbox, "id": id, "blob": blob, "ts": stored_event_ts }).to_string();
+            let event: Arc<str> = json!({ "op": "event", "mailbox": mailbox, "id": id, "blob": blob, "ts": stored_event_ts }).to_string().into();
             self.stats
                 .delivered
                 .fetch_add(listeners.len() as u64, Ordering::Relaxed);
@@ -407,6 +446,9 @@ impl Relay {
 
     /// Drops what has expired and forgets old rate counters.
     pub fn sweep(&self, now: i64) {
+        if let Some(n) = &self.nostr {
+            n.sweep(now / 1000);
+        }
         for shard in &self.shards {
             let mut s = lock(shard);
             let mut freed = 0usize;
@@ -436,6 +478,9 @@ impl Relay {
 
     /// Rewrites the log from what is held (drops what expired).
     pub fn compact(&self, now: i64) {
+        if let Some(n) = &self.nostr {
+            n.compact();
+        }
         let Some(store) = &self.store else {
             return;
         };
@@ -458,8 +503,17 @@ impl Relay {
     }
 
     /// The numbers `/healthz` reports (counters only; nothing about people).
+    /// Bytes waiting to be written to connections, in all, and the handle each connection adds to.
+    pub fn out_total(&self) -> &Arc<AtomicUsize> {
+        &self.out_total
+    }
+
+    pub fn out_limit(&self) -> (usize, usize) {
+        (self.cfg.max_buffered_per_conn, self.cfg.backpressure_bytes)
+    }
+
     pub fn health(&self) -> Value {
-        json!({
+        let mut v = json!({
             "ok": true,
             "queued": self.queued(),
             "mailboxes": self.mailbox_count(),
@@ -467,7 +521,11 @@ impl Relay {
             "put": self.stats.put.load(Ordering::Relaxed),
             "delivered": self.stats.delivered.load(Ordering::Relaxed),
             "rejected": self.stats.rejected.load(Ordering::Relaxed),
-        })
+        });
+        if let (Some(n), Some(o)) = (&self.nostr, v.as_object_mut()) {
+            o.insert("nostr".into(), n.counters());
+        }
+        v
     }
 }
 

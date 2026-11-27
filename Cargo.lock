@@ -1905,6 +1905,7 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.3",
  "hmac",
+ "k256",
  "serde",
  "serde_json",
  "sha2",

@@ -5,6 +5,7 @@
 pub mod config;
 pub mod nat;
 pub mod net;
+pub mod nostr;
 pub mod relay;
 pub mod store;
 pub mod turn_role;
@@ -52,17 +53,17 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     if !problems.is_empty() {
         return Err(problems.join("; "));
     }
-    let relay = if cfg.relay.enabled {
-        let store = if cfg.relay.store_and_forward {
+    let relay = if cfg.relay.enabled || cfg.nostr.enabled {
+        let store = if cfg.relay.enabled && cfg.relay.store_and_forward {
             Some(store::Store::open(&cfg.server.data_dir)?)
         } else {
             None
         };
-        Some(Arc::new(Relay::new(
-            cfg.relay.clone(),
-            store,
-            net::now_ms(),
-        )))
+        let mut r = Relay::new(cfg.relay.clone(), store, net::now_ms());
+        if cfg.nostr.enabled {
+            r = r.with_nostr(nostr::Nostr::new(cfg.nostr.clone(), &cfg.server.data_dir)?);
+        }
+        Some(Arc::new(r))
     } else {
         None
     };

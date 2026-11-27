@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub nostr: NostrConfig,
     pub server: ServerConfig,
     pub relay: RelayConfig,
     pub turn: TurnConfig,
@@ -42,6 +43,11 @@ pub struct RelayConfig {
     /// Messages kept in all, and their total size.
     pub max_queued: usize,
     pub max_queued_bytes: usize,
+    /// What may wait to be written to one connection before it is cut off as too slow.
+    pub max_buffered_per_conn: usize,
+    /// When this much is waiting to be written across all connections, senders are slowed down (their sockets are not
+    /// read) until listeners catch up. Keeps memory flat under a flood.
+    pub backpressure_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +95,8 @@ impl Default for RelayConfig {
             max_conns_per_ip: 20,
             max_queued: 50_000,
             max_queued_bytes: 256 * 1024 * 1024,
+            max_buffered_per_conn: 64 * 1024 * 1024,
+            backpressure_bytes: 32 * 1024 * 1024,
         }
     }
 }
@@ -120,14 +128,24 @@ impl Config {
     /// What would stop this from working, in words (empty: fine).
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
-        if !self.relay.enabled && !self.turn.enabled {
-            out.push("both the relay and the TURN role are off: there is nothing to run".into());
+        if !self.relay.enabled && !self.turn.enabled && !self.nostr.enabled {
+            out.push("the relay, Nostr and TURN are all off: there is nothing to run".into());
         }
         if self.server.listen.parse::<std::net::SocketAddr>().is_err() {
             out.push(format!(
                 "server.listen \"{}\" is not an address like 0.0.0.0:8787",
                 self.server.listen
             ));
+        }
+        for k in self
+            .nostr
+            .allowed_pubkeys
+            .iter()
+            .chain(&self.nostr.blocked_pubkeys)
+        {
+            if k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit()) {
+                out.push(format!("nostr key \"{k}\" is not 64 hex characters"));
+            }
         }
         if self.turn.enabled {
             if self.turn.public_ip.parse::<std::net::IpAddr>().is_err() {
@@ -153,5 +171,70 @@ impl Config {
             }
         }
         out
+    }
+}
+
+/// The Nostr relay role (NIP-01 and friends), on the same port as the PrivCord relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NostrConfig {
+    /// Off unless you want this server to be a Nostr relay too. Anything published is stored readable by you, the operator.
+    pub enabled: bool,
+    /// Keep events (regular, replaceable, addressable). Off: only live delivery.
+    pub store_events: bool,
+    pub name: String,
+    pub description: String,
+    pub icon: String,
+    pub max_event_bytes: usize,
+    pub max_message_bytes: usize,
+    pub max_tags: usize,
+    pub max_subs_per_conn: usize,
+    pub max_filters: usize,
+    pub max_limit: usize,
+    pub max_subid_len: usize,
+    pub events_per_minute_per_ip: u64,
+    /// Leading zero bits an event id needs (NIP-13). 0: none.
+    pub min_pow: u32,
+    pub auth_required: bool,
+    pub created_at_upper_secs: i64,
+    /// 0: any age.
+    pub created_at_lower_secs: i64,
+    /// Events older than this are dropped (replaceable ones stay). 0: keep.
+    pub retention_days: u64,
+    pub max_events: usize,
+    /// Hex public keys. If any are listed, only they may publish.
+    pub allowed_pubkeys: Vec<String>,
+    pub blocked_pubkeys: Vec<String>,
+    pub allowed_kinds: Vec<u64>,
+    pub blocked_kinds: Vec<u64>,
+}
+
+impl Default for NostrConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            store_events: true,
+            name: "PrivCord server".into(),
+            description: "A relay run by its administrator.".into(),
+            icon: String::new(),
+            max_event_bytes: 131_072,
+            max_message_bytes: 262_144,
+            max_tags: 2_000,
+            max_subs_per_conn: 32,
+            max_filters: 16,
+            max_limit: 500,
+            max_subid_len: 64,
+            events_per_minute_per_ip: 600,
+            min_pow: 0,
+            auth_required: false,
+            created_at_upper_secs: 900,
+            created_at_lower_secs: 0,
+            retention_days: 30,
+            max_events: 1_000_000,
+            allowed_pubkeys: Vec::new(),
+            blocked_pubkeys: Vec::new(),
+            allowed_kinds: Vec::new(),
+            blocked_kinds: Vec::new(),
+        }
     }
 }

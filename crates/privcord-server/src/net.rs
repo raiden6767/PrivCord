@@ -191,6 +191,25 @@ async fn socket(
     Query(q): Query<HashMap<String, String>>,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
+    // NIP-11: a plain request that asks for the relay information document.
+    if let (Some(n), Err(_)) = (app.relay.as_ref().and_then(|r| r.nostr()), &ws) {
+        let wants = headers
+            .get("accept")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|a| a.contains("application/nostr+json"));
+        if wants {
+            return (
+                [
+                    ("content-type", "application/nostr+json"),
+                    ("access-control-allow-origin", "*"),
+                    ("access-control-allow-headers", "*"),
+                    ("access-control-allow-methods", "GET, OPTIONS"),
+                ],
+                Json(n.info(&app.cfg.server.admin_contact)),
+            )
+                .into_response();
+        }
+    }
     let (Some(_), Ok(ws)) = (&app.relay, ws) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -199,10 +218,15 @@ async fn socket(
     }
     // The address is used in memory for limits only; it is never logged or stored.
     let ip = client_ip(addr, &headers, app.cfg.server.trust_proxy);
-    ws.max_message_size(MAX_BLOB + 1024)
+    let biggest = if app.cfg.nostr.enabled {
+        app.cfg.nostr.max_message_bytes
+    } else {
+        MAX_BLOB + 1024
+    };
+    ws.max_message_size(biggest)
         .read_buffer_size(4 * 1024)
         .max_write_buffer_size(256 * 1024)
-        .max_frame_size(MAX_BLOB + 1024)
+        .max_frame_size(biggest)
         .on_upgrade(move |socket| serve(socket, app, ip))
 }
 
@@ -226,14 +250,20 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
         id: app.next_conn.fetch_add(1, Ordering::Relaxed),
         tx: tx.clone(),
         pending: pending.clone(),
+        total: relay.out_total().clone(),
+        limit: relay.out_limit().0,
     };
+    let total = relay.out_total().clone();
+    let writer_pending = pending.clone();
     let writer = tokio::spawn(async move {
+        let pending = writer_pending;
         while let Some(out) = rx.recv().await {
             match out {
                 Out::Text(t) => {
                     let n = t.len();
-                    let sent = sink.send(Message::Text(t.into())).await;
+                    let sent = sink.send(Message::Text(t.as_ref().into())).await;
                     pending.fetch_sub(n.min(pending.load(Ordering::Relaxed)), Ordering::Relaxed);
+                    total.fetch_sub(n.min(total.load(Ordering::Relaxed)), Ordering::Relaxed);
                     if sent.is_err() {
                         break;
                     }
@@ -259,7 +289,15 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
     let mut alive = true;
     let mut beat = tokio::time::interval(HEARTBEAT);
     beat.tick().await;
+    let soft = relay.out_limit().1;
     loop {
+        // A flood is slowed at the door: while too much is waiting to be written, this socket is not read, so the
+        // sender's own connection fills up and it slows down, instead of the relay growing.
+        let mut waited = 0;
+        while relay.out_total().load(Ordering::Relaxed) > soft && waited < 2000 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            waited += 1;
+        }
         tokio::select! {
             incoming = stream.next() => {
                 let Some(Ok(msg)) = incoming else { break };
@@ -280,8 +318,14 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
             }
         }
     }
-    relay.leave(&ip, conn.id, &session);
+    relay.leave(&ip, &conn, &mut session);
     writer.abort();
+    // Whatever was still queued for this connection will never be written.
+    let left = pending.load(Ordering::Relaxed);
+    relay.out_total().fetch_sub(
+        left.min(relay.out_total().load(Ordering::Relaxed)),
+        Ordering::Relaxed,
+    );
 }
 
 impl std::fmt::Debug for App {

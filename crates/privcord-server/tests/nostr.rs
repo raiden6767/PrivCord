@@ -1,0 +1,588 @@
+//! The Nostr side, through real sockets, with really signed events.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
+use futures_util::{SinkExt, StreamExt};
+use k256::schnorr::SigningKey;
+use privcord_server::nostr::event::hex;
+use privcord_server::{config::Config, start, Running};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::time::Duration;
+use tokio_tungstenite::{connect_async, tungstenite::Message};
+
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+fn key() -> SigningKey {
+    loop {
+        let mut b = [0u8; 32];
+        getrandom::fill(&mut b).unwrap();
+        if let Ok(k) = SigningKey::from_bytes(&k256::FieldBytes::from(b)) {
+            return k;
+        }
+    }
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+fn pk(k: &SigningKey) -> String {
+    hex(&k.verifying_key().to_bytes())
+}
+
+fn make(k: &SigningKey, kind: u64, created_at: i64, tags: Vec<Vec<&str>>, content: &str) -> Value {
+    let pubkey = pk(k);
+    let id: [u8; 32] = Sha256::digest(
+        json!([0, pubkey, created_at, kind, tags, content])
+            .to_string()
+            .as_bytes(),
+    )
+    .into();
+    let mut aux = [0u8; 32];
+    getrandom::fill(&mut aux).unwrap();
+    let sig = k.sign_raw(&id, &aux).unwrap();
+    json!({ "id": hex(&id), "pubkey": pubkey, "created_at": created_at, "kind": kind, "tags": tags, "content": content, "sig": hex(&sig.to_bytes()) })
+}
+
+async fn server(tweak: impl FnOnce(&mut Config)) -> (Running, String, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = Config::default();
+    c.server.listen = "127.0.0.1:0".into();
+    c.server.data_dir = dir.path().into();
+    c.nostr.enabled = true;
+    c.nostr.events_per_minute_per_ip = 0;
+    c.relay.rate_limit = 100_000;
+    tweak(&mut c);
+    let r = start(c).await.unwrap();
+    let url = format!("ws://{}", r.addr);
+    (r, url, dir)
+}
+
+struct C(Ws);
+
+impl C {
+    async fn open(url: &str) -> Self {
+        Self(connect_async(url).await.unwrap().0)
+    }
+    async fn send(&mut self, v: Value) {
+        self.0
+            .send(Message::Text(v.to_string().into()))
+            .await
+            .unwrap();
+    }
+    async fn next(&mut self) -> Value {
+        loop {
+            let m = tokio::time::timeout(Duration::from_secs(5), self.0.next())
+                .await
+                .expect("timed out")
+                .expect("closed")
+                .unwrap();
+            if let Message::Text(t) = m {
+                return serde_json::from_str(&t).unwrap();
+            }
+        }
+    }
+    async fn quiet(&mut self) -> bool {
+        tokio::time::timeout(Duration::from_millis(300), self.0.next())
+            .await
+            .is_err()
+    }
+    /// Publishes and returns the relay's verdict: (accepted, message).
+    async fn publish(&mut self, ev: &Value) -> (bool, String) {
+        self.send(json!(["EVENT", ev])).await;
+        loop {
+            let m = self.next().await;
+            if m[0] == "OK" && m[1] == ev["id"] {
+                return (m[2].as_bool().unwrap(), m[3].as_str().unwrap().to_owned());
+            }
+        }
+    }
+    /// Subscribes, and returns the stored events that come before EOSE.
+    async fn req(&mut self, sub: &str, filters: Vec<Value>) -> Vec<Value> {
+        let mut m = vec![json!("REQ"), json!(sub)];
+        m.extend(filters);
+        self.send(Value::Array(m)).await;
+        let mut out = Vec::new();
+        loop {
+            let m = self.next().await;
+            match m[0].as_str() {
+                Some("EVENT") if m[1] == sub => out.push(m[2].clone()),
+                Some("EOSE") if m[1] == sub => return out,
+                Some("CLOSED") if m[1] == sub => panic!("closed: {}", m[2]),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn ids(v: &[Value]) -> Vec<&str> {
+    v.iter().map(|e| e["id"].as_str().unwrap()).collect()
+}
+
+#[tokio::test]
+async fn an_event_can_be_published_and_read_back_and_a_repeat_is_noticed() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    let ev = make(&k, 1, now(), vec![], "hello");
+    assert_eq!(c.publish(&ev).await, (true, String::new()));
+    let got = c.req("s", vec![json!({ "authors": [pk(&k)] })]).await;
+    assert_eq!(ids(&got), vec![ev["id"].as_str().unwrap()]);
+    let (ok, why) = c.publish(&ev).await;
+    assert!(ok && why.starts_with("duplicate"), "{why}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn forged_events_are_refused() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    let mut bad = make(&k, 1, now(), vec![], "original");
+    bad["content"] = json!("tampered");
+    let (ok, why) = c.publish(&bad).await;
+    assert!(!ok && why.starts_with("invalid"), "{why}");
+    let mut wrong_sig = make(&k, 1, now(), vec![], "x");
+    let other = make(&key(), 1, now(), vec![], "x");
+    wrong_sig["sig"] = other["sig"].clone();
+    assert!(!c.publish(&wrong_sig).await.0);
+    let future = make(&k, 1, now() + 7200, vec![], "from the future");
+    assert!(c.publish(&future).await.1.contains("future"));
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn live_events_reach_subscribers_by_tag_and_ephemeral_ones_are_never_stored() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, mut a, mut b) = (key(), C::open(&url).await, C::open(&url).await);
+    assert!(b
+        .req("mb", vec![json!({ "kinds": [21733], "#t": ["room-1"] })])
+        .await
+        .is_empty());
+    let hit = make(&k, 21733, now(), vec![vec!["t", "room-1"]], "signal");
+    let miss = make(&k, 21733, now(), vec![vec!["t", "room-2"]], "elsewhere");
+    a.publish(&miss).await;
+    assert!(a.publish(&hit).await.0);
+    let e = b.next().await;
+    assert_eq!(
+        (e[0].as_str(), e[1].as_str(), e[2]["id"].as_str()),
+        (Some("EVENT"), Some("mb"), hit["id"].as_str())
+    );
+    assert!(b.quiet().await, "the other room's signal must not arrive");
+    let mut late = C::open(&url).await;
+    assert!(
+        late.req("x", vec![json!({ "kinds": [21733] })])
+            .await
+            .is_empty(),
+        "a signal is live only"
+    );
+    b.send(json!(["CLOSE", "mb"])).await;
+    a.publish(&make(
+        &k,
+        21733,
+        now(),
+        vec![vec!["t", "room-1"]],
+        "after close",
+    ))
+    .await;
+    assert!(b.quiet().await);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn replaceable_and_addressable_events_keep_only_the_newest() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    let t = now() - 100;
+    let old = make(&k, 0, t, vec![], "old profile");
+    let new = make(&k, 0, t + 10, vec![], "new profile");
+    c.publish(&old).await;
+    c.publish(&new).await;
+    let (ok, why) = c.publish(&old).await;
+    assert!(ok && why.starts_with("duplicate"));
+    let got = c
+        .req("p", vec![json!({ "kinds": [0], "authors": [pk(&k)] })])
+        .await;
+    assert_eq!(ids(&got), vec![new["id"].as_str().unwrap()]);
+    let a1 = make(&k, 30000, t, vec![vec!["d", "one"]], "a1");
+    let a2 = make(&k, 30000, t, vec![vec!["d", "two"]], "a2");
+    let a1b = make(&k, 30000, t + 5, vec![vec!["d", "one"]], "a1 again");
+    for e in [&a1, &a2, &a1b] {
+        c.publish(e).await;
+    }
+    let got = c.req("q", vec![json!({ "kinds": [30000] })]).await;
+    let mut want = vec![a2["id"].as_str().unwrap(), a1b["id"].as_str().unwrap()];
+    want.sort_unstable();
+    let mut have = ids(&got);
+    have.sort_unstable();
+    assert_eq!(have, want);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn deletion_removes_only_your_own_events_and_they_stay_deleted() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, stranger, mut c) = (key(), key(), C::open(&url).await);
+    let ev = make(&k, 1, now(), vec![], "regret");
+    c.publish(&ev).await;
+    let by_stranger = make(
+        &stranger,
+        5,
+        now(),
+        vec![vec!["e", ev["id"].as_str().unwrap()]],
+        "",
+    );
+    c.publish(&by_stranger).await;
+    assert_eq!(
+        c.req("a", vec![json!({ "kinds": [1] })]).await.len(),
+        1,
+        "a stranger cannot delete it"
+    );
+    let by_author = make(
+        &k,
+        5,
+        now(),
+        vec![vec!["e", ev["id"].as_str().unwrap()]],
+        "",
+    );
+    assert!(c.publish(&by_author).await.0);
+    assert!(c.req("b", vec![json!({ "kinds": [1] })]).await.is_empty());
+    let (ok, why) = c.publish(&ev).await;
+    assert!(!ok && why.starts_with("blocked"), "{why}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn expiring_events_are_refused_when_late_and_vanish_when_due() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    let late = make(
+        &k,
+        1,
+        now(),
+        vec![vec!["expiration", &(now() - 5).to_string()]],
+        "too late",
+    );
+    assert!(c.publish(&late).await.1.contains("expired"));
+    let brief = make(
+        &k,
+        1,
+        now(),
+        vec![vec!["expiration", &(now() + 1).to_string()]],
+        "brief",
+    );
+    assert!(c.publish(&brief).await.0);
+    assert_eq!(
+        c.req("a", vec![json!({ "authors": [pk(&k)] })]).await.len(),
+        1
+    );
+    tokio::time::sleep(Duration::from_millis(2300)).await;
+    assert!(c
+        .req("b", vec![json!({ "authors": [pk(&k)] })])
+        .await
+        .is_empty());
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn filters_pick_by_kind_time_id_author_and_tag_newest_first_with_a_limit() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k1, k2, mut c) = (key(), key(), C::open(&url).await);
+    let t = now() - 1000;
+    let e: Vec<Value> = (0..6u64)
+        .map(|i| {
+            make(
+                if i % 2 == 0 { &k1 } else { &k2 },
+                1 + i % 2,
+                t + i as i64 * 10,
+                vec![vec!["t", if i < 3 { "red" } else { "blue" }]],
+                &format!("n{i}"),
+            )
+        })
+        .collect();
+    for ev in &e {
+        c.publish(ev).await;
+    }
+    let id = |i: usize| e[i]["id"].as_str().unwrap();
+    assert_eq!(
+        ids(&c.req("a", vec![json!({ "kinds": [1, 2] })]).await),
+        vec![id(5), id(4), id(3), id(2), id(1), id(0)]
+    );
+    assert_eq!(
+        ids(&c
+            .req("b", vec![json!({ "kinds": [1, 2], "limit": 2 })])
+            .await),
+        vec![id(5), id(4)]
+    );
+    assert_eq!(
+        ids(&c
+            .req("c", vec![json!({ "since": t + 20, "until": t + 40 })])
+            .await),
+        vec![id(4), id(3), id(2)]
+    );
+    assert_eq!(
+        ids(&c.req("d", vec![json!({ "#t": ["blue"] })]).await),
+        vec![id(5), id(4), id(3)]
+    );
+    assert_eq!(
+        ids(&c
+            .req("e", vec![json!({ "authors": [pk(&k1)], "#t": ["red"] })])
+            .await),
+        vec![id(2), id(0)]
+    );
+    assert_eq!(
+        ids(&c.req("f", vec![json!({ "ids": [&id(3)[..12]] })]).await),
+        vec![id(3)]
+    );
+    assert_eq!(
+        ids(&c.req("g", vec![json!({ "ids": [id(1)] })]).await),
+        vec![id(1)]
+    );
+    let two = c
+        .req(
+            "h",
+            vec![
+                json!({ "#t": ["red"] }),
+                json!({ "#t": ["blue"], "limit": 1 }),
+            ],
+        )
+        .await;
+    assert_eq!(
+        two.len(),
+        4,
+        "filters are joined, and an event matching two is sent once"
+    );
+    c.send(json!(["COUNT", "n", { "kinds": [1] }])).await;
+    assert_eq!(c.next().await, json!(["COUNT", "n", { "count": 3 }]));
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn limits_and_bad_requests_are_answered_not_fatal() {
+    let (r, url, _d) = server(|c| {
+        c.nostr.max_subs_per_conn = 2;
+        c.nostr.max_event_bytes = 2000;
+    })
+    .await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    for s in ["a", "b"] {
+        c.req(s, vec![json!({ "kinds": [1] })]).await;
+    }
+    c.send(json!(["REQ", "c", { "kinds": [1] }])).await;
+    let m = c.next().await;
+    assert_eq!(
+        (m[0].as_str(), m[2].as_str().unwrap().starts_with("error")),
+        (Some("CLOSED"), true)
+    );
+    c.req("a", vec![json!({ "kinds": [2] })]).await; // replacing a subscription is allowed
+    c.send(json!(["REQ", "x".repeat(65), {}])).await;
+    assert!(c.next().await[2].as_str().unwrap().starts_with("invalid"));
+    c.send(json!(["REQ", "a", { "kinds": "no" }])).await;
+    assert!(c.next().await[2].as_str().unwrap().starts_with("invalid"));
+    c.0.send(Message::Text("[not json".into())).await.unwrap();
+    assert_eq!(c.next().await[0], "NOTICE");
+    let big = make(&k, 1, now(), vec![], &"x".repeat(3000));
+    assert!(c.publish(&big).await.1.contains("too large"));
+    c.send(json!(["WHAT"])).await;
+    assert_eq!(c.next().await[0], "NOTICE");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_relay_information_document_is_served() {
+    let (r, _url, _d) = server(|c| c.nostr.name = "Test relay".into()).await;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(r.addr).await.unwrap();
+    s.write_all(
+        b"GET / HTTP/1.1\r\nHost: x\r\nAccept: application/nostr+json\r\nConnection: close\r\n\r\n",
+    )
+    .await
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    assert!(out.starts_with("HTTP/1.1 200"), "{out}");
+    let low = out.to_lowercase();
+    assert!(
+        low.contains("application/nostr+json") && low.contains("access-control-allow-origin: *")
+    );
+    let doc: Value = serde_json::from_str(out.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(doc["name"], "Test relay");
+    assert!(doc["supported_nips"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(1)));
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_administrators_rules_are_enforced() {
+    let (allowed, blocked) = (key(), key());
+    let (r, url, _d) = server(|c| {
+        c.nostr.allowed_pubkeys = vec![pk(&allowed), pk(&blocked)];
+        c.nostr.blocked_pubkeys = vec![pk(&blocked)];
+        c.nostr.blocked_kinds = vec![7];
+        c.nostr.min_pow = 8;
+    })
+    .await;
+    let mut c = C::open(&url).await;
+    let mine = |k: &SigningKey, kind: u64| {
+        // mine a few bits of proof of work
+        for n in 0u64.. {
+            let e = make(
+                k,
+                kind,
+                now(),
+                vec![vec!["nonce", &n.to_string(), "8"]],
+                "work",
+            );
+            let id: [u8; 32] = unhex(e["id"].as_str().unwrap());
+            if id[0] == 0 {
+                return e;
+            }
+        }
+        unreachable!()
+    };
+    assert!(c.publish(&mine(&allowed, 1)).await.0);
+    assert!(c
+        .publish(&make(&allowed, 1, now(), vec![], "no work"))
+        .await
+        .1
+        .starts_with("pow"));
+    assert!(c.publish(&mine(&allowed, 7)).await.1.starts_with("blocked"));
+    assert!(c.publish(&mine(&blocked, 1)).await.1.starts_with("blocked"));
+    assert!(c
+        .publish(&mine(&key(), 1))
+        .await
+        .1
+        .starts_with("restricted"));
+    r.stop().await;
+}
+
+fn unhex(s: &str) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap();
+    }
+    out
+}
+
+#[tokio::test]
+async fn a_relay_that_wants_authentication_asks_and_checks() {
+    let (r, url, _d) = server(|c| c.nostr.auth_required = true).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    c.send(json!(["REQ", "s", { "kinds": [1] }])).await;
+    let challenge = c.next().await;
+    assert_eq!(challenge[0], "AUTH");
+    let m = c.next().await;
+    assert_eq!(
+        (
+            m[0].as_str(),
+            m[2].as_str().unwrap().starts_with("auth-required")
+        ),
+        (Some("CLOSED"), true)
+    );
+    assert!(c
+        .publish(&make(&k, 1, now(), vec![], "x"))
+        .await
+        .1
+        .starts_with("auth-required"));
+    let wrong = make(
+        &k,
+        22242,
+        now(),
+        vec![vec!["relay", "ws://x"], vec!["challenge", "not-it"]],
+        "",
+    );
+    c.send(json!(["AUTH", wrong])).await;
+    assert_eq!(c.next().await[2], false);
+    let right = make(
+        &k,
+        22242,
+        now(),
+        vec![
+            vec!["relay", "ws://x"],
+            vec!["challenge", challenge[1].as_str().unwrap()],
+        ],
+        "",
+    );
+    c.send(json!(["AUTH", right])).await;
+    assert_eq!(c.next().await[2], true);
+    assert!(
+        c.publish(&make(&k, 1, now(), vec![], "now it works"))
+            .await
+            .0
+    );
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn events_survive_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let k = key();
+    let ev = make(&k, 1, now(), vec![], "kept");
+    let gone = make(&k, 1, now(), vec![], "deleted");
+    for round in 0..2 {
+        let mut c = Config::default();
+        c.server.listen = "127.0.0.1:0".into();
+        c.server.data_dir = dir.path().into();
+        c.nostr.enabled = true;
+        c.nostr.events_per_minute_per_ip = 0;
+        let r = start(c).await.unwrap();
+        let mut cl = C::open(&format!("ws://{}", r.addr)).await;
+        if round == 0 {
+            cl.publish(&ev).await;
+            cl.publish(&gone).await;
+            cl.publish(&make(
+                &k,
+                5,
+                now(),
+                vec![vec!["e", gone["id"].as_str().unwrap()]],
+                "",
+            ))
+            .await;
+        } else {
+            let got = cl.req("a", vec![json!({ "kinds": [1] })]).await;
+            assert_eq!(
+                ids(&got),
+                vec![ev["id"].as_str().unwrap()],
+                "the deletion must survive the restart too"
+            );
+        }
+        r.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn both_protocols_work_on_one_socket_and_publishing_can_be_rate_limited() {
+    let (r, url, _d) = server(|c| c.nostr.events_per_minute_per_ip = 3).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    c.send(json!({ "op": "sub", "mailbox": "mb" })).await;
+    assert_eq!(c.next().await["op"], "ok");
+    assert!(c.publish(&make(&k, 1, now(), vec![], "one")).await.0);
+    c.send(
+        json!({ "op": "put", "mailbox": "mb", "id": "m1", "blob": "B", "ttl": 60, "kind": "sig" }),
+    )
+    .await;
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        seen.push(c.next().await["op"].as_str().unwrap().to_owned());
+    }
+    seen.sort();
+    assert_eq!(seen, vec!["event", "ok"]);
+    for i in 0..4 {
+        let (ok, why) = c
+            .publish(&make(&k, 1, now(), vec![], &format!("burst {i}")))
+            .await;
+        if i >= 2 {
+            assert!(!ok && why.starts_with("rate-limited"), "{i}: {why}");
+        }
+    }
+    r.stop().await;
+}
