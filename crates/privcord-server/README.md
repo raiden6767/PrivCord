@@ -44,14 +44,23 @@ talking Nostr; one that sends an object is talking PrivCord). The PrivCord apps 
 
 | | |
 |---|---|
-| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT, NIP-50 search (every word, any case; newest first), NIP-62 request to vanish, NIP-70 protected events, NIP-86 relay management (with NIP-98 HTTP auth) |
+| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT, NIP-50 search (every word, any case; newest first), NIP-62 request to vanish, NIP-70 protected events, NIP-77 set reconciliation (negentropy), NIP-86 relay management (with NIP-98 HTTP auth) |
 | Checks | every event's id and Schnorr signature, size, tag count, `created_at` window, expiry; hex must be lowercase |
 | Rules you set | allowed and blocked public keys, allowed and blocked kinds, minimum proof of work, authentication required, per-address publish rate, retention (days), event cap |
-| Not yet | NIP-77 sync, NIP-05 write checks, NIP-29 groups |
+| Not yet | NIP-05 write checks, NIP-29 groups |
 | Storage | in memory with indexes by time, author, kind and tag, plus an append-only log in `data_dir` (synced to disk twice a second), compacted when it doubles |
 
 Whoever publishes to a Nostr relay publishes readable content: unlike PrivCord's sealed messages, you can read what is stored
 here. That is your responsibility as the operator.
+
+### Sync (NIP-77)
+
+`NEG-OPEN`, `NEG-MSG`, `NEG-CLOSE` and `NEG-ERR` work as the NIP describes: a client sends a filter and its first
+message, the relay answers in rounds, and the client ends up knowing exactly which events each side lacks (then fetches them with
+a plain `REQ`), without either side listing everything. It follows the same access rules as `REQ` (authentication, who may see
+direct messages). Limits: `max_negentropy_items` (100,000: a filter that matches more is refused with `blocked: too many results`,
+narrow it) and `max_negentropy_sessions` (2 open at once per connection). The tests use the reference Rust library as the
+client; a second, independent implementation was not tried.
 
 ### Management API (NIP-86)
 

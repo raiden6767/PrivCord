@@ -283,6 +283,10 @@ pub struct NostrConfig {
     pub max_filters: usize,
     pub max_limit: usize,
     pub max_subid_len: usize,
+    /// NIP-77 (set reconciliation): the most events one sync may cover (a filter that matches more is refused with "blocked:
+    /// too many results": narrow it), and the syncs one connection may have open at once.
+    pub max_negentropy_items: usize,
+    pub max_negentropy_sessions: usize,
     pub events_per_minute_per_ip: u64,
     /// Events per second the whole relay accepts, all authors together (protects the disk). 0: no cap.
     pub events_per_second_global: u64,
@@ -337,6 +341,8 @@ impl Default for NostrConfig {
             max_filters: 16,
             max_limit: 500,
             max_subid_len: 256,
+            max_negentropy_items: 100_000,
+            max_negentropy_sessions: 2,
             events_per_minute_per_ip: 600,
             events_per_second_global: 0,
             reqs_per_minute_per_conn: 600,

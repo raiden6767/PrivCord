@@ -44,6 +44,8 @@ struct SubRef {
 #[derive(Default, Debug)]
 pub struct Session {
     subs: HashMap<String, Vec<SubKey>>,
+    /// NIP-77 syncs in progress on this connection (the server's side of each).
+    negs: HashMap<String, negentropy::Negentropy<'static, negentropy::NegentropyStorageVector>>,
     challenge: Option<String>,
     authed: Arc<RwLock<Option<Id>>>,
     /// Subscriptions opened in the current minute: (count, minute ends at ms).
@@ -169,6 +171,19 @@ fn relay_matches(tag: Option<&str>, configured: &str) -> bool {
         (Some(a), Some(b)) => a == b,
         _ => false,
     }
+}
+
+/// The largest NEG-MSG the server sends back (bytes, before hex): it must fit in a WebSocket message with room to spare.
+const NEG_FRAME_LIMIT: u64 = 60_000;
+
+fn unhex_vec(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || !s.is_ascii() {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
 }
 
 fn frame_event(sub: &str, e: &Event) -> Arc<str> {
@@ -306,7 +321,7 @@ impl Nostr {
             "description": over.1.as_deref().unwrap_or(&c.description),
             "contact": contact,
             "pubkey": c.admin_pubkey,
-            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45, 50, 62, 70, 86, 98],
+            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45, 50, 62, 70, 77, 86, 98],
             "software": "https://github.com/raiden6767/privcord",
             "version": env!("CARGO_PKG_VERSION"),
             "limitation": {
@@ -402,6 +417,13 @@ impl Nostr {
             },
             Some("REQ") => self.on_req(conn, sess, &msg, now),
             Some("COUNT") => self.on_count(conn, sess, &msg, now),
+            Some("NEG-OPEN") => self.on_neg_open(conn, sess, &msg, now),
+            Some("NEG-MSG") => self.on_neg_msg(conn, sess, &msg),
+            Some("NEG-CLOSE") => {
+                if let Some(id) = msg.get(1).and_then(Value::as_str) {
+                    sess.negs.remove(id);
+                }
+            }
             Some("CLOSE") => {
                 if let Some(id) = msg.get(1).and_then(Value::as_str) {
                     self.close_sub(sess, id, conn);
@@ -714,6 +736,88 @@ impl Nostr {
             }
         }
         conn.send(json!(["EOSE", sub]).to_string());
+    }
+
+    /// NIP-77: the client opens a sync with a filter and its first message; the answer says which events each side lacks, in
+    /// as many rounds as it takes (`NEG-MSG` both ways), and the client then asks for what it needs with a plain `REQ`.
+    fn on_neg_open(&self, conn: &Conn, sess: &mut Session, msg: &[Value], now: i64) {
+        let Some(sub) = msg.get(1).and_then(Value::as_str) else {
+            return conn
+                .send(json!(["NOTICE", "error: NEG-OPEN needs a subscription id"]).to_string());
+        };
+        let err = |why: &str| conn.send(json!(["NEG-ERR", sub, why]).to_string());
+        if sub.is_empty() || sub.len() > self.cfg.max_subid_len {
+            return err("invalid: bad subscription id");
+        }
+        if self.cfg.auth_required && sess.auth().is_none() {
+            return err("auth-required: authenticate first");
+        }
+        if !sess.negs.contains_key(sub) && sess.negs.len() >= self.cfg.max_negentropy_sessions {
+            return err("blocked: too many sync sessions open on this connection");
+        }
+        if !self.req_allowed(sess, now) {
+            return err("rate-limited: too many requests, slow down");
+        }
+        let Some(store) = &self.store else {
+            return err("blocked: this relay keeps no events");
+        };
+        let Some(mut filter) = msg.get(2).and_then(|v| Filter::parse(v).ok()) else {
+            return err("invalid: the filter is not valid");
+        };
+        if filter.value_count() > self.cfg.max_filter_values {
+            return err("invalid: too many values in the filter");
+        }
+        let Some(first) = msg.get(3).and_then(Value::as_str).and_then(unhex_vec) else {
+            return err("invalid: the first message must be hex");
+        };
+        filter.limit = None;
+        let max = self.cfg.max_negentropy_items;
+        let found = store.query(&filter, now, max.saturating_add(1));
+        if found.len() > max {
+            return err("blocked: too many results, narrow the filter");
+        }
+        let mut set = negentropy::NegentropyStorageVector::with_capacity(found.len());
+        for e in found.iter().filter(|e| self.visible(e, sess.auth())) {
+            let _ = set.insert(
+                u64::try_from(e.created_at).unwrap_or(0),
+                negentropy::Id::from_byte_array(e.id),
+            );
+        }
+        let ready = set
+            .seal()
+            .ok()
+            .and_then(|()| negentropy::Negentropy::owned(set, NEG_FRAME_LIMIT).ok());
+        let Some(mut ng) = ready else {
+            return err("error: could not start the sync");
+        };
+        match ng.reconcile(&first) {
+            Ok(reply) => {
+                sess.negs.insert(sub.to_owned(), ng);
+                conn.send(json!(["NEG-MSG", sub, hex(&reply)]).to_string());
+            }
+            Err(e) => err(&format!("error: {e}")),
+        }
+    }
+
+    fn on_neg_msg(&self, conn: &Conn, sess: &mut Session, msg: &[Value]) {
+        let Some(sub) = msg.get(1).and_then(Value::as_str) else {
+            return conn
+                .send(json!(["NOTICE", "error: NEG-MSG needs a subscription id"]).to_string());
+        };
+        let err = |why: &str| conn.send(json!(["NEG-ERR", sub, why]).to_string());
+        let Some(bytes) = msg.get(2).and_then(Value::as_str).and_then(unhex_vec) else {
+            return err("invalid: the message must be hex");
+        };
+        let Some(ng) = sess.negs.get_mut(sub) else {
+            return err("closed: there is no such sync session (it was closed, or never opened)");
+        };
+        match ng.reconcile(&bytes) {
+            Ok(reply) => conn.send(json!(["NEG-MSG", sub, hex(&reply)]).to_string()),
+            Err(e) => {
+                sess.negs.remove(sub);
+                err(&format!("error: {e}"));
+            }
+        }
     }
 
     fn on_count(&self, conn: &Conn, sess: &mut Session, msg: &[Value], now: i64) {
