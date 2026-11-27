@@ -10,7 +10,7 @@ import org.json.JSONObject
  */
 data class SavedServer(val base: String, val token: String, val name: String) {
     fun relayUrl(): String {
-        val ws = wsBase(base)
+        val ws = MyServer.wsBase(base)
         return if (token.isEmpty()) ws else "$ws/?token=" + java.net.URLEncoder.encode(token, "UTF-8")
     }
 }
