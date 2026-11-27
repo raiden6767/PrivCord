@@ -323,12 +323,28 @@ impl Core {
             return;
         };
         if !self.is_own_address(own.as_str()) {
+            self.diag(
+                "relay",
+                "message for an address that is not ours",
+                own.as_str(),
+            );
             return;
         }
         let Some(keys) = self.contact_keys(&person) else {
             // Not a contact: the only thing a stranger may send is a friend request after adding us from our card.
             if self.uid.as_ref() == Some(&own) {
+                self.diag(
+                    "invite",
+                    "message from someone not added yet",
+                    person.as_str(),
+                );
                 self.on_friend_request(&blob);
+            } else {
+                self.diag(
+                    "relay",
+                    "message from a stranger to another address of ours",
+                    person.as_str(),
+                );
             }
             return;
         };
