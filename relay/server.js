@@ -9,7 +9,10 @@ export const MAX_BLOB = 64 * 1024;
 export const MAX_SIG_TTL = 120;
 export const MAX_MSG_TTL = 7 * 24 * 3600;
 export const MAX_PER_MAILBOX = 500;
-const MAX_SUBS_PER_CONN = 16;
+export const MAX_SUBS_PER_CONN = 64;
+// One address may not hold more than this many of a mailbox's stored messages: a flood from one place cannot fill the
+// mailbox (MAX_PER_MAILBOX) and so block everyone else's messages for a week.
+export const MAX_PER_MAILBOX_PER_IP = 100;
 const MAX_FIELD = 128;
 // Outbound bytes queued for one socket before it is dropped as a slow/non-reading
 // consumer. Fits a full-mailbox replay (MAX_PER_MAILBOX * MAX_BLOB) with headroom.
@@ -20,7 +23,9 @@ export function startRelay({
   host = '0.0.0.0',
   dataDir = './data',
   allowStoreForward = false,
-  rateLimit = 120, // frames per window per IP
+  rateLimit = 600, // frames per window per IP (a message to a big group is one put per member)
+  maxSubsPerConn = MAX_SUBS_PER_CONN,
+  maxPerMailboxPerIp = MAX_PER_MAILBOX_PER_IP,
   rateWindowMs = 60_000,
   sweepMs = 500,
   trustProxy = false, // read the client IP from X-Forwarded-For (only behind a proxy you control)
@@ -33,7 +38,7 @@ export function startRelay({
   compactMs = 10 * 60_000,
   maxBuffered = MAX_BUFFERED,
 } = {}) {
-  /** @type {Map<string, Map<string, {id:string, blob:string, ts:number, exp:number}>>} persisted msg items */
+  /** @type {Map<string, Map<string, {id:string, blob:string, ts:number, exp:number, ip?:string}>>} persisted msg items (ip: memory only) */
   const queues = new Map();
   /** @type {Map<string, Set<import('ws').WebSocket>>} */
   const subs = new Map();
@@ -82,7 +87,7 @@ export function startRelay({
       const lines = [];
       for (const [mailbox, q] of queues) {
         for (const it of q.values()) {
-          if (it.exp > now) lines.push(JSON.stringify({ op: 'put', mailbox, ...it }));
+          if (it.exp > now) lines.push(JSON.stringify({ op: 'put', mailbox, id: it.id, blob: it.blob, ts: it.ts, exp: it.exp }));
         }
       }
       const tmp = logFile + '.tmp';
@@ -158,7 +163,7 @@ export function startRelay({
     switch (m.op) {
       case 'sub': {
         if (!str(m.mailbox)) return fail('bad mailbox');
-        if (ws.mailboxes.size >= MAX_SUBS_PER_CONN && !ws.mailboxes.has(m.mailbox)) return fail('too many subscriptions');
+        if (ws.mailboxes.size >= maxSubsPerConn && !ws.mailboxes.has(m.mailbox)) return fail('too many subscriptions');
         ws.mailboxes.add(m.mailbox);
         let set = subs.get(m.mailbox);
         if (!set) subs.set(m.mailbox, (set = new Set()));
@@ -188,12 +193,18 @@ export function startRelay({
           const isNew = !q?.has(m.id);
           if (isNew) {
             if (q && q.size >= MAX_PER_MAILBOX) return fail('mailbox full');
+            if (q) {
+              let mine = 0;
+              for (const it of q.values()) if (it.ip === ip) mine++;
+              if (mine >= maxPerMailboxPerIp) return fail('mailbox quota for this address');
+            }
             if (queued() >= maxQueued || bytes + m.blob.length > maxQueuedBytes) return fail('relay full');
             if (!q) { q = new Map(); queues.set(m.mailbox, q); }
-            const it = { id: m.id, blob: m.blob, ts, exp: ts + m.ttl * 1000 };
+            const it = { id: m.id, blob: m.blob, ts, exp: ts + m.ttl * 1000, ip };
             q.set(m.id, it);
             bytes += it.blob.length;
-            if (!persist({ op: 'put', mailbox: m.mailbox, ...it })) {
+            // The address is kept in memory to count a sender's share; it is never written to the log.
+            if (!persist({ op: 'put', mailbox: m.mailbox, id: it.id, blob: it.blob, ts: it.ts, exp: it.exp })) {
               q.delete(m.id);
               bytes -= it.blob.length;
               if (q.size === 0) queues.delete(m.mailbox);
@@ -211,6 +222,8 @@ export function startRelay({
       }
       case 'del': {
         if (!str(m.mailbox) || !str(m.id)) return fail('bad del');
+        // Only a listener of the mailbox (its owner, who got the message) may delete from it.
+        if (!ws.mailboxes.has(m.mailbox)) return fail('not subscribed to this mailbox');
         const q = queues.get(m.mailbox);
         const it = q?.get(m.id);
         if (it && q.delete(m.id)) {

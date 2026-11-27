@@ -1191,3 +1191,40 @@ fn data_stored_under_v1_ids_moves_to_the_v2_ids_when_the_engine_starts() {
     assert!(chat.iter().any(|m| m.sender_id == a.uid));
     assert!(chat.iter().any(|m| m.sender_id == b.uid));
 }
+
+#[test]
+fn an_open_invite_slows_down_after_a_minute_and_stops_when_closed() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut a = node("alice", &clock);
+    a.transport.set_signaling(true);
+    a.core.create_invite().unwrap();
+    let puts = |n: &Node| {
+        n.transport
+            .drain_signals()
+            .into_iter()
+            .filter(|o| matches!(o, SignalOp::Put { .. }))
+            .count()
+    };
+    assert_eq!(puts(&a), 1);
+    // The first minute: every 4 seconds.
+    let mut early = 0;
+    for _ in 0..15 {
+        a.clock.advance(4_000);
+        a.core.tick();
+        early += puts(&a);
+    }
+    assert_eq!(early, 15);
+    // After that: every 12 seconds, not every 4.
+    let mut late = 0;
+    for _ in 0..15 {
+        a.clock.advance(4_000);
+        a.core.tick();
+        late += puts(&a);
+    }
+    assert_eq!(late, 5, "one post per 12 s for the next minute");
+    // Closing it ends the posting at once.
+    a.core.stop_invite();
+    a.clock.advance(60_000);
+    a.core.tick();
+    assert_eq!(puts(&a), 0);
+}

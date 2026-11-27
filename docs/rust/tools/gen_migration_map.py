@@ -85,6 +85,7 @@ rule(r"src-tauri/src/(lib|main)\.rs", "Tauri shell: commands, keyring, notificat
 rule(r"src-tauri/src/tray\.rs", "Tray icon, close to tray, start at login, one instance", "Desktop adapter", "Adapter", ADAPTER, "Stays")
 rule(r"src-tauri/src/ble\.rs", "Native BLE central", "BLE adapter", "Adapter", ADAPTER, "Stays")
 rule(r"src-tauri/src/engine_host\.rs", "Hosts the Rust engine in the shell: keyring secret store, events to the page", "Desktop adapter + engine host", "Adapter", ADAPTER, "Stays; M7 seam (page not rewired yet)")
+rule(r"src-tauri/src/mic_permission\.rs", "Windows: answers the microphone request without saving it, so connections keep the local address hidden", "Desktop adapter", "Adapter", ADAPTER, "Stays")
 rule(r"src-tauri/src/updater\.rs", "In-app updates: checks the signed latest.json and runs the verified installer", "Desktop adapter", "Adapter", ADAPTER, "Stays")
 rule(r"src-tauri/src/autobackup\.rs", "Weekly automatic backups: keeps the passphrase in the credential store, runs the check", "Desktop adapter + engine host", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/engineBridge(Raw)?(\.test)?\.ts", "Page side of the hosted engine: ordered inbound calls, Busy retry, Tauri events", "Desktop adapter + engine host", "Adapter", ADAPTER, "Stays; M7 seam (page not rewired yet)")

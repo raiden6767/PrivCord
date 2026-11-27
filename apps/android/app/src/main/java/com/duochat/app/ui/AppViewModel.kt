@@ -287,6 +287,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         engine?.retryAnswer()
     }
 
+    fun closeInvite() {
+        engine?.closeInvite()
+    }
+
     fun clearAnswer() {
         engine?.clearAnswer()
     }

@@ -8,6 +8,8 @@ export interface AppSettings {
   accent: string;
   notificationsEnabled: boolean;
   notificationPreviews: boolean;
+  /** The unread count in the window title, tray tooltip and taskbar badge (shown to anyone who sees the screen or a recording). */
+  showUnreadCount: boolean;
   /** A built-in colour theme (see themes.ts), or 'classic' for the system light/dark look with the accent picker. */
   palette: string;
   /** The name friends see on your invite. */
@@ -38,6 +40,7 @@ const DEFAULTS: AppSettings = {
   accent: ACCENTS[0].value,
   notificationsEnabled: true,
   notificationPreviews: false,
+  showUnreadCount: true,
   palette: DEFAULT_PALETTE,
   displayName: '',
   groupOnly: false,
@@ -67,6 +70,8 @@ export function parseSettings(raw: string | null): AppSettings {
         typeof parsed.notificationPreviews === 'boolean'
           ? parsed.notificationPreviews
           : DEFAULTS.notificationPreviews,
+      showUnreadCount:
+        typeof parsed.showUnreadCount === 'boolean' ? parsed.showUnreadCount : DEFAULTS.showUnreadCount,
       palette: typeof parsed.palette === 'string' && (parsed.palette === DEFAULT_PALETTE || themeById(parsed.palette)) ? parsed.palette : DEFAULT_PALETTE,
       groupOnly: typeof parsed.groupOnly === 'boolean' ? parsed.groupOnly : DEFAULTS.groupOnly,
       panicWipe: typeof parsed.panicWipe === 'boolean' ? parsed.panicWipe : DEFAULTS.panicWipe,

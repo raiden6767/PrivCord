@@ -2796,3 +2796,69 @@ fn removing_a_contact_moves_the_private_inbox_and_nobody_is_left_behind() {
     assert!(pat.texts().contains(&"after the move".to_owned()));
     let _ = fran_uid;
 }
+
+#[test]
+fn a_contact_who_ran_out_of_one_time_keys_is_sent_a_fresh_batch_when_we_come_back() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut pat = Device::new("pat", &clock);
+    pat.core.create_identity().unwrap();
+    let mut fran = Device::new("fran", &clock);
+    fran.core.create_identity().unwrap();
+    let pat_uid = pat.core.own_uid().unwrap().clone();
+    pat.core
+        .add_contact(
+            &fran.core.own_card(Some("F")).unwrap(),
+            ContactTrust::Verified,
+        )
+        .unwrap();
+    fran.core
+        .add_contact(
+            &pat.core.own_card(Some("P")).unwrap(),
+            ContactTrust::Verified,
+        )
+        .unwrap();
+    pat.core.set_store_forward(true).unwrap();
+    fran.core.set_store_forward(true).unwrap();
+    for _ in 0..6 {
+        pat.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    assert_eq!(fran.core.test_onetime_left(&pat_uid), 10);
+    // Pat is away; Fran sends more than a batch.
+    for i in 1..=12 {
+        fran.core
+            .send_message(&pat_uid, &format!("m{i}"), None)
+            .unwrap();
+        fran.online(&mut relay);
+    }
+    assert_eq!(
+        fran.core.test_onetime_left(&pat_uid),
+        0,
+        "the batch is used up"
+    );
+    // Pat comes back, opens them, and sends a new batch.
+    for _ in 0..6 {
+        pat.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    assert!((1..=12).all(|i| pat.texts().contains(&format!("m{i}"))));
+    assert!(
+        fran.core.test_onetime_left(&pat_uid) >= 5,
+        "Fran holds fresh one-time keys again: {}",
+        fran.core.test_onetime_left(&pat_uid)
+    );
+    // Nothing more is sent while the contact still has plenty (no batch per message).
+    let before = counts(&relay);
+    fran.core.send_message(&pat_uid, "one more", None).unwrap();
+    fran.online(&mut relay);
+    pat.online(&mut relay);
+    pat.online(&mut relay);
+    let big: usize = relay
+        .boxes
+        .iter()
+        .flat_map(|(m, v)| v[before.get(m).copied().unwrap_or(0)..].iter())
+        .filter(|b| b.len() > 20_000)
+        .count();
+    assert_eq!(big, 0, "no new batch while keys are plentiful");
+}

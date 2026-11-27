@@ -35,6 +35,12 @@ const STANDING_ROTATE_MS: i64 = 7 * 24 * 3600 * 1000;
 const KEY_LIFETIME_MS: i64 = 30 * 24 * 3600 * 1000;
 /// How long keys handed over through a relay wait there for a friend who is offline.
 const KEYS_TTL_SEC: u32 = 7 * 24 * 3600;
+/// A contact who has this many of our one-time keys left or fewer is sent a fresh batch (each offline message uses one;
+/// with none left it is sealed to our standing key, which is weaker for forward secrecy).
+const LOW_WATER: usize = 3;
+/// At most one top-up per contact address in this long: a contact who never opens what they hold must not make us post a
+/// batch (about 35 KB) over and over.
+const TOPUP_COOLDOWN_MS: i64 = 6 * 3600 * 1000;
 
 /// A mailbox name as we make them: 64 lowercase hex characters.
 fn is_mailbox_name(m: &str) -> bool {
@@ -69,6 +75,8 @@ pub(super) struct KeyState {
     /// one each contact address was last told. An address with no entry was told generation 0.
     inbox_gen: u32,
     told_gen: BTreeMap<UserId, u32>,
+    /// When each address was last sent a top-up (kept in memory only: after a restart the wait starts again).
+    topup_at: BTreeMap<UserId, i64>,
 }
 
 impl KeyState {
@@ -272,6 +280,7 @@ impl Core {
         if !self.ports.transport.signal_available() || !self.store_forward() {
             return;
         }
+        let now = self.now();
         let due: Vec<UserId> = self
             .contacts
             .keys()
@@ -279,9 +288,23 @@ impl Core {
             .filter(|a| {
                 !self.keys.issued.contains_key(a)
                     || self.keys.told_gen.get(a).copied().unwrap_or(0) != self.keys.inbox_gen
+                    || (self
+                        .keys
+                        .issued
+                        .get(a)
+                        .is_some_and(|l| l.len() <= LOW_WATER)
+                        && self
+                            .keys
+                            .topup_at
+                            .get(a)
+                            .is_none_or(|t| now - t >= TOPUP_COOLDOWN_MS))
             })
             .collect();
         for addr in due {
+            // The first batch for an address is not a top-up; only later ones wait out the cooldown.
+            if self.keys.issued.contains_key(&addr) {
+                self.keys.topup_at.insert(addr.clone(), now);
+            }
             let Some(mut payload) = self.fresh_keys_for(&addr) else {
                 return;
             };
@@ -361,6 +384,11 @@ impl Core {
 
     pub(super) fn inbox_generation(&self) -> u32 {
         self.keys.inbox_gen
+    }
+
+    #[doc(hidden)]
+    pub fn test_onetime_left(&self, peer: &UserId) -> usize {
+        self.keys.theirs.get(peer).map_or(0, |t| t.onetime.len())
     }
 
     #[doc(hidden)]

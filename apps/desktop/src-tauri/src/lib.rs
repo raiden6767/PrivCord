@@ -4,6 +4,8 @@ mod autobackup;
 mod ble;
 #[cfg(desktop)]
 mod engine_host;
+#[cfg(windows)]
+mod mic_permission;
 #[cfg(desktop)]
 mod tray;
 #[cfg(desktop)]
@@ -206,6 +208,8 @@ pub(crate) fn open_window(handle: &tauri::AppHandle, hidden: bool) -> tauri::Res
         builder = builder.proxy_url(tauri::Url::parse(TOR_PROXY).expect("valid proxy url"));
     }
     let window = builder.build()?;
+    #[cfg(windows)]
+    mic_permission::install(&window);
     #[cfg(desktop)]
     {
         let app = handle.clone();

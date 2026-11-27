@@ -32,6 +32,8 @@ export interface ChatEngineApi {
   myInvite(): string;
   refreshOwnName(name: string): Promise<void>;
   createInvite(): Promise<{ words: string; expiresAt: number }>;
+  /** Stop publishing the six-word invite (the Add a friend screen was closed): while it is open, relays see it posted. */
+  closeInvite?(): void;
   previewInvite(text: string): Promise<{ uid: string; name: string; safetyNumber: string; already: boolean }>;
   addContact(text: string): Promise<string>;
   retryAnswer(): void;

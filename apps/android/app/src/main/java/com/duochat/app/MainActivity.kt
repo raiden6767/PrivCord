@@ -259,6 +259,14 @@ private fun RootScreen(viewModel: AppViewModel) {
             val openChatId = shown.takeIf { it.startsWith("chat:") }?.removePrefix("chat:")
             when {
                 shown == "add" -> {
+                    // Leaving the screen ends the six-word invite (rotating it does not): while it is open, relays see it
+                    // posted every few seconds.
+                    val addContext = androidx.compose.ui.platform.LocalContext.current
+                    androidx.compose.runtime.DisposableEffect(Unit) {
+                        onDispose {
+                            if ((addContext as? android.app.Activity)?.isChangingConfigurations != true) viewModel.closeInvite()
+                        }
+                    }
                     AddFriendScreen(
                         state = state,
                         ownCard = viewModel::ownCard,

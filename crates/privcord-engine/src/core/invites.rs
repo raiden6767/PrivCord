@@ -27,8 +27,12 @@ use std::collections::BTreeMap;
 
 pub(super) const KV_STORE_FORWARD: &str = "settings.store_forward";
 pub(super) const KV_NAME: &str = "profile.name";
-/// The invite card is published again this often while the invite is open: relays differ in what they keep.
+/// The invite card is published again this often while the invite is open: relays differ in what they keep. Each post
+/// shows a relay that someone is waiting at this mailbox, so after the first minute (when a friend is most likely to be
+/// answering) it slows down; a search lasts 40 s, so a later one still finds it.
 const REPUBLISH_MS: i64 = 4_000;
+const REPUBLISH_SLOW_MS: i64 = 12_000;
+const REPUBLISH_FAST_FOR_MS: i64 = 60_000;
 const LOOKUP_MS: i64 = 40_000;
 const ANSWER_LINGER_MS: i64 = 1_500;
 const LIVE_TTL_SEC: u32 = 120;
@@ -47,6 +51,7 @@ struct Hello {
 struct ActiveInvite {
     words: String,
     rv: Rendezvous,
+    started_at: i64,
     expires_at: i64,
     next_publish_at: i64,
 }
@@ -178,6 +183,7 @@ impl Core {
         self.invites.active = Some(ActiveInvite {
             words: text.clone(),
             rv,
+            started_at: now,
             expires_at,
             next_publish_at: now + REPUBLISH_MS,
         });
@@ -609,7 +615,12 @@ impl Core {
             self.stop_invite();
         } else if due {
             if let Some(a) = self.invites.active.as_mut() {
-                a.next_publish_at = now + REPUBLISH_MS;
+                let every = if now - a.started_at < REPUBLISH_FAST_FOR_MS {
+                    REPUBLISH_MS
+                } else {
+                    REPUBLISH_SLOW_MS
+                };
+                a.next_publish_at = now + every;
             }
             let _ = self.publish_invite(); // a failed republish is retried on the next round
         }

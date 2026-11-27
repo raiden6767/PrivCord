@@ -585,6 +585,10 @@ export class HostedChatEngine implements ChatEngineApi {
     return { words: invite.words, expiresAt: invite.expires_at };
   }
 
+  closeInvite(): void {
+    void this.engine.call('stop_invite').catch(() => undefined);
+  }
+
   async previewInvite(text: string): Promise<{ uid: string; name: string; safetyNumber: string; already: boolean }> {
     let mine: NonNullable<typeof this.lookup> | null = null;
     const found = new Promise<{ uid: string; name: string; safetyNumber: string; already: boolean }>((resolve, reject) => {

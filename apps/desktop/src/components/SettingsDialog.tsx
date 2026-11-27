@@ -492,6 +492,12 @@ export function SettingsDialog({
               disabled={!settings.notificationsEnabled}
             />
             <Toggle
+              label="Unread count in the title and taskbar"
+              description="Turn off to keep the number of unread messages out of the window title, tray tooltip and taskbar badge, which anyone watching your screen or a screen share can see."
+              checked={settings.showUnreadCount}
+              onChange={(value) => updateSettings({ showUnreadCount: value })}
+            />
+            <Toggle
               label="Quiet hours"
               description="No notifications between these times, on all your devices. Messages still arrive and wait in the chat."
               checked={quiet.enabled}

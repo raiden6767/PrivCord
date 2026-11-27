@@ -244,7 +244,7 @@ export function ChatLayout({
   const hits = useMemo(() => (engine && query.trim().length >= 2 ? engine.search(query) : []), [engine, query, state?.messages]);
 
   const [updated] = useState(() => whatsNewPending(config.appVersion));
-  useUnreadTitle(state ? totalUnread(state) : 0);
+  useUnreadTitle(state && settings.showUnreadCount ? totalUnread(state) : 0);
   useSecureScreen(state?.prefs?.secureScreen === true);
 
   if (fatal) return <Splash danger title="PrivCord could not start" text={fatal} />;

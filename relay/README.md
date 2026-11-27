@@ -1,9 +1,9 @@
-# DuoChat relay
+# PrivCord relay
 
-A tiny self-hosted WebSocket server that DuoChat apps use as a **signaling mailbox**
+A tiny self-hosted WebSocket server that PrivCord apps use as a **signaling mailbox**
 and, optionally, a **store-and-forward queue**. Wire protocol: `docs/CONNECTIVITY.md`
 section 5a. It is one of several interchangeable signaling options (the others are
-Nostr relays and manual codes); DuoChat does not require it.
+Nostr relays and manual codes); PrivCord does not require it.
 
 What it is not: it is not STUN, not TURN, and it never carries chat traffic of a live
 connection. It holds opaque, end-to-end sealed blobs addressed to a mailbox hash.
@@ -21,13 +21,15 @@ PORT=8787 node index.js
 | `PORT` | `8787` | Listen port |
 | `ALLOW_STORE_FORWARD` | `false` | `true` accepts `kind:"msg"` blobs (up to 7 days, persisted). When `false`, `msg` puts get `err` and nothing is written to disk |
 | `DATA_DIR` | `./data` | Where `queue.jsonl` lives (only used when store-and-forward is on) |
-| `RATE_LIMIT` | `120` | Frames per minute per client IP |
+| `RATE_LIMIT` | `600` | Frames per minute per client IP (a message to a group is one put per member) |
+| `MAX_SUBS_PER_CONN` | `64` | Mailboxes one connection may listen to |
+| `MAX_PER_MAILBOX_PER_IP` | `100` | Stored messages one address may hold in one mailbox, so a flood from one place cannot fill it |
 
 Limits: blob <= 64 KiB, `sig` ttl <= 120 s (delivered live to current subscribers,
 never stored), `msg` ttl <= 7 days, <= 500 queued messages per mailbox.
-`GET /healthz` returns counters only. `SIGTERM`/`SIGINT` shut down cleanly.
+Only a connection that listens to a mailbox may delete from it. `GET /healthz` returns counters only. `SIGTERM`/`SIGINT` shut down cleanly.
 
-Then put `wss://your-host` into DuoChat Settings -> Signaling -> Relay.
+Then put `wss://your-host` into PrivCord Settings -> Signaling -> Relay.
 
 ### Docker
 

@@ -31,3 +31,12 @@
     public static int d(...);
     public static int i(...);
 }
+
+# Release builds write nothing to logcat below the error level: the lines say when a dial, a signal or a relay put happened
+# and what relays answered, which anyone with a USB debugging connection could read.
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+    public static int i(...);
+    public static int w(...);
+}

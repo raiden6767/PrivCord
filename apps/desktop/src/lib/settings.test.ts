@@ -28,6 +28,12 @@ describe('parseSettings', () => {
     expect(parseSettings(null).accent).toBe('#7a3e73');
   });
 
+  it('shows the unread count unless it was turned off', () => {
+    expect(parseSettings(null).showUnreadCount).toBe(true);
+    expect(parseSettings(JSON.stringify({ showUnreadCount: false })).showUnreadCount).toBe(false);
+    expect(parseSettings(JSON.stringify({ showUnreadCount: 'no' })).showUnreadCount).toBe(true);
+  });
+
   it('rejects an invalid accent color', () => {
     expect(parseSettings(JSON.stringify({ accent: 'red' })).accent).toBe('#7a3e73');
   });
