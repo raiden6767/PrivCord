@@ -22,6 +22,11 @@ pub struct ServerConfig {
     pub data_dir: PathBuf,
     /// Read the visitor's address from `X-Forwarded-For` (only behind a proxy you control, such as Caddy or nginx).
     pub trust_proxy: bool,
+    /// With `trust_proxy`: the header that carries the client's address (the last entry is used), for example
+    /// `cf-connecting-ip` behind Cloudflare.
+    pub real_ip_header: String,
+    /// Serve Prometheus-style counters at `/metrics` (needs an access token if tokens are set).
+    pub metrics: bool,
     /// Who may use this server. Empty: anyone. Otherwise a visitor must present one of these (as `?token=...` on the relay
     /// address, or as `Authorization: Bearer ...`).
     pub access_tokens: Vec<String>,
@@ -78,6 +83,8 @@ impl Default for ServerConfig {
             listen: "0.0.0.0:8787".into(),
             data_dir: PathBuf::from("./data"),
             trust_proxy: false,
+            real_ip_header: "x-forwarded-for".into(),
+            metrics: false,
             access_tokens: Vec::new(),
             admin_contact: String::new(),
         }
@@ -193,6 +200,18 @@ pub struct NostrConfig {
     pub max_limit: usize,
     pub max_subid_len: usize,
     pub events_per_minute_per_ip: u64,
+    /// Events per second the whole relay accepts, all authors together (protects the disk). 0: no cap.
+    pub events_per_second_global: u64,
+    /// Subscriptions (REQ) one connection may open per minute. 0: no cap.
+    pub reqs_per_minute_per_conn: u64,
+    /// Confirm an event (and hand it to subscribers) only after it is safely on disk. Batched, so it stays fast.
+    pub durable: bool,
+    /// Keep events on disk at all. Off: memory only, gone at restart.
+    pub persist: bool,
+    /// NIP-42: send direct messages (kinds 4 and 1059) only to the authenticated sender and recipient.
+    pub auth_dms: bool,
+    /// The administrator's Nostr public key (hex), shown in the information document.
+    pub admin_pubkey: String,
     /// Leading zero bits an event id needs (NIP-13). 0: none.
     pub min_pow: u32,
     pub auth_required: bool,
@@ -223,8 +242,14 @@ impl Default for NostrConfig {
             max_subs_per_conn: 32,
             max_filters: 16,
             max_limit: 500,
-            max_subid_len: 64,
+            max_subid_len: 256,
             events_per_minute_per_ip: 600,
+            events_per_second_global: 0,
+            reqs_per_minute_per_conn: 0,
+            durable: false,
+            persist: true,
+            auth_dms: false,
+            admin_pubkey: String::new(),
             min_pow: 0,
             auth_required: false,
             created_at_upper_secs: 900,

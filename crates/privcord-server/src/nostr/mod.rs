@@ -35,6 +35,8 @@ struct SubRef {
     conn: Conn,
     id: Arc<str>,
     filters: Arc<Vec<Filter>>,
+    /// Who the connection has proved to be (shared with its session, which may authenticate later).
+    auth: Arc<RwLock<Option<Id>>>,
 }
 
 /// What one connection has open.
@@ -42,7 +44,22 @@ struct SubRef {
 pub struct Session {
     subs: HashMap<String, Vec<SubKey>>,
     challenge: Option<String>,
-    authed: Option<Id>,
+    authed: Arc<RwLock<Option<Id>>>,
+    /// Subscriptions opened in the current minute: (count, minute ends at ms).
+    req_window: (u64, i64),
+}
+
+impl Session {
+    fn auth(&self) -> Option<Id> {
+        *self.authed.read().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// An event that is waiting for the disk before it is confirmed and handed to subscribers.
+struct Pending {
+    conn: Conn,
+    event: Arc<Event>,
+    ok: Arc<str>,
 }
 
 /// Who may publish what. Changeable while the server runs (the admin panel does).
@@ -83,6 +100,10 @@ pub struct Nostr {
     rates: Mutex<HashMap<String, (u64, i64)>>,
     stats: Stats,
     last_slow_sweep: AtomicU64,
+    /// The relay-wide second in which events are being counted, and how many came in it.
+    global_rate: Mutex<(i64, u64)>,
+    waiting: Mutex<Vec<Pending>>,
+    wake: tokio::sync::Notify,
 }
 
 impl std::fmt::Debug for Nostr {
@@ -109,7 +130,7 @@ impl Nostr {
     pub fn new(cfg: NostrConfig, data_dir: &std::path::Path) -> Result<Self, String> {
         let store = cfg
             .store_events
-            .then(|| Store::open(Some(data_dir)))
+            .then(|| Store::open(cfg.persist.then_some(data_dir)))
             .transpose()?;
         let policy = Policy::from_config(&cfg);
         Ok(Self {
@@ -120,6 +141,9 @@ impl Nostr {
             rates: Mutex::new(HashMap::new()),
             stats: Stats::default(),
             last_slow_sweep: AtomicU64::new(0),
+            global_rate: Mutex::new((0, 0)),
+            waiting: Mutex::new(Vec::new()),
+            wake: tokio::sync::Notify::new(),
         })
     }
 
@@ -162,6 +186,7 @@ impl Nostr {
             "name": c.name,
             "description": c.description,
             "contact": contact,
+            "pubkey": c.admin_pubkey,
             "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45],
             "software": "https://github.com/raiden6767/privcord",
             "version": env!("CARGO_PKG_VERSION"),
@@ -185,6 +210,36 @@ impl Nostr {
         doc
     }
 
+    /// A cap on events per second for the whole relay, whoever sends them.
+    fn global_limited(&self, now_ms: i64) -> bool {
+        let cap = self.cfg.events_per_second_global;
+        if cap == 0 {
+            return false;
+        }
+        let mut g = lock(&self.global_rate);
+        let second = now_ms / 1000;
+        if g.0 != second {
+            *g = (second, 0);
+        }
+        g.1 += 1;
+        g.1 > cap
+    }
+
+    /// Whether `who` may be sent `e`: with `auth_dms`, direct messages go only to their sender and recipients.
+    fn visible(&self, e: &Event, who: Option<Id>) -> bool {
+        if !self.cfg.auth_dms || !(e.kind == 4 || e.kind == 1059) {
+            return true;
+        }
+        let Some(me) = who else {
+            return false;
+        };
+        let me_hex = hex(&me);
+        e.pubkey == me
+            || e.tags
+                .iter()
+                .any(|t| t.first().map(String::as_str) == Some("p") && t.get(1) == Some(&me_hex))
+    }
+
     fn rate_limited(&self, ip: &str, now_ms: i64) -> bool {
         let limit = self.cfg.events_per_minute_per_ip;
         if limit == 0 {
@@ -199,16 +254,21 @@ impl Nostr {
         r.0 > limit
     }
 
-    /// Handles one Nostr frame from a connection.
-    pub fn frame(&self, conn: &Conn, sess: &mut Session, ip: &str, raw: &str, now_ms: i64) {
-        let notice = |m: &str| conn.send(json!(["NOTICE", m]).to_string());
-        if self.cfg.auth_required && sess.challenge.is_none() {
+    /// NIP-42: a relay that wants authentication offers its challenge as soon as a client connects.
+    pub fn challenge(&self, conn: &Conn, sess: &mut Session) {
+        if (self.cfg.auth_required || self.cfg.auth_dms) && sess.challenge.is_none() {
             let mut b = [0u8; 16];
             let _ = getrandom::fill(&mut b);
             let ch = hex(&b);
             conn.send(json!(["AUTH", ch]).to_string());
             sess.challenge = Some(ch);
         }
+    }
+
+    /// Handles one Nostr frame from a connection.
+    pub fn frame(&self, conn: &Conn, sess: &mut Session, ip: &str, raw: &str, now_ms: i64) {
+        let notice = |m: &str| conn.send(json!(["NOTICE", m]).to_string());
+        self.challenge(conn, sess);
         let Ok(Value::Array(msg)) = serde_json::from_str::<Value>(raw) else {
             return notice("error: that is not a JSON array");
         };
@@ -253,6 +313,11 @@ impl Nostr {
         if self.rate_limited(ip, now_ms) {
             return reject("rate-limited: slow down");
         }
+        if self.global_limited(now_ms) {
+            return reject(
+                "rate-limited: the relay is receiving too many events, try again in a moment",
+            );
+        }
         if raw_len > c.max_event_bytes + 512 {
             return reject("invalid: event too large");
         }
@@ -273,7 +338,7 @@ impl Nostr {
         if e.kind == AUTH_KIND {
             return reject("invalid: authentication events are not published");
         }
-        if c.auth_required && sess.authed.is_none() {
+        if c.auth_required && sess.auth().is_none() {
             return reject("auth-required: authenticate first");
         }
         {
@@ -305,6 +370,16 @@ impl Nostr {
                 match store.insert(e.clone()) {
                     Put::Stored => {
                         self.stats.stored.fetch_add(1, Ordering::Relaxed);
+                        if self.cfg.durable && self.cfg.persist {
+                            // Confirmed, and shown to subscribers, only once it is on disk (see `run_committer`).
+                            lock(&self.waiting).push(Pending {
+                                conn: conn.clone(),
+                                event: e,
+                                ok: json!(["OK", id, true, ""]).to_string().into(),
+                            });
+                            self.wake.notify_one();
+                            return;
+                        }
                     }
                     Put::Duplicate => {
                         return conn.send(
@@ -353,7 +428,9 @@ impl Nostr {
                     continue;
                 }
                 seen.push((s.conn.id, s.id.clone()));
-                if any_match(&s.filters, e) {
+                if any_match(&s.filters, e)
+                    && self.visible(e, *s.auth.read().unwrap_or_else(PoisonError::into_inner))
+                {
                     self.stats.delivered.fetch_add(1, Ordering::Relaxed);
                     s.conn.send(frame_event(&s.id, e));
                 }
@@ -426,11 +503,21 @@ impl Nostr {
         if sub.is_empty() || sub.len() > self.cfg.max_subid_len {
             return closed("invalid: bad subscription id");
         }
-        if self.cfg.auth_required && sess.authed.is_none() {
+        if self.cfg.auth_required && sess.auth().is_none() {
             return closed("auth-required: authenticate first");
         }
         if !sess.subs.contains_key(sub) && sess.subs.len() >= self.cfg.max_subs_per_conn {
             return closed("error: too many subscriptions");
+        }
+        if self.cfg.reqs_per_minute_per_conn > 0 {
+            let now_ms = now * 1000;
+            if sess.req_window.1 <= now_ms {
+                sess.req_window = (0, now_ms + 60_000);
+            }
+            sess.req_window.0 += 1;
+            if sess.req_window.0 > self.cfg.reqs_per_minute_per_conn {
+                return closed("rate-limited: too many subscriptions requested, slow down");
+            }
         }
         let filters = match self.parse_filters(msg, 2) {
             Ok(f) => f,
@@ -450,6 +537,7 @@ impl Nostr {
                         conn: conn.clone(),
                         id: id.clone(),
                         filters: filters.clone(),
+                        auth: sess.authed.clone(),
                     });
                 }
                 keys.push(key);
@@ -463,7 +551,7 @@ impl Nostr {
                     continue;
                 }
                 for e in store.query(f, now, self.cfg.max_limit) {
-                    if sent.insert(e.id) {
+                    if self.visible(&e, sess.auth()) && sent.insert(e.id) {
                         conn.send(frame_event(sub, &e));
                     }
                 }
@@ -476,13 +564,32 @@ impl Nostr {
         let Some(sub) = msg.get(1).and_then(Value::as_str) else {
             return conn.send(json!(["NOTICE", "error: COUNT needs an id"]).to_string());
         };
-        if self.cfg.auth_required && sess.authed.is_none() {
+        if self.cfg.auth_required && sess.auth().is_none() {
             return conn
                 .send(json!(["CLOSED", sub, "auth-required: authenticate first"]).to_string());
         }
         match self.parse_filters(msg, 2) {
             Ok(f) => {
-                let n = self.store.as_ref().map_or(0, |s| s.count(&f, now));
+                let n = self.store.as_ref().map_or(0, |s| {
+                    if self.cfg.auth_dms {
+                        // Count only what this connection may see.
+                        let mut seen = HashSet::new();
+                        for g in &f {
+                            let g = Filter {
+                                limit: None,
+                                ..g.clone()
+                            };
+                            for e in s.query(&g, now, usize::MAX) {
+                                if self.visible(&e, sess.auth()) {
+                                    seen.insert(e.id);
+                                }
+                            }
+                        }
+                        seen.len()
+                    } else {
+                        s.count(&f, now)
+                    }
+                });
                 conn.send(json!(["COUNT", sub, { "count": n }]).to_string());
             }
             Err(why) => conn.send(json!(["CLOSED", sub, why]).to_string()),
@@ -514,7 +621,7 @@ impl Nostr {
         {
             return fail("invalid: not a valid authentication for this connection");
         }
-        sess.authed = Some(e.pubkey);
+        *sess.authed.write().unwrap_or_else(PoisonError::into_inner) = Some(e.pubkey);
         conn.send(json!(["OK", id, true, ""]).to_string());
     }
 
@@ -536,6 +643,36 @@ impl Nostr {
             );
             store.compact(false);
             lock(&self.rates).retain(|_, r| r.1 > now * 1000);
+        }
+    }
+
+    /// Group commit: waits for events to pile up, writes them to disk in one go, then confirms them all and hands them to
+    /// subscribers. While the disk is busy more pile up, so the cost of a sync is shared by everything that arrived.
+    pub async fn run_committer(self: Arc<Self>, mut stop: tokio::sync::watch::Receiver<bool>) {
+        loop {
+            let stopping = *stop.borrow();
+            let batch: Vec<Pending> = std::mem::take(&mut *lock(&self.waiting));
+            if batch.is_empty() {
+                if stopping {
+                    return;
+                }
+                tokio::select! {
+                    () = self.wake.notified() => {}
+                    _ = stop.changed() => {}
+                }
+                continue;
+            }
+            let me = self.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Some(s) = &me.store {
+                    s.sync();
+                }
+            })
+            .await;
+            for p in batch {
+                self.fan_out(&p.event);
+                p.conn.send(p.ok);
+            }
         }
     }
 

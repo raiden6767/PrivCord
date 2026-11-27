@@ -409,3 +409,56 @@ async fn a_private_server_needs_its_token_and_says_what_it_offers() {
     assert_eq!(v["relay"]["max_blob_bytes"], 65_536);
     r.stop().await;
 }
+
+#[tokio::test]
+async fn the_header_that_carries_the_client_address_is_configurable() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = config(dir.path());
+    c.server.trust_proxy = true;
+    c.server.real_ip_header = "cf-connecting-ip".into();
+    c.relay.max_conns_per_ip = 1;
+    let (r, url) = spawn(c).await;
+    let open = |header: &'static str, ip: &str| {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut req = url.clone().into_client_request().unwrap();
+        req.headers_mut().insert(header, ip.parse().unwrap());
+        async move { connect_async(req).await.unwrap().0 }
+    };
+    let _first = open("cf-connecting-ip", "6.6.6.6").await;
+    // another visitor, as the configured header says
+    let mut second = open("cf-connecting-ip", "7.7.7.7").await;
+    second
+        .send(Message::Text(
+            put("mb", "x", "B", 60, "sig").to_string().into(),
+        ))
+        .await
+        .unwrap();
+    // x-forwarded-for is not the configured header, so it does not make a connection look like somebody else
+    let mut third = open("x-forwarded-for", "9.9.9.9").await;
+    let m = tokio::time::timeout(Duration::from_secs(3), third.next()).await;
+    // third is seen as the proxy's own address (one connection from it is allowed), so it is not refused as a duplicate
+    assert!(!matches!(m, Ok(Some(Ok(Message::Close(_))))), "{m:?}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn metrics_are_off_by_default_and_need_the_token_when_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let (r, _url) = spawn(config(dir.path())).await;
+    assert_eq!(http_get(r.addr, "/metrics", "").await.0, 404);
+    r.stop().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = config(dir.path());
+    c.server.metrics = true;
+    c.server.access_tokens = vec!["sesame".into()];
+    let (r, _url) = spawn(c).await;
+    assert_eq!(http_get(r.addr, "/metrics", "").await.0, 401);
+    let (code, body) = http_get(r.addr, "/metrics", "Authorization: Bearer sesame\r\n").await;
+    assert_eq!(code, 200);
+    assert!(
+        body.contains("privcord_put ") && body.contains("privcord_connections "),
+        "{body}"
+    );
+    r.stop().await;
+}

@@ -19,8 +19,11 @@ struct Inner {
     /// Which event currently holds a replaceable or addressable slot.
     slots: HashMap<(Id, u64, String), Id>,
     expiring: BTreeSet<Key>,
-    /// Ids that were deleted, so the same event cannot be put back. Bounded.
-    deleted: HashSet<Id>,
+    /// Events somebody asked to delete: target id -> who asked. Kept even when the target has not arrived yet, so an event
+    /// that shows up after its deletion is refused. Bounded.
+    deleted: HashMap<Id, Id>,
+    /// Addresses (author, kind, d tag) deleted up to and including a time (NIP-09 `a` tags). Bounded.
+    deleted_addrs: HashMap<(Id, u64, String), i64>,
     bytes: usize,
 }
 
@@ -116,13 +119,14 @@ impl Inner {
         Some(e)
     }
 
-    fn tombstone(&mut self, id: Id) {
-        if self.deleted.len() < MAX_TOMBSTONES {
-            self.deleted.insert(id);
+    fn tombstone(&mut self, id: Id, by: Id) {
+        if self.deleted.len() < MAX_TOMBSTONES || self.deleted.contains_key(&id) {
+            self.deleted.insert(id, by);
         }
     }
 
-    /// NIP-09: a kind 5 event removes the events it names, if they are the author's own.
+    /// NIP-09: a kind 5 event removes the events it names, if they are the author's own, and refuses them if they arrive
+    /// later. Whether the target is known yet does not matter.
     fn apply_deletion(&mut self, d: &Event) {
         for t in &d.tags {
             match (t.first().map(String::as_str), t.get(1)) {
@@ -134,8 +138,8 @@ impl Inner {
                             .is_some_and(|e| e.pubkey == d.pubkey && e.kind != 5)
                         {
                             self.remove(&id);
-                            self.tombstone(id);
                         }
+                        self.tombstone(id, d.pubkey);
                     }
                 }
                 (Some("a"), Some(addr)) => {
@@ -152,15 +156,26 @@ impl Inner {
                     if pk != d.pubkey {
                         continue;
                     }
-                    if let Some(id) = self.slots.get(&(pk, kind, dtag.to_owned())).copied() {
+                    let slot = (pk, kind, dtag.to_owned());
+                    if let Some(id) = self.slots.get(&slot).copied() {
                         if self
                             .by_id
                             .get(&id)
                             .is_some_and(|e| e.created_at <= d.created_at)
                         {
                             self.remove(&id);
-                            self.tombstone(id);
                         }
+                    }
+                    if self.deleted_addrs.len() < MAX_TOMBSTONES
+                        || self.deleted_addrs.contains_key(&slot)
+                    {
+                        let until = self
+                            .deleted_addrs
+                            .get(&slot)
+                            .copied()
+                            .unwrap_or(i64::MIN)
+                            .max(d.created_at);
+                        self.deleted_addrs.insert(slot, until);
                     }
                 }
                 _ => {}
@@ -215,8 +230,16 @@ impl Store {
         if w.by_id.contains_key(&e.id) {
             return Put::Duplicate;
         }
-        if w.deleted.contains(&e.id) {
+        if w.deleted.get(&e.id) == Some(&e.pubkey) {
             return Put::Deleted;
+        }
+        if let Some(slot) = e.replace_key() {
+            if w.deleted_addrs
+                .get(&slot)
+                .is_some_and(|until| e.created_at <= *until)
+            {
+                return Put::Deleted;
+            }
         }
         if let Some(slot) = e.replace_key() {
             if let Some(old_id) = w.slots.get(&slot).copied() {
