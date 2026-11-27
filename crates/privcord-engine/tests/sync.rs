@@ -242,8 +242,10 @@ fn phone_and_laptop_catch_up_with_each_other_without_ever_being_online_together(
     // A delete on the phone reaches the laptop.
     let second = phone.message_id("second from the phone");
     phone.core.delete_message(&second, true).unwrap();
-    phone.online(&mut relay);
-    laptop.online(&mut relay);
+    for _ in 0..6 {
+        phone.online(&mut relay);
+        laptop.online(&mut relay);
+    }
     assert!(laptop.core.snapshot().deleted.contains(&second));
     assert_eq!(
         phone.core.sync_fingerprint(),
@@ -522,8 +524,11 @@ fn a_device_linked_by_code_gets_the_history_but_never_the_account_key() {
     // What the laptop does that needs no account key still syncs back: a delete for me.
     let id = laptop.message_id("before the laptop");
     laptop.core.delete_message(&id, false).unwrap();
-    laptop.online(&mut relay);
-    phone.online(&mut relay);
+    // A deletion asks for a snapshot (so the deleted text can leave the log): give it the rounds to settle.
+    for _ in 0..6 {
+        laptop.online(&mut relay);
+        phone.online(&mut relay);
+    }
     assert!(phone.texts().is_empty(), "hidden on the phone too");
     assert_eq!(
         phone.core.sync_fingerprint(),
@@ -1674,19 +1679,13 @@ fn a_snapshot_lets_every_device_prune_and_a_device_linked_later_gets_the_whole_h
         .core
         .delete_message(&phone.message_id("old 5"), false)
         .unwrap();
-    for _ in 0..2 {
-        phone.online(&mut relay);
-        laptop.online(&mut relay);
-    }
-    assert_eq!(
-        phone.core.sync_fingerprint(),
-        laptop.core.sync_fingerprint()
-    );
+    phone.online(&mut relay); // writes what was stored into the log
     let before = phone.core.sync_log_len();
+    assert!(before > 5, "{before}");
 
-    // A snapshot; both devices fetch or hold it and say so; then both prune.
-    assert!(phone.core.make_snapshot());
-    for _ in 0..4 {
+    // The deletion asks for a snapshot by itself; both devices fetch or hold it and say so; then both prune, and the
+    // deleted message's text goes with the entries it was in.
+    for _ in 0..8 {
         phone.online(&mut relay);
         laptop.online(&mut relay);
     }
@@ -1700,6 +1699,15 @@ fn a_snapshot_lets_every_device_prune_and_a_device_linked_later_gets_the_whole_h
         phone.core.sync_fingerprint(),
         laptop.core.sync_fingerprint()
     );
+    // The deleted message's text is gone from the merged state on both devices; the others' text is still there.
+    for d in [&phone, &laptop] {
+        let dump = d.core.test_sync_state_dump();
+        assert!(!dump.contains("old 5"), "deleted text left in the state");
+        assert!(
+            dump.contains("old 4"),
+            "a message that was not deleted is kept"
+        );
+    }
 
     // The phone starts again from storage: from its snapshot, with nothing lost.
     let fp = phone.core.sync_fingerprint();

@@ -408,7 +408,31 @@ fn id_field<'a>(body: &'a Value, name: &str) -> Result<&'a str, &'static str> {
     Ok(s)
 }
 
+/// A message body without what it says or carries: the text, a file's description and the reference to its pieces.
+fn scrubbed(body: &Value) -> Value {
+    let mut v = body.clone();
+    if let Some(o) = v.as_object_mut() {
+        if o.contains_key("text") {
+            o.insert("text".into(), Value::String(String::new()));
+        }
+        o.remove("file");
+        o.remove("media");
+    }
+    v
+}
+
 impl State {
+    /// A deleted or hidden message keeps its place (so everything that refers to it still lines up) but not its content,
+    /// and nothing it was edited to.
+    fn scrub(&mut self, id: &str) {
+        if let Some(rec) = self.messages.get_mut(id) {
+            if let Some(b) = rec.body.open() {
+                rec.body = Sealed::new(&scrubbed(&b));
+            }
+        }
+        self.edits.remove(id);
+    }
+
     /// Applies one entry. `Err` means the entry is quarantined (it changed nothing).
     fn apply(&mut self, e: &Entry, hash: &str) -> Result<(), &'static str> {
         let order = Order {
@@ -421,10 +445,13 @@ impl State {
             kind::MESSAGE => {
                 let id = id_field(b, "id")?.to_owned();
                 id_field(b, "conv")?;
+                // Once deleted or hidden, what it said and carried is not kept (the entry itself stays in the log until a
+                // snapshot lets it go).
+                let gone = self.deleted.contains(&id) || self.hidden.contains(&id);
                 let rec = MessageRec {
                     order,
                     hash: hash.to_owned(),
-                    body: Sealed::new(b),
+                    body: Sealed::new(&if gone { scrubbed(b) } else { b.clone() }),
                 };
                 // The same id written twice (only a broken or hostile device does that): keep one, the same one
                 // everywhere.
@@ -437,6 +464,9 @@ impl State {
             }
             kind::EDIT => {
                 let target = id_field(b, "target")?.to_owned();
+                if self.deleted.contains(&target) || self.hidden.contains(&target) {
+                    return Ok(());
+                }
                 let text = b
                     .get("text")
                     .and_then(Value::as_str)
@@ -445,13 +475,17 @@ impl State {
                 put_lww(&mut self.edits, target, lww(e, Sealed::new(&text)));
             }
             kind::DELETE => {
-                self.deleted.insert(id_field(b, "target")?.to_owned());
+                let target = id_field(b, "target")?.to_owned();
+                self.scrub(&target);
+                self.deleted.insert(target);
             }
             kind::SEEN => {
                 self.seen.insert(id_field(b, "target")?.to_owned());
             }
             kind::HIDE => {
-                self.hidden.insert(id_field(b, "target")?.to_owned());
+                let target = id_field(b, "target")?.to_owned();
+                self.scrub(&target);
+                self.hidden.insert(target);
             }
             kind::REACT => {
                 let target = id_field(b, "target")?.to_owned();
@@ -1403,6 +1437,13 @@ impl Replica {
     pub fn entry_count(&self) -> usize {
         self.log.len()
     }
+
+    /// Whether the log still holds a deletion. The entries it deletes carry their text until a snapshot lets them go.
+    pub fn has_deletions(&self) -> bool {
+        self.log
+            .values()
+            .any(|e| e.kind == kind::DELETE || e.kind == kind::HIDE)
+    }
 }
 
 #[cfg(test)]
@@ -1765,6 +1806,47 @@ mod tests {
         assert_eq!(r.receive(delete, 9), Outcome::Applied);
         assert!(r.state().conversation("c").is_empty());
         assert!(r.state().reactions("m").is_empty());
+    }
+
+    #[test]
+    fn a_deleted_message_keeps_no_text_and_every_order_agrees() {
+        let (_, mut ds, list) = account(2);
+        let msg = raw(
+            &mut ds[0],
+            kind::MESSAGE,
+            json!({"id": "m", "conv": "c", "text": "secret", "file": {"name": "a.png"}, "media": {"k": 1}}),
+            1,
+        );
+        let edit = raw(
+            &mut ds[0],
+            kind::EDIT,
+            json!({"target": "m", "text": "edited secret"}),
+            2,
+        );
+        let hide = raw(&mut ds[1], kind::HIDE, json!({"target": "m"}), 3);
+        let mut texts = Vec::new();
+        let mut prints = Vec::new();
+        for order in [[0usize, 1, 2], [2, 0, 1], [1, 2, 0], [2, 1, 0]] {
+            let all = [msg.clone(), edit.clone(), hide.clone()];
+            let mut r = Replica::new(list.clone());
+            for i in order {
+                r.receive(all[i].clone(), 9);
+            }
+            let body = r.state().message_bodies().next().map(|(_, b)| b);
+            texts.push(body.clone());
+            prints.push(r.state().fingerprint());
+            let shown = serde_json::to_string(r.state()).unwrap_or_default();
+            assert!(!shown.contains("secret"), "text left in the state: {shown}");
+            assert!(!shown.contains("a.png"), "file left in the state");
+        }
+        assert!(
+            prints.windows(2).all(|w| w[0] == w[1]),
+            "orders disagree: {prints:?}"
+        );
+        assert!(
+            texts.windows(2).all(|w| w[0] == w[1]),
+            "bodies disagree: {texts:?}"
+        );
     }
 
     #[test]
