@@ -21,6 +21,8 @@ use std::sync::Arc;
 #[derive(Default)]
 struct Relay {
     boxes: HashMap<String, Vec<String>>,
+    /// While set, what is posted is lost on the way (a dropped connection).
+    lose: bool,
 }
 
 struct Device {
@@ -72,7 +74,9 @@ impl Device {
                         self.subscribed.insert(m);
                     }
                     SignalOp::Put { mailbox, blob, .. } => {
-                        relay.boxes.entry(mailbox).or_default().push(blob)
+                        if !relay.lose {
+                            relay.boxes.entry(mailbox).or_default().push(blob)
+                        }
                     }
                     _ => {}
                 }
@@ -2946,4 +2950,105 @@ fn a_channel_joined_before_it_travelled_reaches_a_laptop_linked_later() {
         "{:?}",
         laptop.core.snapshot().channels
     );
+}
+
+/// Two friends who only ever reach each other through a relay, while their apps are closed and opened, one of them is
+/// away, and some of what they post to the relay is lost: every message still arrives, once. Replayed with many seeds.
+#[test]
+fn messages_between_friends_arrive_once_whatever_is_closed_away_or_lost() {
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+    for seed in 1..=8u64 {
+        let clock = FakeClock::at(1_700_000_000_000);
+        let mut relay = Relay::default();
+        let (sa, ka) = (MemoryStorage::new(), MemorySecureStore::new());
+        let (sb, kb) = (MemoryStorage::new(), MemorySecureStore::new());
+        let mut a = Device::on("a0", &clock, sa.clone(), ka.clone());
+        let mut b = Device::on("b0", &clock, sb.clone(), kb.clone());
+        a.core.create_identity().unwrap();
+        b.core.create_identity().unwrap();
+        let (a_uid, b_uid) = (
+            a.core.own_uid().unwrap().clone(),
+            b.core.own_uid().unwrap().clone(),
+        );
+        a.core
+            .add_contact(&b.core.own_card(Some("B")).unwrap(), ContactTrust::Verified)
+            .unwrap();
+        b.core
+            .add_contact(&a.core.own_card(Some("A")).unwrap(), ContactTrust::Verified)
+            .unwrap();
+        a.core.set_store_forward(true).unwrap();
+        b.core.set_store_forward(true).unwrap();
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let (mut sent_by_a, mut sent_by_b) = (Vec::new(), Vec::new());
+        let mut restarts = 0;
+        for step in 0..45 {
+            match rng.below(8) {
+                0 | 1 => {
+                    let text = format!("a{step}");
+                    if a.core.send_message(&b_uid, &text, None).is_ok() {
+                        sent_by_a.push(text);
+                    }
+                }
+                2 | 3 => {
+                    let text = format!("b{step}");
+                    if b.core.send_message(&a_uid, &text, None).is_ok() {
+                        sent_by_b.push(text);
+                    }
+                }
+                4 => {
+                    restarts += 1;
+                    drop(a);
+                    a = Device::on(&format!("a{restarts}"), &clock, sa.clone(), ka.clone());
+                }
+                5 => {
+                    restarts += 1;
+                    drop(b);
+                    b = Device::on(&format!("b{restarts}"), &clock, sb.clone(), kb.clone());
+                }
+                _ => {}
+            }
+            // Who is online this moment (one of them is often away), and posts that are lost now and then.
+            relay.lose = rng.below(5) == 0;
+            if rng.below(3) != 0 {
+                a.online(&mut relay);
+            }
+            if rng.below(3) != 0 {
+                b.online(&mut relay);
+            }
+            relay.lose = false;
+            clock.advance(1_000 + rng.below(40_000) as i64);
+        }
+        // Both settle: time passes (retry timers), both are online and stay online.
+        for _ in 0..30 {
+            clock.advance(30_000);
+            a.online(&mut relay);
+            b.online(&mut relay);
+        }
+        let (got_by_b, got_by_a) = (b.texts(), a.texts());
+        for t in &sent_by_a {
+            assert_eq!(
+                got_by_b.iter().filter(|x| *x == t).count(),
+                1,
+                "seed {seed}: b should have {t} exactly once; has {got_by_b:?}"
+            );
+        }
+        for t in &sent_by_b {
+            assert_eq!(
+                got_by_a.iter().filter(|x| *x == t).count(),
+                1,
+                "seed {seed}: a should have {t} exactly once; has {got_by_a:?}"
+            );
+        }
+    }
 }

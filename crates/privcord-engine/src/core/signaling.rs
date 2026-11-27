@@ -24,7 +24,6 @@ use privcord_domain::{
     ConversationId, MessageId, UserId,
 };
 use serde_json::{json, Value};
-use std::collections::HashSet;
 
 const RELAY_TTL_SEC: u32 = 7 * 24 * 3600;
 const LIVE_TTL_SEC: u32 = 120;
@@ -37,13 +36,26 @@ const MESH_AFTER_MS: i64 = 10_000;
 /// minutes for text, three tries for a file (each is the whole file again, through other people's links).
 const MESH_MAX_ROUNDS_TEXT: u32 = 20;
 const MESH_MAX_ROUNDS_FILE: u32 = 3;
+/// How long a message handed to a relay waits for its receipt before it is posted again (the wait after the first post,
+/// the second, and so on; after the last one the relay's copy has outlived its week).
+const RELAY_REPOST_AFTER_MS: [i64; 8] = [
+    60_000,
+    5 * 60_000,
+    30 * 60_000,
+    2 * 3_600_000,
+    6 * 3_600_000,
+    6 * 3_600_000,
+    6 * 3_600_000,
+    6 * 3_600_000,
+];
 
 #[derive(Default)]
 pub(super) struct SealedState {
     /// The mailboxes we listen on: the account's (with its key) and this device's (once the account has several).
     subscribed: Vec<String>,
-    /// (message, recipient) pairs already handed to a signaling service.
-    relayed: HashSet<(MessageId, UserId)>,
+    /// (message, recipient) pairs already handed to a signaling service, when last and how many times: until their receipt
+    /// arrives the message is posted again after a growing wait (a post can be lost without anyone being told).
+    relayed: std::collections::HashMap<(MessageId, UserId), (i64, usize)>,
     /// (message, member) pairs handed to other members to pass on, and when.
     /// (message, member) pairs handed to other members to pass on: when last, and how many rounds so far.
     meshed: std::collections::HashMap<(MessageId, UserId), (i64, u32)>,
@@ -620,15 +632,22 @@ impl Core {
         {
             return;
         }
+        let now = self.now();
         let due: Vec<_> = self
             .outbox
             .iter()
             .filter(|o| {
                 !self.person_ready(&o.recipient)
-                    && !self
+                    && match self
                         .sealed
                         .relayed
-                        .contains(&(o.message_id.clone(), o.recipient.clone()))
+                        .get(&(o.message_id.clone(), o.recipient.clone()))
+                    {
+                        None => true,
+                        Some((at, tries)) => RELAY_REPOST_AFTER_MS
+                            .get(tries.saturating_sub(1))
+                            .is_some_and(|wait| now - at >= *wait),
+                    }
             })
             .cloned()
             .collect();
@@ -647,7 +666,8 @@ impl Core {
             }
             let was_queued = row.message.delivery_state == DeliveryState::Queued;
             let key = (entry.message_id.clone(), entry.recipient.clone());
-            self.sealed.relayed.insert(key.clone());
+            let tries = self.sealed.relayed.get(&key).map_or(0, |(_, t)| *t);
+            let kept = self.sealed.relayed.insert(key.clone(), (now, tries + 1));
             // A copy for each of their devices: the first receipt from any of them counts.
             let mut put = false;
             for addr in self.addresses_of(&entry.recipient) {
@@ -656,7 +676,11 @@ impl Core {
                     .is_ok();
             }
             if !put {
-                self.sealed.relayed.remove(&key);
+                // Not handed over at all: as if never tried.
+                match kept {
+                    Some(before) => self.sealed.relayed.insert(key, before),
+                    None => self.sealed.relayed.remove(&key),
+                };
                 continue;
             }
             if was_queued
