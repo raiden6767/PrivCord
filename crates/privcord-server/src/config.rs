@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub admin: AdminConfig,
     pub tls: TlsConfig,
     pub nostr: NostrConfig,
     pub server: ServerConfig,
@@ -142,7 +143,9 @@ impl Config {
 
     /// Whether anything here needs a certificate.
     pub fn wants_tls(&self) -> bool {
-        !self.tls.https_listen.is_empty() || (self.turn.enabled && !self.turn.tls_listen.is_empty())
+        !self.tls.https_listen.is_empty()
+            || (self.turn.enabled && !self.turn.tls_listen.is_empty())
+            || (self.admin.enabled && self.admin.tls)
     }
 
     /// What would stop this from working, in words (empty: fine).
@@ -166,6 +169,12 @@ impl Config {
             if k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit()) {
                 out.push(format!("nostr key \"{k}\" is not 64 hex characters"));
             }
+        }
+        if self.admin.enabled && self.admin.listen.parse::<std::net::SocketAddr>().is_err() {
+            out.push(format!(
+                "admin.listen \"{}\" is not an address like 127.0.0.1:8788",
+                self.admin.listen
+            ));
         }
         if self.wants_tls() && self.tls.cert_file.is_empty() && !self.tls.self_signed {
             out.push("TLS is asked for (tls.https_listen or turn.tls_listen) but there is no certificate: set tls.cert_file and tls.key_file, or tls.self_signed = true to try things out".into());
@@ -305,4 +314,26 @@ pub struct TlsConfig {
     pub domain: String,
     /// Serve the relay (and admin panel) over TLS here, for example `0.0.0.0:443`. The plain listener stays as it is.
     pub https_listen: String,
+}
+
+/// The admin panel: a web page and API for managing this server, on its own listener so it can sit on localhost or a
+/// private network (a VPN such as Tailscale) and never on the public internet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdminConfig {
+    pub enabled: bool,
+    pub listen: String,
+    /// Serve it over TLS (needs `[tls]`). Without it, keep `listen` on localhost or a private network: admin tokens travel
+    /// in the clear over plain HTTP.
+    pub tls: bool,
+}
+
+impl Default for AdminConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: "127.0.0.1:8788".into(),
+            tls: false,
+        }
+    }
 }

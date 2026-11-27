@@ -29,8 +29,10 @@ pub struct App {
     pub relay: Option<Arc<Relay>>,
     /// `Some((secret, urls))` when the TURN role is on.
     pub turn: Option<(Vec<u8>, Vec<String>)>,
-    /// SHA-256 of each accepted token (empty: open to anyone).
-    tokens: Vec<[u8; 32]>,
+    /// SHA-256 of each accepted token (empty: open to anyone): the ones in the settings file plus those the admin panel made.
+    tokens: std::sync::RwLock<Vec<[u8; 32]>>,
+    base_tokens: Vec<[u8; 32]>,
+    pub started: std::time::Instant,
     next_conn: AtomicU64,
     turn_asks: Mutex<HashMap<String, (u32, u64)>>,
 }
@@ -41,7 +43,7 @@ impl App {
         relay: Option<Arc<Relay>>,
         turn: Option<(Vec<u8>, Vec<String>)>,
     ) -> Self {
-        let tokens = cfg
+        let tokens: Vec<[u8; 32]> = cfg
             .server
             .access_tokens
             .iter()
@@ -51,14 +53,39 @@ impl App {
             cfg,
             relay,
             turn,
-            tokens,
+            tokens: std::sync::RwLock::new(tokens.clone()),
+            base_tokens: tokens,
+            started: std::time::Instant::now(),
             next_conn: AtomicU64::new(1),
             turn_asks: Mutex::new(HashMap::new()),
         }
     }
 
+    /// Replaces the tokens made in the admin panel (the ones from the settings file always stay).
+    pub fn set_extra_tokens(&self, extra: &[[u8; 32]]) {
+        let mut all = self.base_tokens.clone();
+        all.extend_from_slice(extra);
+        *self
+            .tokens
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = all;
+    }
+
+    /// Whether clients must present a token.
+    pub fn requires_token(&self) -> bool {
+        !self
+            .tokens
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    }
+
     fn allowed(&self, headers: &HeaderMap, query: &HashMap<String, String>) -> bool {
-        if self.tokens.is_empty() {
+        let tokens = self
+            .tokens
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if tokens.is_empty() {
             return true;
         }
         let bearer = headers
@@ -70,7 +97,7 @@ impl App {
             .unwrap_or("");
         let hash: [u8; 32] = Sha256::digest(presented.as_bytes()).into();
         // Compared as hashes, over every accepted token, without stopping early.
-        self.tokens.iter().fold(false, |ok, t| ok | ct_eq(t, &hash))
+        tokens.iter().fold(false, |ok, t| ok | ct_eq(t, &hash))
     }
 }
 
@@ -176,7 +203,7 @@ async fn about(State(app): State<Arc<App>>) -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "roles": roles,
         "admin": c.server.admin_contact,
-        "requires_token": !app.tokens.is_empty(),
+        "requires_token": app.requires_token(),
         "relay": app.relay.as_ref().map(|r| json!({
             "store_and_forward": r.store_and_forward(),
             "max_blob_bytes": MAX_BLOB,

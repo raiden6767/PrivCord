@@ -163,6 +163,12 @@ impl Nostr {
         *self.policy.write().unwrap_or_else(PoisonError::into_inner) = p;
     }
 
+    /// Moderation: removes the stored event with this id (hex) and refuses it from now on. Whether it was there.
+    pub fn ban_event(&self, id_hex: &str) -> Option<bool> {
+        let id = unhex::<32>(id_hex)?;
+        Some(self.store.as_ref().is_some_and(|s| s.ban_event(&id)))
+    }
+
     pub fn store(&self) -> Option<&Store> {
         self.store.as_ref()
     }

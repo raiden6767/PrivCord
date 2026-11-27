@@ -2,6 +2,7 @@
 //!
 //! The server carries sealed messages and cannot read them. Whoever runs it is responsible for it.
 
+pub mod admin;
 pub mod config;
 pub mod nat;
 pub mod net;
@@ -30,6 +31,8 @@ pub struct Running {
     turn_ports: Option<(Option<u16>, Option<u16>)>,
     tls_addr: Option<SocketAddr>,
     tls: Option<Arc<tls::Tls>>,
+    admin_addr: Option<SocketAddr>,
+    admin_token: Option<String>,
 }
 
 impl Running {
@@ -55,6 +58,16 @@ impl Running {
     /// The TCP and TLS ports of the TURN role, when they are on.
     pub fn turn_stream_ports(&self) -> (Option<u16>, Option<u16>) {
         self.turn_ports.unwrap_or((None, None))
+    }
+
+    /// Where the admin panel listens, if it is on.
+    pub fn admin_addr(&self) -> Option<SocketAddr> {
+        self.admin_addr
+    }
+
+    /// The token of the owner made on the very first start (only then): it cannot be shown again.
+    pub fn admin_first_token(&self) -> Option<&str> {
+        self.admin_token.as_deref()
     }
 
     pub fn turn_port(&self) -> Option<u16> {
@@ -154,6 +167,8 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     #[cfg(not(feature = "turn"))]
     let turn_info = None;
     let https_listen = cfg.tls.https_listen.clone();
+    let admin_cfg = cfg.admin.clone();
+    let data_dir = cfg.server.data_dir.clone();
     let app = Arc::new(net::App::new(cfg, relay.clone(), turn_info));
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
     let router = net::router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
@@ -169,7 +184,8 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             let addr = axum::serve::Listener::local_addr(&listener).map_err(|e| e.to_string())?;
             // (The no-op tap is what lets axum read the peer address from this listener.)
             let listener = listener.tap_io(|_| {});
-            let routes = net::router(app).into_make_service_with_connect_info::<SocketAddr>();
+            let routes =
+                net::router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
             let mut stop_tls = stopped.clone();
             let task = tokio::spawn(async move {
                 let _ = axum::serve(listener, routes)
@@ -181,6 +197,53 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             (Some(addr), Some(task))
         }
         _ => (None, None),
+    };
+    // The admin panel, on its own listener.
+    let (admin_addr, admin_server, admin_token) = if admin_cfg.enabled {
+        let (state, first) = admin::AdminState::open(
+            &data_dir,
+            app.clone(),
+            tls.as_ref().is_some_and(|t| t.self_signed),
+        )?;
+        let tcp = tokio::net::TcpListener::bind(&admin_cfg.listen)
+            .await
+            .map_err(|e| {
+                format!(
+                    "could not listen for the admin panel on {}: {e}",
+                    admin_cfg.listen
+                )
+            })?;
+        let bound = tcp.local_addr().map_err(|e| e.to_string())?;
+        let routes = admin::router(state).into_make_service_with_connect_info::<SocketAddr>();
+        let mut stop_admin = stopped.clone();
+        let shutdown = async move {
+            let _ = stop_admin.wait_for(|s| *s).await;
+        };
+        let task = match (admin_cfg.tls, &tls) {
+            (true, Some(t)) => {
+                let listener = tls::TlsListener::new(tcp, t.https.clone())
+                    .map_err(|e| e.to_string())?
+                    .tap_io(|_| {});
+                tokio::spawn(async move {
+                    let _ = axum::serve(listener, routes)
+                        .with_graceful_shutdown(shutdown)
+                        .await;
+                })
+            }
+            _ => {
+                let listener = tcp.tap_io(|c| {
+                    let _ = c.set_nodelay(true);
+                });
+                tokio::spawn(async move {
+                    let _ = axum::serve(listener, routes)
+                        .with_graceful_shutdown(shutdown)
+                        .await;
+                })
+            }
+        };
+        (Some(bound), Some(task), first)
+    } else {
+        (None, None, None)
     };
     // A renewed certificate file is picked up without a restart.
     let cert_watch = tls.clone().map(|t| {
@@ -238,6 +301,9 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         if let Some(t) = tls_server {
             let _ = t.await;
         }
+        if let Some(t) = admin_server {
+            let _ = t.await;
+        }
         if let Some(w) = cert_watch {
             let _ = w.await;
         }
@@ -263,6 +329,8 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         turn_ports,
         tls_addr,
         tls,
+        admin_addr,
+        admin_token,
     })
 }
 

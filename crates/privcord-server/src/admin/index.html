@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<script src="/admin/theme.js"></script>
+<title>PrivCord server admin</title>
+<link rel="stylesheet" href="/admin/app.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 16l5 5 9-10' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip" href="#view">Skip to content</a>
+<header class="top">
+  <div class="brand"><span class="logo" aria-hidden="true"></span><h1>PrivCord server</h1></div>
+  <div class="who" id="who" hidden>
+    <span id="whoText"></span>
+    <button class="ghost" id="theme" type="button">Dark theme</button>
+    <button class="ghost" id="signout" type="button">Sign out</button>
+  </div>
+</header>
+
+<main>
+  <section id="login" class="card narrow" aria-labelledby="loginTitle">
+    <h2 id="loginTitle">Sign in</h2>
+    <p class="muted">Paste your admin token. It was printed once when the server first started, or made with <code>privcord-server admin-token</code>.</p>
+    <form id="loginForm" autocomplete="off">
+      <label for="token">Admin token</label>
+      <input id="token" name="token" type="password" spellcheck="false" autocapitalize="off" autocomplete="off" required>
+      <p id="loginError" class="error" role="alert" hidden></p>
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <nav aria-label="Sections"><div class="tabs" role="tablist" id="tabs"></div></nav>
+    <div id="status" class="sr-status" role="status" aria-live="polite"></div>
+    <div id="view" role="tabpanel" tabindex="-1"></div>
+  </div>
+</main>
+<script src="/admin/app.js"></script>
+</body>
+</html>

@@ -25,6 +25,8 @@ struct Inner {
     deleted: HashSet<(Id, Id)>,
     /// Addresses (author, kind, d tag) deleted up to and including a time (NIP-09 `a` tags). Bounded.
     deleted_addrs: HashMap<(Id, u64, String), i64>,
+    /// Events an administrator removed: refused whoever publishes them. Bounded.
+    banned: HashSet<Id>,
     bytes: usize,
 }
 
@@ -231,7 +233,7 @@ impl Store {
         if w.by_id.contains_key(&e.id) {
             return Put::Duplicate;
         }
-        if w.deleted.contains(&(e.id, e.pubkey)) {
+        if w.banned.contains(&e.id) || w.deleted.contains(&(e.id, e.pubkey)) {
             return Put::Deleted;
         }
         if let Some(slot) = e.replace_key() {
@@ -281,6 +283,16 @@ impl Store {
         if let Some(f) = &self.log {
             let _ = lock(f).sync_data();
         }
+    }
+
+    /// An administrator removes an event for good (moderation): it goes, and nobody can publish it again.
+    pub fn ban_event(&self, id: &Id) -> bool {
+        let mut w = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        let had = w.remove(id).is_some();
+        if w.banned.len() < MAX_TOMBSTONES {
+            w.banned.insert(*id);
+        }
+        had
     }
 
     pub fn len(&self) -> usize {

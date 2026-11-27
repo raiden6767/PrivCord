@@ -36,6 +36,15 @@ enum Cmd {
     },
     /// Check this machine and network for what would stop the server working.
     Doctor,
+    /// Make an admin token for the admin panel (works while the server runs).
+    AdminToken {
+        /// A name for this admin.
+        #[arg(long, default_value = "admin")]
+        name: String,
+        /// owner (everything), moderator (rules, tokens, remove events) or viewer (look only).
+        #[arg(long, default_value = "owner")]
+        role: String,
+    },
 }
 
 const TEMPLATE: &str = r#"# PrivCord server settings. Whoever runs this server is responsible for it and for what it is used for.
@@ -70,6 +79,11 @@ max_events = 1000000
 # allowed_kinds = []
 # min_pow = 0                   # NIP-13 difficulty (bits) required to publish
 # auth_required = false         # NIP-42: clients must prove who they are first
+
+[admin]                         # a web page and API to manage the server
+enabled = false
+listen = "127.0.0.1:8788"       # keep this on localhost or a private network (a VPN such as Tailscale), not the open internet
+# tls = false                   # serve it over TLS (needs [tls]); otherwise tokens travel unencrypted
 
 [tls]                           # needed for wss://, the admin panel over https, and TURN over TLS
 # cert_file = "/etc/letsencrypt/live/example.org/fullchain.pem"   # read again when it changes (renewals need no restart)
@@ -132,6 +146,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Init { turn } => init(&cli.config, turn),
         Cmd::Serve => rt.block_on(serve(&cli.config)),
         Cmd::Doctor => rt.block_on(doctor(&cli.config)),
+        Cmd::AdminToken { name, role } => admin_token(&cli.config, &name, &role),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -171,6 +186,24 @@ fn load(path: &std::path::Path) -> Result<Config, String> {
     }
 }
 
+fn admin_token(path: &std::path::Path, name: &str, role: &str) -> Result<(), String> {
+    let cfg = load(path)?;
+    let role = match role {
+        "owner" => privcord_server::admin::Role::Owner,
+        "moderator" => privcord_server::admin::Role::Moderator,
+        "viewer" => privcord_server::admin::Role::Viewer,
+        other => {
+            return Err(format!(
+                "role must be owner, moderator or viewer, not \"{other}\""
+            ))
+        }
+    };
+    let token =
+        privcord_server::admin::AdminState::add_admin_offline(&cfg.server.data_dir, name, role)?;
+    println!("admin token for {name} ({role:?}), shown once, keep it safe:\n{token}");
+    Ok(())
+}
+
 async fn serve(path: &std::path::Path) -> Result<(), String> {
     let cfg = load(path)?;
     let (relay, turn) = (cfg.relay.enabled, cfg.turn.enabled);
@@ -180,6 +213,12 @@ async fn serve(path: &std::path::Path) -> Result<(), String> {
         env!("CARGO_PKG_VERSION"),
         running.addr
     );
+    if let Some(a) = running.admin_addr() {
+        println!("admin panel: http://{a}/admin");
+        if let Some(t) = running.admin_first_token() {
+            println!("admin token (shown only now, save it): {t}");
+        }
+    }
     tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;
     running.stop().await;
     Ok(())
