@@ -253,7 +253,7 @@ impl Nostr {
             "description": c.description,
             "contact": contact,
             "pubkey": c.admin_pubkey,
-            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45],
+            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45, 50, 62, 70],
             "software": "https://github.com/raiden6767/privcord",
             "version": env!("CARGO_PKG_VERSION"),
             "limitation": {
@@ -322,7 +322,9 @@ impl Nostr {
 
     /// NIP-42: a relay that wants authentication offers its challenge as soon as a client connects.
     pub fn challenge(&self, conn: &Conn, sess: &mut Session) {
-        if (self.cfg.auth_required || self.cfg.auth_dms) && sess.challenge.is_none() {
+        if (self.cfg.auth_required || self.cfg.auth_dms || !self.cfg.relay_url.is_empty())
+            && sess.challenge.is_none()
+        {
             let mut b = [0u8; 16];
             let _ = getrandom::fill(&mut b);
             let ch = hex(&b);
@@ -407,6 +409,27 @@ impl Nostr {
         if c.auth_required && sess.auth().is_none() {
             return reject("auth-required: authenticate first");
         }
+        // NIP-70: a protected event (a lone "-" tag) is only taken from its own author, signed in (NIP-42).
+        if e.tags
+            .iter()
+            .any(|t| t.len() == 1 && t.first().is_some_and(|n| n == "-"))
+            && sess.auth() != Some(e.pubkey)
+        {
+            return reject(
+                "auth-required: this event is protected, only its author may publish it (authenticate first)",
+            );
+        }
+        // NIP-62: a request to vanish names this relay, or all relays.
+        if e.kind == 62
+            && !e.tags.iter().any(|t| {
+                t.first().is_some_and(|n| n == "relay")
+                    && t.get(1).is_some_and(|v| {
+                        v == "ALL_RELAYS" || relay_matches(Some(v.as_str()), &c.relay_url)
+                    })
+            })
+        {
+            return reject("invalid: this request to vanish is not addressed to this relay");
+        }
         {
             let p = self.policy.read().unwrap_or_else(PoisonError::into_inner);
             if p.blocked_pubkeys.contains(&e.pubkey) || p.blocked_kinds.contains(&e.kind) {
@@ -461,6 +484,7 @@ impl Nostr {
                     }
                     Put::Deleted => return reject("blocked: this event was deleted"),
                     Put::Full => return reject("blocked: this relay's storage is full"),
+                    Put::Failed => return reject("error: could not write the event to disk"),
                 }
             }
         }
@@ -744,15 +768,22 @@ impl Nostr {
                 continue;
             }
             let me = self.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                if let Some(s) = &me.store {
-                    s.sync();
-                }
-            })
-            .await;
+            // False when the disk refused the sync: nothing in this batch is confirmed as safe.
+            let synced =
+                tokio::task::spawn_blocking(move || me.store.as_ref().is_none_or(|s| s.sync()))
+                    .await
+                    .unwrap_or(false);
             for p in batch {
-                self.fan_out(&p.event);
-                p.conn.send(p.ok);
+                if synced {
+                    self.fan_out(&p.event);
+                    p.conn.send(p.ok);
+                } else {
+                    let id = hex(&p.event.id);
+                    p.conn.send(
+                        json!(["OK", id, false, "error: could not write the event to disk"])
+                            .to_string(),
+                    );
+                }
             }
         }
     }

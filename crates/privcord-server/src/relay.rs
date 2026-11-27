@@ -498,6 +498,9 @@ impl Relay {
         if let Some(n) = &self.nostr {
             n.sweep(now / 1000);
         }
+        if let Some(store) = &self.store {
+            lock(store).sync();
+        }
         for shard in &self.shards {
             let mut s = lock(shard);
             let mut freed = 0usize;

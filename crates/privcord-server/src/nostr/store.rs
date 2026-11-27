@@ -27,6 +27,8 @@ struct Inner {
     deleted_addrs: HashMap<(Id, u64, String), i64>,
     /// Events an administrator removed: refused whoever publishes them. Bounded.
     banned: HashSet<Id>,
+    /// NIP-62: an author asked to be forgotten up to a time: what they published before is gone and refused. Bounded.
+    vanished: HashMap<Id, i64>,
     bytes: usize,
 }
 
@@ -39,6 +41,8 @@ pub enum Put {
     Deleted,
     /// The store is at its size limit and this event alone is too big to keep.
     Full,
+    /// The disk refused the write (full, or failing): the event is not kept, so it is not confirmed either.
+    Failed,
 }
 
 pub struct Store {
@@ -93,6 +97,37 @@ impl Inner {
         }
         self.bytes += e.size();
         self.by_id.insert(e.id, e);
+    }
+
+    /// NIP-62 request to vanish: everything the author published up to now goes, and so do the gift wraps (kind 1059) sent
+    /// to them; older events of theirs that arrive later are refused.
+    fn vanish(&mut self, req: &Event) {
+        if self.vanished.len() < MAX_TOMBSTONES {
+            let t = self.vanished.entry(req.pubkey).or_insert(0);
+            *t = (*t).max(req.created_at);
+        }
+        let mut gone: Vec<Id> = self
+            .by_author
+            .get(&req.pubkey)
+            .map(|s| {
+                s.iter()
+                    .filter(|k| k.0 <= req.created_at)
+                    .map(|k| k.1)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let to = ('p', super::event::hex(&req.pubkey));
+        if let Some(s) = self.by_tag.get(&to) {
+            gone.extend(
+                s.iter()
+                    .filter(|k| k.0 <= req.created_at)
+                    .map(|k| k.1)
+                    .filter(|id| self.by_id.get(id).is_some_and(|e| e.kind == 1059)),
+            );
+        }
+        for id in gone {
+            self.remove(&id);
+        }
     }
 
     fn remove(&mut self, id: &Id) -> Option<Arc<Event>> {
@@ -214,6 +249,15 @@ impl Store {
         if let Some(dir) = dir {
             crate::fsutil::create_private_dir(dir)?;
             let path = dir.join("nostr-events.jsonl");
+            // A crash can leave half a line at the end: cut it, or the next event would be glued to it and lost.
+            let cut = crate::fsutil::trim_torn_tail(&path)
+                .map_err(|e| format!("could not check {}: {e}", path.display()))?;
+            if cut > 0 {
+                eprintln!(
+                    "privcord-server: cut {cut} bytes of a half-written last line from {}",
+                    path.display()
+                );
+            }
             if let Ok(text) = std::fs::read_to_string(&path) {
                 let mut n = 0;
                 for line in text.lines() {
@@ -250,6 +294,13 @@ impl Store {
         if w.banned.contains(&e.id) || w.deleted.contains(&(e.id, e.pubkey)) {
             return Put::Deleted;
         }
+        if e.kind != 62
+            && w.vanished
+                .get(&e.pubkey)
+                .is_some_and(|t| e.created_at <= *t)
+        {
+            return Put::Deleted;
+        }
         if let Some(slot) = e.replace_key() {
             if w.deleted_addrs
                 .get(&slot)
@@ -273,6 +324,9 @@ impl Store {
         }
         if e.kind == 5 {
             w.apply_deletion(&e);
+        }
+        if e.kind == 62 {
+            w.vanish(&e);
         }
         w.add(e.clone());
         if self.max_bytes > 0 && w.bytes > self.max_bytes {
@@ -302,7 +356,21 @@ impl Store {
             if let Some(f) = &self.log {
                 let mut line = e.json.to_string();
                 line.push('\n');
-                let _ = lock(f).write_all(line.as_bytes());
+                let mut file = lock(f);
+                let before = file.metadata().map(|m| m.len()).ok();
+                if file.write_all(line.as_bytes()).is_err() {
+                    // Whatever part of the line reached the file is cut off again, and the event is not kept: the
+                    // publisher is told, instead of being promised something that is not on disk.
+                    if let Some(len) = before {
+                        let _ = file.set_len(len);
+                    }
+                    drop(file);
+                    self.inner
+                        .write()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(&e.id);
+                    return Put::Failed;
+                }
                 self.lines
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
@@ -315,10 +383,10 @@ impl Store {
     }
 
     /// Asks the disk to keep what has been written so far (a power cut loses at most what came after the last call).
-    pub fn sync(&self) {
-        if let Some(f) = &self.log {
-            let _ = lock(f).sync_data();
-        }
+    pub fn sync(&self) -> bool {
+        self.log
+            .as_ref()
+            .is_none_or(|f| lock(f).sync_data().is_ok())
     }
 
     /// An administrator removes an event for good (moderation): it goes, and nobody can publish it again.
@@ -524,8 +592,9 @@ impl Store {
                 text.push('\n');
             }
         }
-        let tmp = path.with_extension("tmp");
-        if std::fs::write(&tmp, &text).is_ok() && std::fs::rename(&tmp, path).is_ok() {
+        // Written to a temporary file, synced, renamed over the log, and the folder synced: a power cut leaves the old log or
+        // the new one, never a half-written file.
+        if crate::fsutil::write_private_atomic(path, text.as_bytes()).is_ok() {
             if let Ok(f) = std::fs::OpenOptions::new().append(true).open(path) {
                 *lock(log) = f;
                 self.lines.store(live, std::sync::atomic::Ordering::Relaxed);

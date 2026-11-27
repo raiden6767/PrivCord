@@ -14,6 +14,8 @@ pub struct Filter {
     pub limit: Option<usize>,
     /// `#x` filters: the letter and the accepted values.
     pub tags: Vec<(char, Vec<String>)>,
+    /// NIP-50: lowercase words that must all appear in the content (`key:value` extensions are ignored).
+    pub search: Vec<String>,
 }
 
 fn strings(v: &Value) -> Result<Vec<String>, &'static str> {
@@ -59,6 +61,16 @@ impl Filter {
                             .unwrap_or(usize::MAX),
                     )
                 }
+                "search" => {
+                    f.search = val
+                        .as_str()
+                        .ok_or("invalid: search is not a string")?
+                        .split_whitespace()
+                        .filter(|w| !w.contains(':'))
+                        .take(8)
+                        .map(str::to_lowercase)
+                        .collect();
+                }
                 other => {
                     let mut chars = other.chars();
                     if let (Some('#'), Some(c), None) = (chars.next(), chars.next(), chars.next()) {
@@ -66,7 +78,7 @@ impl Filter {
                             f.tags.push((c, strings(val)?));
                         }
                     }
-                    // Anything else (search, unknown extensions) is ignored, as most relays do.
+                    // Anything else (unknown extensions) is ignored, as most relays do.
                 }
             }
         }
@@ -95,6 +107,12 @@ impl Filter {
         if !self.authors.is_empty() {
             let pk = super::event::hex(&e.pubkey);
             if !self.authors.iter().any(|p| pk.starts_with(p.as_str())) {
+                return false;
+            }
+        }
+        if !self.search.is_empty() {
+            let text = e.content.to_lowercase();
+            if !self.search.iter().all(|w| text.contains(w.as_str())) {
                 return false;
             }
         }

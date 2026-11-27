@@ -19,6 +19,9 @@ impl Store {
     pub fn open(dir: &std::path::Path) -> Result<Self, String> {
         crate::fsutil::create_private_dir(dir)?;
         let path = dir.join("queue.jsonl");
+        // Half a line left by a crash is cut off, or the next message would be glued to it and lost.
+        crate::fsutil::trim_torn_tail(&path)
+            .map_err(|e| format!("could not check {}: {e}", path.display()))?;
         let file = crate::fsutil::open_private_append(&path)
             .map_err(|e| format!("could not open {}: {e}", path.display()))?;
         Ok(Self {
@@ -66,27 +69,39 @@ impl Store {
 
     /// False when it could not be written (the put is then refused: better than a promise that cannot be kept).
     pub fn append_put(&mut self, mailbox: &str, id: &str, blob: &str, ts: i64, exp: i64) -> bool {
-        let line = json!({ "op": "put", "mailbox": mailbox, "id": id, "blob": blob, "ts": ts, "exp": exp }).to_string();
+        let mut line = json!({ "op": "put", "mailbox": mailbox, "id": id, "blob": blob, "ts": ts, "exp": exp }).to_string();
+        line.push('\n');
         let Some(f) = self.file.as_mut() else {
             return false;
         };
-        f.write_all(line.as_bytes())
-            .and_then(|()| f.write_all(b"\n"))
-            .is_ok()
+        // One write, so a crash leaves either the whole line or a torn tail that the next start cuts off. A failed write is
+        // cut off again here (a part of a line would swallow the next message).
+        let before = f.metadata().map(|m| m.len()).ok();
+        if f.write_all(line.as_bytes()).is_ok() {
+            return true;
+        }
+        if let Some(len) = before {
+            let _ = f.set_len(len);
+        }
+        false
+    }
+
+    /// Asks the disk to keep what has been appended so far (called every second or so: a power cut loses at most that).
+    pub fn sync(&mut self) {
+        if let Some(f) = self.file.as_mut() {
+            let _ = f.sync_data();
+        }
     }
 
     /// Rewrites the log to hold exactly `live`.
     pub fn rewrite(&mut self, live: &[Held]) {
-        let tmp = self.path.with_extension("jsonl.tmp");
         let mut body = String::new();
         for (mailbox, id, blob, ts, exp) in live {
             body.push_str(&json!({ "op": "put", "mailbox": mailbox, "id": id, "blob": blob, "ts": ts, "exp": exp }).to_string());
             body.push('\n');
         }
-        if std::fs::write(&tmp, body)
-            .and_then(|()| std::fs::rename(&tmp, &self.path))
-            .is_ok()
-        {
+        // Synced to disk, renamed over the log, and the folder synced: never a half-written queue.
+        if crate::fsutil::write_private_atomic(&self.path, body.as_bytes()).is_ok() {
             self.file = OpenOptions::new()
                 .create(true)
                 .append(true)

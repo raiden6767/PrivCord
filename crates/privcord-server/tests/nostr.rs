@@ -996,3 +996,162 @@ async fn an_admin_ban_survives_a_crash_and_a_restart_and_nothing_accepts_odd_hex
     assert!(!cl.publish(&odd).await.0);
     r.stop().await;
 }
+
+#[tokio::test]
+async fn search_finds_words_in_any_case_and_ignores_extensions() {
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    for (i, text) in ["The quick brown fox", "a lazy dog", "QUICK thinking"]
+        .iter()
+        .enumerate()
+    {
+        assert!(
+            c.publish(&make(&k, 1, now() - i as i64, vec![], text))
+                .await
+                .0
+        );
+    }
+    let found = |v: Vec<Value>| -> Vec<String> {
+        v.iter()
+            .map(|e| e["content"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let one = found(c.req("s1", vec![json!({ "search": "quick" })]).await);
+    assert_eq!(
+        one,
+        ["The quick brown fox", "QUICK thinking"],
+        "newest first, any case"
+    );
+    let two = found(c.req("s2", vec![json!({ "search": "QUICK fox" })]).await);
+    assert_eq!(two, ["The quick brown fox"], "every word must appear");
+    // `key:value` extensions (NIP-50) are not words
+    let ext = found(
+        c.req("s3", vec![json!({ "search": "lazy include:spam" })])
+            .await,
+    );
+    assert_eq!(ext, ["a lazy dog"]);
+    assert!(found(c.req("s4", vec![json!({ "search": "nothing here" })]).await).is_empty());
+    // the information document says so
+    assert!(r.relay().is_some());
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn a_protected_event_is_only_taken_from_its_signed_in_author() {
+    let (r, url, _d) = server(|c| c.nostr.relay_url = "ws://x".into()).await;
+    let (author, other, mut c) = (key(), key(), C::open(&url).await);
+    let challenge = c.next().await; // offered at connect, so a client can sign in when it needs to
+    assert_eq!(challenge[0], "AUTH");
+    let protected = make(&author, 1, now(), vec![vec!["-"]], "mine only");
+    assert!(c.publish(&protected).await.1.starts_with("auth-required"));
+    let sign_in = |k: &SigningKey| {
+        make(
+            k,
+            22242,
+            now(),
+            vec![
+                vec!["relay", "ws://x"],
+                vec!["challenge", challenge[1].as_str().unwrap()],
+            ],
+            "",
+        )
+    };
+    // signed in as someone else: still refused
+    c.send(json!(["AUTH", sign_in(&other)])).await;
+    assert_eq!(c.next().await[2], true);
+    assert!(c.publish(&protected).await.1.starts_with("auth-required"));
+    // a fresh connection signed in as the author: taken
+    let mut c2 = C::open(&url).await;
+    let ch2 = c2.next().await;
+    let proof = make(
+        &author,
+        22242,
+        now(),
+        vec![
+            vec!["relay", "ws://x"],
+            vec!["challenge", ch2[1].as_str().unwrap()],
+        ],
+        "",
+    );
+    c2.send(json!(["AUTH", proof])).await;
+    assert_eq!(c2.next().await[2], true);
+    assert!(c2.publish(&protected).await.0);
+    // an ordinary event needs none of this
+    assert!(c.publish(&make(&other, 1, now(), vec![], "plain")).await.0);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn a_request_to_vanish_removes_the_authors_events_and_refuses_older_ones_even_after_a_restart(
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let config = |c: &mut Config| {
+        c.server.data_dir = dir.path().into();
+        c.nostr.relay_url = "ws://x".into();
+    };
+    let (r, url, _d) = server(config).await;
+    let (alice, bob, mut c) = (key(), key(), C::open(&url).await);
+    let (a1, a2) = (
+        make(&alice, 1, now() - 100, vec![], "alice one"),
+        make(&alice, 1, now() - 50, vec![], "alice two"),
+    );
+    let b1 = make(&bob, 1, now() - 80, vec![], "bob");
+    for e in [&a1, &a2, &b1] {
+        assert!(c.publish(e).await.0);
+    }
+    // addressed to another relay: refused
+    let elsewhere = make(
+        &alice,
+        62,
+        now(),
+        vec![vec!["relay", "wss://other.example"]],
+        "",
+    );
+    assert!(c.publish(&elsewhere).await.1.starts_with("invalid"));
+    assert_eq!(
+        c.req("s", vec![json!({ "authors": [pk(&alice)] })])
+            .await
+            .len(),
+        2
+    );
+    // addressed to this relay
+    let vanish = make(&alice, 62, now(), vec![vec!["relay", "ws://x"]], "");
+    assert!(c.publish(&vanish).await.0);
+    let left = c
+        .req("s2", vec![json!({ "authors": [pk(&alice)], "kinds": [1] })])
+        .await;
+    assert!(left.is_empty(), "alice's events are gone");
+    assert_eq!(
+        c.req("s3", vec![json!({ "authors": [pk(&bob)] })])
+            .await
+            .len(),
+        1,
+        "bob's stay"
+    );
+    // an older event of hers is refused
+    assert!(c
+        .publish(&make(&alice, 1, now() - 10, vec![], "late"))
+        .await
+        .1
+        .starts_with("blocked"));
+    r.stop().await;
+    // still true after a restart (the request is in the log)
+    let (r2, url2, _d2) = server(config).await;
+    let mut c2 = C::open(&url2).await;
+    assert!(c2
+        .req("s", vec![json!({ "authors": [pk(&alice)], "kinds": [1] })])
+        .await
+        .is_empty());
+    assert!(c2
+        .publish(&make(&alice, 1, now() - 20, vec![], "again"))
+        .await
+        .1
+        .starts_with("blocked"));
+    assert_eq!(
+        c2.req("s", vec![json!({ "authors": [pk(&bob)] })])
+            .await
+            .len(),
+        1
+    );
+    r2.stop().await;
+}

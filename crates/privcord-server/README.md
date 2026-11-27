@@ -36,14 +36,26 @@ talking Nostr; one that sends an object is talking PrivCord). The PrivCord apps 
 
 | | |
 |---|---|
-| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT |
+| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT, NIP-50 search (every word, any case; newest first), NIP-62 request to vanish, NIP-70 protected events |
 | Checks | every event's id and Schnorr signature, size, tag count, `created_at` window, expiry; hex must be lowercase |
 | Rules you set | allowed and blocked public keys, allowed and blocked kinds, minimum proof of work, authentication required, per-address publish rate, retention (days), event cap |
-| Not yet | NIP-50 search, NIP-86 management API, NIP-98 HTTP auth, NIP-77 sync, NIP-70 protected events, NIP-05 write checks |
+| Not yet | NIP-86 management API and NIP-98 HTTP auth (the admin panel does that job), NIP-77 sync, NIP-05 write checks, NIP-29 groups |
 | Storage | in memory with indexes by time, author, kind and tag, plus an append-only log in `data_dir` (synced to disk twice a second), compacted when it doubles |
 
 Whoever publishes to a Nostr relay publishes readable content: unlike PrivCord's sealed messages, you can read what is stored
 here. That is your responsibility as the operator.
+
+### What happens in a crash
+
+The log is append-only: one event per line, written in one call. After a crash or a power cut the next start cuts off a
+half-written last line (otherwise the next event would be glued to it and lost). A failed write (a full or failing disk) is
+undone and the publisher is told, instead of being promised something that is not on disk; in durable mode a failed sync turns
+every confirmation in that batch into an error. Compaction writes a new file, syncs it, renames it over the log and syncs the
+folder, so a power cut leaves the old log or the new one, never half of either. `tests/crash.rs` runs the real program in
+durable mode, kills it (SIGKILL) in the middle of a stream, appends half a line, and checks that every confirmed event is
+back, and that an event written after the torn line is kept. (A power cut itself cannot be simulated here: it relies on the
+disk honouring its sync.) What SQLite adds that this does not have: page checksums, so silent corruption in the middle of a file
+is not detected: lines that cannot be read are skipped.
 
 ### Durable mode
 
