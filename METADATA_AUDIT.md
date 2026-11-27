@@ -31,7 +31,7 @@ This is an internal review, not an independent audit (see `AUDIT.md`).
 | M3 | Mitigated by M1 and M2 only. |
 | M4 | **Not fixed** (device fan-out). |
 | M5 | **Not fixed, on purpose.** All stored posts already share one 7-day expiry. Live signals (2 minutes, a separate event kind) cannot be made to look the same without relays keeping connection offers and network addresses for days. |
-| M6 | **Fixed**: default STUN is Cloudflare only (no Google). |
+| M6 | **Changed on purpose, so not fixed**: the default list is now six public STUN servers (Cloudflare, Google ×2, Twilio, Nextcloud, Telnyx) for connection success across regions. Each sees your IP when a connection starts. A server you run yourself ("Use my server") can replace them. |
 | M7 | **Mitigated**: update check every 6 hours instead of more often; still on by default. |
 | M8 | **Fixed**: notification previews off by default. |
 | M9 | By design. |

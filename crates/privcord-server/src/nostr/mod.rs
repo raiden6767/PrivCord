@@ -395,7 +395,7 @@ impl Nostr {
             && sess.challenge.is_none()
         {
             let mut b = [0u8; 16];
-            let _ = getrandom::fill(&mut b);
+            crate::fsutil::random(&mut b);
             let ch = hex(&b);
             conn.send(json!(["AUTH", ch]).to_string());
             sess.challenge = Some(ch);

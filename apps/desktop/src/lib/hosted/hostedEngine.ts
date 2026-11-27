@@ -125,6 +125,7 @@ export class HostedChatEngine implements ChatEngineApi {
   private current: Promise<void> = Promise.resolve();
   private lookup: { resolve: (p: { uid: string; name: string; safetyNumber: string; already: boolean }) => void; reject: (e: Error) => void } | null = null;
   private off: (() => void) | null = null;
+  private offFocus: (() => void) | undefined;
 
   constructor(private readonly deps: HostedDeps) {
     this.engine = new HostedEngine(deps.bridge);
@@ -280,7 +281,10 @@ export class HostedChatEngine implements ChatEngineApi {
       // The engine keeps quiet in quiet hours itself, in the person's own time (daylight saving and travel included).
       const zone = () => void this.engine.call('set_utc_offset', { minutes: -new Date().getTimezoneOffset() }).catch(() => undefined);
       zone();
-      if (typeof window !== 'undefined') window.addEventListener('focus', zone);
+      if (typeof window !== 'undefined') {
+        window.addEventListener('focus', zone);
+        this.offFocus = () => window.removeEventListener('focus', zone);
+      }
       await this.engine.call('set_store_forward', { value: this.deps.network().storeForward || this.deps.network().torMode === true }).catch(() => undefined);
       // Private mode: files between your devices do not go over Tor (they wait for a direct local path).
       await this.engine.call('set_bulk_allowed', { allowed: this.deps.network().torMode !== true }).catch(() => undefined);
@@ -313,6 +317,8 @@ export class HostedChatEngine implements ChatEngineApi {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.off?.();
+    this.offFocus?.();
+    this.offFocus = undefined;
     this.runtime?.stop();
     return this.engine.stop().catch(() => undefined);
   }

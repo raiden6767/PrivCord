@@ -136,7 +136,7 @@ fn sha_hex(s: &str) -> String {
 fn new_secret(prefix: &str) -> (String, String) {
     use base64::Engine;
     let mut raw = [0u8; 32];
-    let _ = getrandom::fill(&mut raw);
+    crate::fsutil::random(&mut raw);
     let secret = format!(
         "{prefix}{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
@@ -156,7 +156,7 @@ fn new_setup_code() -> (String, String) {
     let mut letters: Vec<char> = Vec::with_capacity(20);
     while letters.len() < 20 {
         let mut raw = [0u8; 32];
-        let _ = getrandom::fill(&mut raw);
+        crate::fsutil::random(&mut raw);
         for b in raw {
             if b < limit && letters.len() < 20 {
                 if let Some(c) = SETUP_ALPHABET.get(usize::from(b) % SETUP_ALPHABET.len()) {
@@ -183,7 +183,7 @@ fn normalize_code(s: &str) -> String {
 
 fn new_id() -> String {
     let mut b = [0u8; 6];
-    let _ = getrandom::fill(&mut b);
+    crate::fsutil::random(&mut b);
     crate::nostr::event::hex(&b)
 }
 

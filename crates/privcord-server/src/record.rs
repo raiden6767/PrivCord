@@ -138,7 +138,7 @@ impl Codec {
     pub fn encode(&self, label: &str, payload: &str) -> String {
         if let Some(cipher) = &self.key {
             let mut nonce = [0u8; 12];
-            let _ = getrandom::fill(&mut nonce);
+            crate::fsutil::random(&mut nonce);
             if let Ok(n) = Nonce::try_from(&nonce[..]) {
                 if let Ok(ct) = cipher.encrypt(
                     &n,

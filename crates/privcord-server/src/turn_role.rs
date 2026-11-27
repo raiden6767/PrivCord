@@ -77,7 +77,7 @@ fn password_for(secret: &[u8], username: &str) -> String {
 /// A user name and password valid for `ttl_secs` from `now_secs`.
 pub fn issue(secret: &[u8], now_secs: u64, ttl_secs: u64) -> (String, String) {
     let mut tag = [0u8; 4];
-    let _ = getrandom::fill(&mut tag);
+    crate::fsutil::random(&mut tag);
     let tag: String = tag.iter().map(|b| format!("{b:02x}")).collect();
     let username = format!("{}:{tag}", now_secs.saturating_add(ttl_secs));
     let password = password_for(secret, &username);

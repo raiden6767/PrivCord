@@ -477,7 +477,6 @@ impl Worker {
         // replaced at once instead of waiting out the silence.
         let slept =
             self.last_tick_wall != 0 && now - self.last_tick_wall > self.timing.resume_gap_ms;
-        self.last_tick_wall = now;
         let timing = self.timing;
         for m in mailboxes {
             let now = self.now();
@@ -515,6 +514,9 @@ impl Worker {
                 self.apply(&m, out);
             }
         }
+        // Measured from the end of the work, not the start: a tick that spent its time connecting to slow relays must not
+        // make the next one believe the machine slept (that closed every healthy socket and started the storm again).
+        self.last_tick_wall = self.now();
     }
 
     /// Sends queued puts through a hub that is online (the mailbox's own, else any). Returns whether one went out.

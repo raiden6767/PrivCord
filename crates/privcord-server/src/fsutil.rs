@@ -150,3 +150,12 @@ mod tests {
         );
     }
 }
+
+/// Fills `buf` with random bytes from the operating system. If that ever fails the process stops: a token, a nonce or a
+/// secret made of zeros is worse than no server.
+pub fn random(buf: &mut [u8]) {
+    if getrandom::fill(buf).is_err() {
+        eprintln!("the operating system could not supply random bytes; stopping");
+        std::process::abort();
+    }
+}
