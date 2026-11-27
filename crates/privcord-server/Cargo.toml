@@ -1,0 +1,36 @@
+[package]
+name = "privcord-server"
+description = "A relay (a mailbox for sealed messages) and an optional TURN server, in one program you run yourself."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["turn"]
+# The TURN role (UDP relaying for phones that cannot connect directly).
+turn = ["dep:turn", "dep:webrtc-util", "dep:async-trait"]
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "ws", "tokio", "query", "json"] }
+tokio = { workspace = true, features = ["net", "signal", "io-util", "fs"] }
+futures-util = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+toml = "0.9"
+clap = { version = "4", features = ["derive", "env"] }
+sha2.workspace = true
+hmac.workspace = true
+base64.workspace = true
+getrandom.workspace = true
+turn = { version = "0.17", optional = true }
+webrtc-util = { version = "0.17", optional = true }
+async-trait = { version = "0.1", optional = true }
+
+[dev-dependencies]
+tokio-tungstenite = "0.30"
+tempfile = "3"
