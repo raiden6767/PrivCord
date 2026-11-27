@@ -5,9 +5,11 @@ A relay and, if you want one, a TURN server for PrivCord, in one program that yo
 * **Relay**: a mailbox for sealed messages. It carries blobs it cannot read and keeps them (if you allow it) for up to
   seven days, so people who are offline still get their messages.
 * **TURN** (optional): carries voice and file traffic between two phones that cannot reach each other directly (two
-  different mobile networks, strict routers).
+  different mobile networks, strict routers). Works over UDP, TCP and TLS, so it also gets through networks that block UDP.
+* **Nostr** (optional): the same port also speaks the Nostr relay protocol, so it can serve as a relay for Nostr apps too.
+* **Admin panel** (optional): a web page to manage the server, with admin accounts and roles.
 
-Turn either or both on in the settings file.
+Turn on what you want in the settings file.
 
 > **You are responsible for your server.** Whoever runs this program is the operator of that server, of the communities
 > that use it, and of what is done with it. The PrivCord authors do not run it, cannot see it, and are not responsible
@@ -22,8 +24,8 @@ privcord-server doctor          # checks ports, your public address, NAT
 privcord-server serve
 ```
 
-Then in the apps, add `ws://YOUR-ADDRESS:8787` as a relay (use `wss://` behind a TLS proxy such as Caddy:
-`reverse_proxy 127.0.0.1:8787`, and set `trust_proxy = true`). TURN is `turn:YOUR-IP:3478` with credentials from
+Then in the apps, add `ws://YOUR-ADDRESS:8787` as a relay. For `wss://`, put a certificate in `[tls]` (see below) or use a TLS
+proxy such as Caddy (`reverse_proxy 127.0.0.1:8787`, with `trust_proxy = true`). TURN is `turn:YOUR-IP:3478` with credentials from
 `https://YOUR-HOST/turn` (short-lived) or a fixed `name:password` in `turn.users`.
 
 ## Nostr
@@ -94,6 +96,41 @@ I read its source (event handling, storage, limits, configuration) and adopted w
 
 Left out on purpose: NIP-05 write verification (needs outbound web requests from the server), pay-to-relay, an external
 admission service, and logging each client's address and browser (this server keeps no such log).
+
+## Admin panel
+
+```toml
+[admin]
+enabled = true
+listen = "127.0.0.1:8788"
+```
+
+Start the server and it prints, once, `admin panel: http://127.0.0.1:8788/admin` and **the owner's admin token**. Save it: only a
+hash is kept. Open the page, paste the token, and you can:
+
+| | |
+|---|---|
+| **Overview** | what is running, addresses to give the apps (with Copy buttons), counters, and warnings (an open server, a self-signed certificate, TURN without TCP/TLS, a panel on a public address over plain HTTP) |
+| **Access** | make and remove access tokens (one per person or device); with at least one, apps must present it. Removing the *last* token (which would open the server to everyone) asks for confirmation |
+| **Admins** | add and remove admins, each with their own token: **owner** (everything), **moderator** (rules, tokens, removing events), **viewer** (look only). There is always at least one owner |
+| **Nostr rules** | allowed and blocked authors and kinds, applied at once and saved; remove an event for good |
+| **TURN** | the addresses phones are given and what to open in the firewall |
+
+`privcord-server admin-token --name Sam --role moderator` makes another token from the command line (a running server notices).
+
+**Where to reach it from.** The panel has its own listener, on localhost by default, and is never served on the relay's port.
+To reach it from elsewhere you do not need anything built in:
+- an SSH tunnel: `ssh -L 8788:127.0.0.1:8788 you@your-vps`, then open `http://127.0.0.1:8788/admin`; or
+- put `listen` on a private-network address, for example your Tailscale or WireGuard address (`listen = "100.x.y.z:8788"`): only
+  devices on that network can reach it, and the traffic is already encrypted; or
+- set `tls = true` (needs `[tls]`) to serve it over HTTPS, if you must expose it.
+`doctor` warns if the panel is on a non-local address over plain HTTP. Those are the only two places a token travels.
+
+**What protects it.** Tokens are 256 random bits, kept only as SHA-256 hashes (in `admin.json`, readable by the server's user only);
+ten wrong tokens from an address lock that address out for a minute; the page loads nothing from anywhere else (strict
+content-security-policy, no inline script) and builds everything with `textContent`, never HTML from server data; the API uses a
+bearer token, not cookies, so there is nothing for another website to ride on. The page was checked with an automated
+accessibility scan (axe, WCAG 2.2 AA, light and dark, no violations) and by keyboard.
 
 ## TLS (wss, https, and TURN over TLS)
 

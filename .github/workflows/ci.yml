@@ -290,6 +290,12 @@ jobs:
             mkdir -p corpus/$t
             cargo +nightly fuzz run $t corpus/$t -- -max_total_time=60 -rss_limit_mb=2048
           done
+          # The self-hosted server's parsers: relay and Nostr frames, the event store's invariants, TURN framing.
+          for t in server_frames server_store server_turn; do
+            mkdir -p corpus/$t
+            cp seeds/$t/* corpus/$t/ 2>/dev/null || true
+            cargo +nightly fuzz run $t corpus/$t -- -max_total_time=40 -rss_limit_mb=2048
+          done
       - if: failure()
         uses: actions/upload-artifact@v7
         with:

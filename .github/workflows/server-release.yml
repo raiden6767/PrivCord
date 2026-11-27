@@ -1,23 +1,57 @@
-# Builds privcord-server binaries on demand only (CI minutes are limited): run it from the Actions tab.
+# Builds the privcord-server program for Linux, macOS and Windows, on demand only (CI minutes are limited): run it from the
+# Actions tab. Tick "publish" to also put the files on a GitHub release called "Server" (made if it does not exist).
 name: Server binaries
-permissions:
-  contents: read
 on:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Also attach the files to the "Server" release
+        type: boolean
+        default: false
+permissions:
+  contents: read
 jobs:
   build:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest, name: linux-x86_64 }
-          - { os: macos-latest, name: macos-arm64 }
+          # Built on the oldest runner image we use, so the Linux program also runs on older distributions.
+          - { os: ubuntu-22.04, name: linux-x86_64, file: privcord-server }
+          - { os: macos-latest, name: macos-arm64, file: privcord-server }
+          - { os: windows-latest, name: windows-x86_64, file: privcord-server.exe }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --locked -p privcord-server
-      - run: cp target/release/privcord-server privcord-server-${{ matrix.name }}
-      - uses: actions/upload-artifact@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked -p privcord-server --bin privcord-server
+      - name: Name and checksum the file
+        shell: bash
+        run: |
+          mkdir out
+          ext=""; [ "${{ matrix.file }}" = "privcord-server.exe" ] && ext=".exe"
+          cp "target/release/${{ matrix.file }}" "out/privcord-server-${{ matrix.name }}$ext"
+          cd out && (sha256sum * 2>/dev/null || shasum -a 256 *) > "SHA256-${{ matrix.name }}.txt"
+      - uses: actions/upload-artifact@v7
         with:
           name: privcord-server-${{ matrix.name }}
-          path: privcord-server-${{ matrix.name }}
+          path: out/*
+  publish:
+    if: inputs.publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: out
+          merge-multiple: true
+      - name: Attach to the Server release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view Server --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create Server --repo "$GITHUB_REPOSITORY" --title "PrivCord server" \
+                 --notes "The self-hosted relay, Nostr and TURN server. Download the file for your system, then run: privcord-server init --turn, privcord-server doctor, privcord-server serve. See crates/privcord-server/README.md. Whoever runs it is responsible for it." --latest=false
+          gh release upload Server out/* --clobber --repo "$GITHUB_REPOSITORY"
