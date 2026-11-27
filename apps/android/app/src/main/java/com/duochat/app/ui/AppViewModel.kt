@@ -109,9 +109,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val result = runCatching {
                 kotlinx.coroutines.withContext(Dispatchers.Default) {
-                    val rust = engine as? com.duochat.app.rustcore.RustChatEngine
-                        ?: throw IllegalStateException("The engine is not ready yet.")
-                    rust.recoverIdentity(phrase, passphrase).getOrThrow()
+                    val running = engine ?: throw IllegalStateException("The engine is not ready yet.")
+                    running.recoverIdentity(phrase, passphrase).getOrThrow()
                 }
                 Unit
             }
