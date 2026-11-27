@@ -65,7 +65,9 @@ mod tests {
 
     #[test]
     fn a_credential_works_until_it_expires_and_only_with_its_own_name() {
-        let secret = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let secret = &load_or_make_secret(a.path()).unwrap()[..];
+        let other = load_or_make_secret(b.path()).unwrap();
         let (user, pass) = issue(secret, 1_000, 3_600);
         assert_eq!(
             password_if_valid(secret, &user, 1_000).as_deref(),
@@ -77,7 +79,7 @@ mod tests {
         );
         assert!(password_if_valid(secret, &user, 4_600).is_none(), "expired");
         assert!(
-            password_if_valid(b"another secret", &user, 1_000).is_some_and(|p| p != pass),
+            password_if_valid(&other, &user, 1_000).is_some_and(|p| p != pass),
             "another server's secret gives another password"
         );
         assert!(password_if_valid(secret, "not-a-time:abc", 1_000).is_none());
