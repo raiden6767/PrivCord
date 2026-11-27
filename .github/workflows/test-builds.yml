@@ -159,13 +159,17 @@ jobs:
           fi
           # The old, versioned file name is replaced by the fixed one above.
           gh release delete-asset Windows PrivCord_0.1.0_x64-setup.exe --yes --repo "$GITHUB_REPOSITORY" || true
-          # Say on each release page which build it holds, so it is plain whether it is the latest.
+          # Say on each release page which build it holds, and publish it again so GitHub shows today's date (it shows
+          # the date a release was published, not when its files last changed). Windows first, so Android keeps the
+          # "Latest" badge. For a few seconds the page is a draft, so a download in that moment fails.
           title=$(printf '%s' "${COMMIT_MESSAGE:-manual run}" | head -n 1)
           when=$(date -u '+%Y-%m-%d %H:%M UTC')
-          for tag in Android Windows; do
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$([ "$tag" = Android ] && echo 'Android APK' || echo 'Windows exe') (build $n)" \
-              --notes "Build $n, from commit ${GITHUB_SHA:0:7}, published $when.
+          for tag in Windows Android; do
+            if [ "$tag" = Android ]; then name='Android APK'; latest=--latest; else name='Windows exe'; latest=--latest=false; fi
+            notes="Build $n, from commit ${GITHUB_SHA:0:7}, published $when.
           $title
 
           Unsigned test build: see docs/DEPLOYMENT.md. Full history: https://github.com/$GITHUB_REPOSITORY/commits/main"
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$name (build $n)" --notes "$notes" --draft=true
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false $latest
           done
