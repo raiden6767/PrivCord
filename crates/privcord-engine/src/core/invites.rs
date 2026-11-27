@@ -457,6 +457,7 @@ impl Core {
                 continue;
             };
             let payload = serde_json::json!({ "t": "hello", "card": card });
+            self.diag("invite", "asking to be added back", uid.as_str());
             if let Ok(blob) = self.seal_to(&uid, &payload) {
                 // A failed send is tried again on the next round.
                 let _ =

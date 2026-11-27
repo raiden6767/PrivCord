@@ -53,6 +53,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -123,6 +124,8 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
     var torch by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var hint by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { com.duochat.app.engine.Diag.log("ui", "scanner opened", "") }
+    LaunchedEffect(hint) { hint?.let { com.duochat.app.engine.Diag.log("ui", "scanner message", it.take(90)) } }
     val capture = remember {
         ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build()
     }
@@ -134,6 +137,7 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
     fun found(text: String) {
         if (!done.compareAndSet(false, true)) return
         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        com.duochat.app.engine.Diag.log("ui", "scanner: a code was read", "chars=${text.length}")
         onResult(text)
     }
 
@@ -149,6 +153,7 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
 
     DisposableEffect(Unit) {
         onDispose {
+            com.duochat.app.engine.Diag.log("ui", "scanner closed", "")
             alive.set(false)
             // Stop frames first, then let go of the camera, then end the worker thread (in that order, so no frame is
             // handed to a thread that is gone).

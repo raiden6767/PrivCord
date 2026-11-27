@@ -257,6 +257,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun selfTestJson(): String = engine?.selfTestJson() ?: "[]"
 
+    suspend fun diagStatusJson(): String = engine?.diagStatusJson() ?: "{}"
+
+    suspend fun diagExport(about: String): String = engine?.diagExport(about).orEmpty()
+
+    suspend fun diagClear() { engine?.diagClear() }
+
+    suspend fun setDiagEnabled(on: Boolean) { engine?.setDiagEnabled(on) }
+
     fun setSecureScreen(on: Boolean) {
         viewModelScope.launch { engine?.setSecureScreen(on) }
     }

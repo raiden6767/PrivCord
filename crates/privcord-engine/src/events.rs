@@ -22,10 +22,55 @@ struct Subscriber {
     missed: Arc<AtomicU64>,
 }
 
-#[derive(Default)]
 pub struct EventHub {
     seq: u64,
     subscribers: Vec<Subscriber>,
+    /// What was published since the diagnostic log last looked: (event, particulars), with nothing that identifies anyone.
+    tap: Vec<(String, String)>,
+    tap_on: bool,
+}
+
+impl Default for EventHub {
+    fn default() -> Self {
+        Self {
+            seq: 0,
+            subscribers: Vec::new(),
+            tap: Vec::new(),
+            tap_on: true,
+        }
+    }
+}
+
+/// The event's name and the few particulars that help (never names, texts, codes or files).
+fn describe(e: &EngineEvent) -> (String, String) {
+    let debug = format!("{e:?}");
+    let name: String = debug
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let detail = match e {
+        EngineEvent::DialRequested { peer, initiator } => {
+            format!("peer={peer} initiator={initiator}")
+        }
+        EngineEvent::DeviceLink { stage, .. } => format!("stage={stage}"),
+        EngineEvent::FileProgress { percent, .. } => format!("percent={percent}"),
+        EngineEvent::MessageStatusChanged { status, .. } => format!("status={status:?}"),
+        EngineEvent::MessageAdded { own, .. } => format!("own={own}"),
+        EngineEvent::ContactAdded { uid }
+        | EngineEvent::ContactRemoved { uid }
+        | EngineEvent::InviteRequest { uid } => {
+            format!("friend={uid}")
+        }
+        EngineEvent::SignalReceived { peer, message } => {
+            let kind: String = format!("{message:?}")
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect();
+            format!("peer={peer} kind={kind}")
+        }
+        _ => String::new(),
+    };
+    (name, detail)
 }
 
 /// One subscriber's view of the event stream.
@@ -104,7 +149,23 @@ impl EventHub {
         self.seq
     }
 
+    /// Starts or stops noting events for the diagnostic log.
+    pub fn set_tap(&mut self, on: bool) {
+        self.tap_on = on;
+        if !on {
+            self.tap.clear();
+        }
+    }
+
+    /// What was noted since the last call.
+    pub fn take_tap(&mut self) -> Vec<(String, String)> {
+        std::mem::take(&mut self.tap)
+    }
+
     pub fn publish(&mut self, event: EngineEvent) {
+        if self.tap_on && self.tap.len() < 400 {
+            self.tap.push(describe(&event));
+        }
         self.seq += 1;
         let seq = self.seq;
         self.subscribers.retain_mut(|s| {

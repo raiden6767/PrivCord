@@ -454,6 +454,25 @@ impl DesktopHost {
             "diagnostics" => Ok(json!(e
                 .diagnostics_json(text(args, "app")?)
                 .map_err(failed)?)),
+            "diag_log" => {
+                e.diag_log(
+                    text(args, "category")?,
+                    text(args, "event")?,
+                    text(args, "detail")?,
+                );
+                Ok(Value::Null)
+            }
+            "diag_export" => Ok(json!(e
+                .diag_export(text(args, "about")?)
+                .map_err(failed)?)),
+            "diag_clear" => unit(e.diag_clear()),
+            "set_diag_enabled" => unit(
+                e.set_diag_enabled(args.get("enabled").and_then(Value::as_bool).unwrap_or(true)),
+            ),
+            "diag_status" => {
+                Ok(serde_json::from_str(&e.diag_status_json().map_err(failed)?)
+                    .unwrap_or(Value::Null))
+            }
             "self_test" => {
                 Ok(serde_json::from_str(&e.self_test_json().map_err(failed)?)
                     .unwrap_or(Value::Null))

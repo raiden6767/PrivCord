@@ -117,6 +117,8 @@ rule(r"android/.*/(AppUpdater|UpdateService)\.kt", "In-app update: downloads the
 rule(r"android/.*/data/Waveform\.kt", "Voice-note waveform: peak per bar from decoded samples (drawing only)", "UI state (stays)", "UI", UI, "Stays")
 rule(r"android/.*/data/Themes\.kt", "Themes", "UI", "UI", UI, "Stays")
 rule(r"android/.*/data/local/DuoDatabase\.kt", "Room database", "storage::SqliteStorage; privcord-import (Room importer, Keystore decryptor supplied by the app)", "Storage", PORTED, "M8: after the importer has run on every install", "importer tests on generated Room v7 fixtures")
+rule(r"android/.*/engine/(Diag|LoggedEngine)\.kt", "Writes what the screens do to the engine's diagnostic log", "Platform seam (stays)", "Adapter", ADAPTER, "Stays")
+rule(r"desktop/src/lib/diag(\.test)?\.ts", "Writes what the screens do to the engine's diagnostic log", "Platform seam (stays)", "Adapter", ADAPTER, "Stays")
 rule(r"android/.*/engine/ChatEngineApi\.kt", "The interface the screens use to talk to a chat engine (the Rust engine)", "Platform seam (stays)", "Adapter", ADAPTER, "Stays")
 rule(r"android/.*/engine/BackgroundPolicy\.kt", "Reports battery, network and screen state to the shared background policy and passes its decision on", "domain::background (decision); platform adapter (reading the phone)", "Adapter", ADAPTER, "Stays")
 rule(r"android/.*/engine/EngineHost\.kt", "Keeps the running engine in the process so it outlives the screen", "Platform seam (stays)", "Adapter", ADAPTER, "Stays")

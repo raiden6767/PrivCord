@@ -18,7 +18,7 @@ import { UpdateCheck } from './UpdateControl';
 import { StorageByChat } from './StorageByChat';
 import { NO_PREFS } from '../lib/engine';
 import { formatBytes } from '../lib/format';
-import { DeliveryHealth, DevicesStrip, SupportTools, WhatsNew } from './Insights';
+import { DeliveryHealth, DevicesStrip, DiagLogCard, SupportTools, WhatsNew } from './Insights';
 import { AlertIcon, CheckIcon, KeyIcon, TrashIcon } from './Icons';
 import { MAX_LIVE_LINKS, MIN_BACKUP_PASSPHRASE, PANIC_PRESSES, PANIC_WINDOW_MS } from '../lib/limits';
 import { RECHECK_MS } from '../lib/updates';
@@ -658,6 +658,7 @@ export function SettingsDialog({
               </div>
             ) : null}
             <WhatsNew engine={engine} />
+            <DiagLogCard engine={engine} />
             <StorageByChat state={state} engine={engine} />
             <p>
               <strong>PrivCord</strong> · {isTauri() ? `version ${appVersion}` : 'development build'}

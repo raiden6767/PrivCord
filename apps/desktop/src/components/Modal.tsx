@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { XIcon } from './Icons';
+import { diag, plainTitle } from '../lib/diag';
 
 export function Modal({
   open,
@@ -34,6 +35,7 @@ export function Modal({
 
   useEffect(() => {
     if (!open) return;
+    diag('nav', 'dialog opened', plainTitle(title));
     previousFocus.current = document.activeElement;
     const dialog = dialogRef.current;
     const focusables = () =>
@@ -64,6 +66,7 @@ export function Modal({
     };
     document.addEventListener('keydown', onKeyDown);
     return () => {
+      diag('nav', 'dialog closed', plainTitle(title));
       document.removeEventListener('keydown', onKeyDown);
       if (previousFocus.current instanceof HTMLElement) previousFocus.current.focus();
     };

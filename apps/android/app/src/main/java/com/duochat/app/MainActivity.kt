@@ -112,12 +112,22 @@ private fun RootScreen(viewModel: AppViewModel) {
                 Lifecycle.Event.ON_STOP -> { viewModel.onLeft(); viewModel.setVisible(false) }
                 else -> Unit
             }
+            com.duochat.app.engine.Diag.log("app", "screen lifecycle", event.name.removePrefix("ON_").lowercase())
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // Where the person is, for the diagnostic log (which chat is never named, only that one is open).
+    LaunchedEffect(route) { com.duochat.app.engine.Diag.log("nav", "screen", route.substringBefore(':')) }
+    LaunchedEffect(settingsOpen) { com.duochat.app.engine.Diag.log("nav", "settings", if (settingsOpen) "opened" else "closed") }
+    LaunchedEffect(manualOpen) { com.duochat.app.engine.Diag.log("nav", "connect-with-a-code dialog", if (manualOpen) "opened" else "closed") }
+    LaunchedEffect(channelsOpen) { com.duochat.app.engine.Diag.log("nav", "channels dialog", if (channelsOpen) "opened" else "closed") }
+    LaunchedEffect(friendDialog != null) { com.duochat.app.engine.Diag.log("nav", "friend details dialog", if (friendDialog != null) "opened" else "closed") }
+    LaunchedEffect(nukeOpen) { com.duochat.app.engine.Diag.log("nav", "erase-everything dialog", if (nukeOpen) "opened" else "closed") }
+
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        com.duochat.app.engine.Diag.log("perm", "notification permission", "granted=$granted")
         if (granted) viewModel.updateSettings { copy(notificationsEnabled = true) }
     }
     val requestNotifications = {
@@ -407,6 +417,10 @@ private fun RootScreen(viewModel: AppViewModel) {
                     insight = viewModel::insight,
                     diagnosticsJson = viewModel::diagnosticsJson,
                     selfTestJson = viewModel::selfTestJson,
+                    diagStatus = viewModel::diagStatusJson,
+                    diagExport = viewModel::diagExport,
+                    onDiagClear = viewModel::diagClear,
+                    onSetDiagEnabled = viewModel::setDiagEnabled,
                     onSetSecureScreen = viewModel::setSecureScreen,
                     storageByChatJson = viewModel::storageByChatJson,
                     onClearLocalData = viewModel::clearLocalData,

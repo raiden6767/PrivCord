@@ -1323,3 +1323,145 @@ fn asking_someone_to_add_us_back_carries_on_after_the_app_is_closed_and_opened_a
         "the ask goes out again after a restart"
     );
 }
+
+fn texts_of(n: &Node) -> Vec<String> {
+    n.core
+        .snapshot()
+        .messages
+        .into_iter()
+        .flat_map(|(_, v)| v)
+        .map(|m| m.text)
+        .collect()
+}
+
+/// A messenger that keeps what it could not send, and sends it when the friend can be reached: two friends with no relay
+/// at all, a direct link that goes up and down, frames lost on it, and apps closed and opened again. Whatever happens,
+/// once the link holds every message has arrived exactly once and its sender sees it as delivered.
+#[test]
+fn what_waits_on_the_senders_phone_goes_out_when_the_link_is_back_whatever_drops_or_restarts() {
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+    fn down(a: &mut Node, b: &mut Node) {
+        a.core.link_down(&b.uid);
+        b.core.link_down(&a.uid);
+        a.transport.set_connected(&b.uid, false);
+        b.transport.set_connected(&a.uid, false);
+        a.transport.drain();
+        b.transport.drain();
+    }
+    fn lossy_pump(a: &mut Node, b: &mut Node, rng: &mut Rng) {
+        for _ in 0..20 {
+            let (fa, fb) = (a.transport.drain(), b.transport.drain());
+            if fa.is_empty() && fb.is_empty() {
+                return;
+            }
+            for (_, f) in fa {
+                if rng.below(6) != 0 {
+                    b.core.frame_received(&a.uid, &f);
+                }
+            }
+            for (_, f) in fb {
+                if rng.below(6) != 0 {
+                    a.core.frame_received(&b.uid, &f);
+                }
+            }
+        }
+    }
+    for seed in 1..=8u64 {
+        let clock = FakeClock::at(1_700_000_000_000);
+        let (mut a, mut b) = (node("alice", &clock), node("bob", &clock));
+        befriend(&mut a, &mut b);
+        let (a_uid, b_uid) = (a.uid.clone(), b.uid.clone());
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let (mut by_a, mut by_b) = (Vec::new(), Vec::new());
+        let mut up = false;
+        let mut restarts = 0;
+        for step in 0..45 {
+            match rng.below(9) {
+                0 | 1 => {
+                    let t = format!("a{step}");
+                    if a.core.send_message(&b_uid, &t, None).is_ok() {
+                        by_a.push(t);
+                    }
+                }
+                2 | 3 => {
+                    let t = format!("b{step}");
+                    if b.core.send_message(&a_uid, &t, None).is_ok() {
+                        by_b.push(t);
+                    }
+                }
+                4 => {
+                    if up {
+                        down(&mut a, &mut b);
+                        up = false;
+                    } else {
+                        connect(&mut a, &mut b);
+                        up = true;
+                    }
+                }
+                5 | 6 => {
+                    // One of the apps is closed and opened again: the link goes with it.
+                    if up {
+                        down(&mut a, &mut b);
+                        up = false;
+                    }
+                    restarts += 1;
+                    if rng.below(2) == 0 {
+                        a = restart(a, &format!("alice {restarts}"));
+                    } else {
+                        b = restart(b, &format!("bob {restarts}"));
+                    }
+                }
+                _ => {}
+            }
+            clock.advance(1_000 + rng.below(30_000) as i64);
+            a.core.tick();
+            b.core.tick();
+            lossy_pump(&mut a, &mut b, &mut rng);
+        }
+        // The link comes up and holds.
+        if up {
+            down(&mut a, &mut b);
+        }
+        connect(&mut a, &mut b);
+        pass_time(&mut a, &mut b, 300_000);
+        let (got_b, got_a) = (texts_of(&b), texts_of(&a));
+        for t in &by_a {
+            assert_eq!(
+                got_b.iter().filter(|x| *x == t).count(),
+                1,
+                "seed {seed}: bob should have {t} once; has {got_b:?}"
+            );
+        }
+        for t in &by_b {
+            assert_eq!(
+                got_a.iter().filter(|x| *x == t).count(),
+                1,
+                "seed {seed}: alice should have {t} once; has {got_a:?}"
+            );
+        }
+        // And each sender sees its messages as delivered.
+        for (n, sent) in [(&a, &by_a), (&b, &by_b)] {
+            for (_, msgs) in n.core.snapshot().messages {
+                for m in msgs.iter().filter(|m| sent.contains(&m.text)) {
+                    let state = format!("{:?}", m.delivery_state);
+                    assert!(
+                        state.contains("Delivered") || state.contains("Read"),
+                        "seed {seed}: {} is still {state}",
+                        m.text
+                    );
+                }
+            }
+        }
+    }
+}

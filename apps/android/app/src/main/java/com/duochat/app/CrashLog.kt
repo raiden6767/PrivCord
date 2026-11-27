@@ -51,6 +51,8 @@ object CrashLog {
      * work): shown as such, never treated as a crash at start-up, and never written over a report not yet seen.
      */
     fun record(context: Context, error: Throwable, where: String, fatal: Boolean = true) {
+        // The diagnostic log gets a line too (the class and where, not the stack: that is in the crash report).
+        runCatching { com.duochat.app.engine.Diag.log("error", if (fatal) "CRASH" else "error survived", "${error.javaClass.simpleName} in $where") }
         runCatching {
             if (!fatal && file(context).exists()) return
             val uptime = if (!fatal) -1L else if (Build.VERSION.SDK_INT >= 24) SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() else -1L

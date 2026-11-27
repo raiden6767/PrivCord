@@ -60,6 +60,7 @@ use zeroize::Zeroizing;
 
 mod backup;
 mod devices;
+mod diag;
 mod filestream;
 mod health;
 mod invites;
@@ -270,6 +271,8 @@ pub struct Core {
     /// The storage port as wrapped by the sync recorder.
     recorder: Arc<sync::Recorder>,
     sealed: signaling::SealedState,
+    /// The diagnostic log (`core/diag.rs`).
+    diag: diag::DiagState,
     /// Files offered again whose receiver has not said where it is yet: (who, message) -> when to send it all.
     file_waits: std::collections::HashMap<(UserId, MessageId), i64>,
     /// Files being sent, sealed in memory (shared by every recipient of the message).
@@ -362,6 +365,7 @@ impl Core {
             account: None,
             recorder,
             sealed: signaling::SealedState::default(),
+            diag: diag::DiagState::default(),
             file_waits: std::collections::HashMap::new(),
             channel_subscribed: HashSet::new(),
             channel_people: BTreeMap::new(),
@@ -777,6 +781,11 @@ impl Core {
         security: LinkSecurity,
     ) -> Result<(), ErrorCode> {
         self.require_live()?;
+        self.diag(
+            "link",
+            "link up (from the platform)",
+            &format!("{peer} path={path:?}"),
+        );
         let (sign, dh) = self
             .keys_of_address(peer)
             .ok_or(ErrorCode::UnknownContact)?;
@@ -901,6 +910,7 @@ impl Core {
 
     /// The adapter lost the link. Identity and message state are untouched; only the session ends.
     pub fn link_down(&mut self, peer: &UserId) {
+        self.diag("link", "link down", peer.as_str());
         if let Some(p) = self.peers.get_mut(peer) {
             p.session = None;
             p.pq = None;
@@ -922,6 +932,7 @@ impl Core {
     }
 
     fn fail(&mut self, peer: &UserId, reason: ConnectionFailure) {
+        self.diag("link", "link failed", &format!("{peer} reason={reason:?}"));
         if let Some(p) = self.peers.get_mut(peer) {
             p.session = None;
             p.pq = None;
@@ -1710,8 +1721,22 @@ impl Core {
             };
             let all_sent = frames.iter().all(|f| self.send_secure(peer, f));
             if !all_sent {
+                self.diag(
+                    "send",
+                    "could not send from the queue",
+                    &format!("to={peer} msg={}", entry.message_id),
+                );
                 return;
             }
+            self.diag(
+                "send",
+                "sent from the queue",
+                &format!(
+                    "to={peer} msg={} attempt={}",
+                    entry.message_id,
+                    entry.attempts + 1
+                ),
+            );
             if is_file {
                 self.file_waits.insert(
                     (peer.clone(), entry.message_id.clone()),
@@ -1874,6 +1899,7 @@ impl Core {
         self.tick_media();
         self.tick_file_waits();
         self.tick_sealed();
+        self.tick_diag();
         self.tick_group_mesh();
         self.tick_channels();
     }

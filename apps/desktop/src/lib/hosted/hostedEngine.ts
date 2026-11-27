@@ -466,6 +466,26 @@ export class HostedChatEngine implements ChatEngineApi {
     return this.engine.call<string>('diagnostics', { app: JSON.stringify(app) });
   }
 
+  diagLog(category: string, event: string, detail: string): void {
+    void this.engine.call('diag_log', { category, event, detail }).catch(() => undefined);
+  }
+
+  async diagExport(about: string): Promise<string> {
+    return this.engine.call<string>('diag_export', { about });
+  }
+
+  async diagClear(): Promise<void> {
+    await this.engine.call('diag_clear');
+  }
+
+  async setDiagEnabled(on: boolean): Promise<void> {
+    await this.engine.call('set_diag_enabled', { enabled: on });
+  }
+
+  async diagStatus(): Promise<{ enabled: boolean; entries: number }> {
+    return this.engine.call<{ enabled: boolean; entries: number }>('diag_status');
+  }
+
   async selfTest(): Promise<Array<{ name: string; ok: boolean; detail: string }>> {
     return this.engine.call<Array<{ name: string; ok: boolean; detail: string }>>('self_test');
   }

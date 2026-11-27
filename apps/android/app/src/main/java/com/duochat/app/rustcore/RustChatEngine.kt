@@ -386,6 +386,12 @@ class RustChatEngine(
                 PrivcordEngine.start(File(app.noBackupFilesDir, "privcord.db").path, conversationId, secure, transport, notifier)
             }
             engine = started
+            // The diagnostic log: screens and the platform write to it through here; it is on unless the person turned it off.
+            runCatching {
+                com.duochat.app.engine.Diag.on = org.json.JSONObject(started.diagStatusJson()).optBoolean("enabled", true)
+            }
+            com.duochat.app.engine.Diag.attach { category, event, detail -> started.diagLog(category, event, detail) }
+            com.duochat.app.engine.Diag.log("app", "engine started", "")
             applyOwnName()
             migrateLegacyMutes(started)
             sendZone(started)
@@ -442,6 +448,8 @@ class RustChatEngine(
 
     override fun stop() {
         stopped = true
+        com.duochat.app.engine.Diag.log("app", "engine stopping", "")
+        com.duochat.app.engine.Diag.detach()
         com.duochat.app.engine.BackgroundPolicy.removeListener(bulkChanged)
         lan?.stop()
         lan = null
@@ -1330,6 +1338,21 @@ class RustChatEngine(
     override suspend fun diagnosticsJson(appJson: String): String = call { diagnosticsJson(appJson) }.getOrDefault("{}")
 
     override suspend fun selfTestJson(): String = call { selfTestJson() }.getOrDefault("[]")
+
+    override fun diagLog(category: String, event: String, detail: String) {
+        runCatching { engine?.diagLog(category, event, detail) }
+    }
+
+    override suspend fun diagExport(about: String): String = call { diagExport(about) }.getOrDefault("")
+
+    override suspend fun diagClear() { call { diagClear() } }
+
+    override suspend fun setDiagEnabled(on: Boolean) {
+        com.duochat.app.engine.Diag.on = on
+        call { setDiagEnabled(on) }
+    }
+
+    override suspend fun diagStatusJson(): String = call { diagStatusJson() }.getOrDefault("{}")
 
     override suspend fun setSecureScreen(on: Boolean) { call { setSecureScreen(on) }.also { requestRefresh() } }
 
