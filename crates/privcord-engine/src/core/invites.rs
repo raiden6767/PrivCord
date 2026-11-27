@@ -42,6 +42,7 @@ const HELLO_EVERY_MS: i64 = 60_000;
 const HELLO_FOR_MS: i64 = 30 * 60_000;
 /// Requests kept at once: someone who saw our QR code cannot fill the screen with them.
 const MAX_REQUESTS: usize = 20;
+const KV_PENDING: &str = "invites.pending.v1";
 
 struct Hello {
     next_at: i64,
@@ -90,6 +91,9 @@ pub(super) struct InviteState {
     pub(super) requests: BTreeMap<UserId, Request>,
     hellos: BTreeMap<UserId, Hello>,
     seen: SeenSet,
+    /// `requests` and `hellos` are kept across restarts (see `persist_pending`).
+    pending_loaded: bool,
+    pending_saved: Vec<u8>,
 }
 
 /// What a person sees before saving a friend.
@@ -328,6 +332,105 @@ impl Core {
             self.send_hellos();
         }
         Ok(uid)
+    }
+
+    /// People who asked to be added (they wait for a tap) and people we asked to add us back (we keep asking for half an
+    /// hour) survive the app being closed: otherwise a request is lost with the process, and with relays handing a week
+    /// of messages over again the same blob is rightly not handled twice.
+    fn persist_pending(&mut self) {
+        if !self.invites.pending_loaded {
+            let Some(identity) = self.identity.as_ref() else {
+                return;
+            };
+            self.invites.pending_loaded = true;
+            let saved: serde_json::Value = self
+                .ports
+                .storage
+                .kv(KV_PENDING)
+                .ok()
+                .flatten()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or_default();
+            let now = self.now();
+            let mut woke = Vec::new();
+            for (uid, card) in saved
+                .get("requests")
+                .and_then(serde_json::Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                let (Some(text), Ok(uid)) = (card.as_str(), UserId::new(uid)) else {
+                    continue;
+                };
+                let Some(contact) = ContactCard::decode(text) else {
+                    continue;
+                };
+                let Ok(safety_number) =
+                    derive_safety_number(&identity.sign_public(), &contact.card.sign)
+                else {
+                    continue;
+                };
+                if contact.uid == uid && !self.contacts.contains_key(&uid) {
+                    self.invites.requests.insert(
+                        uid.clone(),
+                        Request {
+                            contact,
+                            safety_number,
+                        },
+                    );
+                    woke.push(uid);
+                }
+            }
+            for (uid, until) in saved
+                .get("hellos")
+                .and_then(serde_json::Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                let (Some(until), Ok(uid)) = (until.as_i64(), UserId::new(uid)) else {
+                    continue;
+                };
+                if until > now {
+                    self.invites.hellos.insert(
+                        uid,
+                        Hello {
+                            next_at: now,
+                            until,
+                        },
+                    );
+                }
+            }
+            for uid in woke {
+                self.hub.publish(EngineEvent::InviteRequest { uid });
+            }
+        }
+        let requests: serde_json::Map<String, serde_json::Value> = self
+            .invites
+            .requests
+            .iter()
+            .filter_map(|(u, r)| {
+                Some((
+                    u.to_string(),
+                    serde_json::json!(r.contact.card.encode().ok()?),
+                ))
+            })
+            .collect();
+        let hellos: serde_json::Map<String, serde_json::Value> = self
+            .invites
+            .hellos
+            .iter()
+            .map(|(u, h)| (u.to_string(), serde_json::json!(h.until)))
+            .collect();
+        let bytes =
+            serde_json::to_vec(&serde_json::json!({ "requests": requests, "hellos": hellos }))
+                .unwrap_or_default();
+        if bytes != self.invites.pending_saved {
+            self.invites.pending_saved = bytes.clone();
+            let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+                key: KV_PENDING.into(),
+                value: bytes,
+            }]);
+        }
     }
 
     /// Sends the "please add me back" requests that are due, until the link is up or the time runs out.
@@ -606,6 +709,7 @@ impl Core {
 
     /// Time passes: republish the open invite, expire it, give up on a search, stop listening after an answer.
     pub(super) fn tick_invites(&mut self) {
+        self.persist_pending();
         self.send_hellos();
         let now = self.now();
         let (expired, due) = self.invites.active.as_ref().map_or((false, false), |a| {

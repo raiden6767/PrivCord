@@ -3,7 +3,7 @@
 
 use super::{Action, Event, Out, PutRequest, SignalingStatus};
 use privcord_crypto::{
-    nostr::{accept_relay_message, event_frame, make_event, req_frame},
+    nostr::{accept_relay_message, event_frame, make_event, req_frame, NOSTR_LOOKBACK_SECS},
     rng::Entropy,
     CryptoError,
 };
@@ -80,7 +80,7 @@ impl NostrTransport {
         self.relays.iter_mut().find(|r| r.url == url)
     }
 
-    /// A relay's socket opened: ask for what arrived in the last two minutes.
+    /// A relay's socket opened: ask for what arrived while we were away (up to a week; expired signals are dropped).
     pub fn opened(&mut self, url: &str, now_secs: i64) -> Out {
         let (sub, mailbox) = (
             self.sub_id.clone(),
@@ -94,7 +94,7 @@ impl NostrTransport {
         Out {
             actions: vec![Action::Send {
                 url: url.to_owned(),
-                text: req_frame(&sub, &mailbox, now_secs - 120),
+                text: req_frame(&sub, &mailbox, now_secs - NOSTR_LOOKBACK_SECS),
             }],
             events: vec![],
         }

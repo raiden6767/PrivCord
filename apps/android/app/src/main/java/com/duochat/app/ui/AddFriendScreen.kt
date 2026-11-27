@@ -214,7 +214,8 @@ fun AddFriendScreen(
                     Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Surface(shape = RoundedCornerShape(20.dp), color = androidx.compose.ui.graphics.Color.White) {
                             if (qr != null) {
-                                Image(bitmap = qr.asImageBitmap(), contentDescription = "Your invite as a QR code", modifier = Modifier.padding(12.dp).size(208.dp))
+                                BrightScreenWhileShown()
+                                Image(bitmap = qr.asImageBitmap(), contentDescription = "Your invite as a QR code", modifier = Modifier.padding(12.dp).size(qrSide()))
                             } else {
                                 Box(Modifier.size(232.dp), contentAlignment = Alignment.Center) { Text("Invite not ready", color = androidx.compose.ui.graphics.Color.Black) }
                             }

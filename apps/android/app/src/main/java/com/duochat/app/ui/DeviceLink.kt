@@ -242,10 +242,11 @@ fun LinkHostDialog(
                     code != null -> {
                         val bitmap = remember(code) { qrBitmap(code ?: "") }
                         if (bitmap != null) {
+                            BrightScreenWhileShown()
                             Image(
                                 bitmap.asImageBitmap(),
                                 contentDescription = "Code for the new device",
-                                modifier = Modifier.size(220.dp).align(Alignment.CenterHorizontally),
+                                modifier = Modifier.size(qrSide()).align(Alignment.CenterHorizontally),
                             )
                         }
                         Spacer(Modifier.height(10.dp))
@@ -359,11 +360,12 @@ fun LinkJoinContent(
                 else -> {
                     val bitmap = remember(offer) { qrBitmap(offer ?: "") }
                     if (bitmap != null) {
+                        BrightScreenWhileShown()
                         androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                             Image(
                                 bitmap.asImageBitmap(),
                                 contentDescription = "Code for your other device to scan",
-                                modifier = Modifier.size(220.dp),
+                                modifier = Modifier.size(qrSide()),
                             )
                         }
                     }

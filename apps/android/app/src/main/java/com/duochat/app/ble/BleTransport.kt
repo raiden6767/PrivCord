@@ -259,7 +259,10 @@ class BleTransport(
         adapterWatch = receiver
     }
 
-    private fun fail(message: String) = handlers.onError(message)
+    private fun fail(message: String) {
+        BleLog.add(message)
+        handlers.onError(message)
+    }
 
     /** Runs a radio call; if it throws, this link closes with a message instead of crashing the app. */
     private inline fun radio(block: () -> Unit) {
@@ -371,8 +374,12 @@ class BleTransport(
             .addManufacturerData(BleConstants.COMPANY_ID, currentTag())
             .build()
         val callback = object : AdvertiseCallback() {
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                BleLog.add("advertising: started")
+            }
+
             override fun onStartFailure(errorCode: Int) {
-                handler.post { fail("Bluetooth advertising failed (code $errorCode).") }
+                handler.post { fail("Bluetooth advertising failed (${BleLog.advertiseFailure(errorCode)}).") }
             }
         }
         advertiseCallback = callback
@@ -520,12 +527,14 @@ class BleTransport(
             ScanFilter.Builder().setManufacturerData(BleConstants.COMPANY_ID, tag).build()
         }
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build()
+        BleLog.add("scanning: looking for ${tags.size} tag(s)")
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 handler.post {
                     if (!started || isOpen || clientGatt != null) return@post
                     val data = result.scanRecord?.getManufacturerSpecificData(BleConstants.COMPANY_ID) ?: return@post
                     if (tags.none { it.contentEquals(data) }) return@post
+                    BleLog.add("scanning: saw the friend's tag, connecting")
                     stopScan()
                     radio {
                         val gatt = result.device.connectGatt(context, false, clientCallback, BluetoothDevice.TRANSPORT_LE)
@@ -544,7 +553,7 @@ class BleTransport(
             }
 
             override fun onScanFailed(errorCode: Int) {
-                handler.post { fail("Bluetooth scan failed (code $errorCode).") }
+                handler.post { fail("Bluetooth scan failed (${BleLog.scanFailure(errorCode)}).") }
             }
         }
         scanCallback = callback
@@ -574,6 +583,7 @@ class BleTransport(
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             handler.post {
+                BleLog.add("connection: state $newState, status $status")
                 if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                     // A refused request (or a phone that never answers it) must not stall setup: carry on with the
                     // default packet size.

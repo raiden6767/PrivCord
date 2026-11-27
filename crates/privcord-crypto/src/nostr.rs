@@ -163,6 +163,11 @@ pub fn verify_event(e: &NostrEvent) -> bool {
     check(e).unwrap_or(false)
 }
 
+/// How far back a subscription asks a relay for events: as long as a stored message lives there (a week), so what was
+/// sent while this phone was closed or offline still arrives. Live signals that old are expired and dropped on receipt.
+/// (Two minutes, as it was, lost everything sent while the app was away for longer.)
+pub const NOSTR_LOOKBACK_SECS: i64 = 7 * 24 * 3600;
+
 /// The subscription request for a mailbox: `["REQ", subId, {kinds, "#t": [mailbox], since}]`.
 pub fn req_frame(sub_id: &str, mailbox: &str, since_secs: i64) -> String {
     json!(["REQ", sub_id, { "kinds": [NOSTR_KIND_SIGNAL, NOSTR_KIND_MESSAGE], "#t": [mailbox], "since": since_secs }])

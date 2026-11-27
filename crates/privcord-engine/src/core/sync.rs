@@ -791,6 +791,7 @@ impl Core {
             return;
         }
         self.tick_link_sync();
+        self.backfill_channels();
         self.tick_snapshots();
         if !self.ports.transport.signal_available() {
             if let Some(s) = self.sync.as_mut() {
@@ -1107,6 +1108,28 @@ impl Core {
             }
             _ => {}
         }
+    }
+
+    /// Channels joined before they travelled with the account: put in the log once, so the account's other devices (a laptop
+    /// linked long ago) get them too.
+    fn backfill_channels(&mut self) {
+        const KEY: &str = "sync.backfilled.channels";
+        if matches!(self.ports.storage.kv(KEY), Ok(Some(_))) {
+            return;
+        }
+        let names: Vec<String> = self.channels.keys().cloned().collect();
+        if !names.is_empty() {
+            if let Ok(value) = serde_json::to_vec(&names) {
+                self.recorder.push(vec![StorageOp::SetKv {
+                    key: super::KV_CHANNELS.into(),
+                    value,
+                }]);
+            }
+        }
+        let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+            key: KEY.into(),
+            value: b"1".to_vec(),
+        }]);
     }
 
     /// Puts what this install held before sync into its log, once: contacts, groups, messages (newest first), their

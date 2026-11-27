@@ -2936,7 +2936,8 @@ input[type='checkbox'] {
 }
 
 .qr {
-  width: 200px;
+  /* An invite is a dense code (about 90 squares across): small squares are what a phone camera fails on. */
+  width: min(300px, 100%);
   max-width: 100%;
   margin: 8px auto;
   padding: 8px;
