@@ -105,8 +105,9 @@ enabled = true
 listen = "127.0.0.1:8788"
 ```
 
-Start the server and it prints, once, `admin panel: http://127.0.0.1:8788/admin` and **the owner's admin token**. Save it: only a
-hash is kept. Open the page, paste the token, and you can:
+Start the server and it prints `admin panel: http://127.0.0.1:8788/admin` and the path of `first-admin-token.txt` in `data_dir`, which
+holds **the owner's admin token** (the file is readable by the server's user only, and the token is never printed, so it stays out of
+journals and logs). Copy it and delete the file: only a hash is kept. Open the page, paste the token, and you can:
 
 | | |
 |---|---|

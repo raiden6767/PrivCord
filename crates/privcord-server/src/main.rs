@@ -208,6 +208,7 @@ async fn serve(path: &std::path::Path) -> Result<(), String> {
     let cfg = load(path)?;
     let (relay, turn) = (cfg.relay.enabled, cfg.turn.enabled);
     let admin_tls = cfg.admin.tls;
+    let data_dir = cfg.server.data_dir.clone();
     let running = privcord_server::start(cfg).await?;
     println!(
         "privcord-server {} listening on {} (relay: {relay}, turn: {turn}). Ctrl-C to stop.",
@@ -220,7 +221,13 @@ async fn serve(path: &std::path::Path) -> Result<(), String> {
             if admin_tls { "https" } else { "http" }
         );
         if let Some(t) = running.admin_first_token() {
-            println!("admin token (shown only now, save it): {t}");
+            // Not printed: a terminal's output ends up in a service journal or a log file. A file only this user can read.
+            let file = data_dir.join("first-admin-token.txt");
+            privcord_server::fsutil::write_private_atomic(&file, format!("{t}\n").as_bytes())?;
+            println!(
+                "the owner's admin token is in {} (readable by this user only). Copy it, then delete the file.",
+                file.display()
+            );
         }
     }
     tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;
