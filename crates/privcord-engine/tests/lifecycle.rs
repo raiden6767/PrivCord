@@ -521,6 +521,7 @@ fn emergency_deletion_erases_everything_reports_truthfully_and_continues_after_a
     assert!(a.storage.messages().unwrap().is_empty());
     assert!(a.storage.outbox().unwrap().is_empty());
     assert!(a.storage.kv("channels.v1").unwrap().is_none());
+    assert!(a.storage.kv("pref.channels.v1").unwrap().is_none());
     assert!(a.core.snapshot().contacts.is_empty() && a.core.snapshot().channels.is_empty());
     // And the app starts over: a new identity can be made.
     assert!(a.core.create_identity().is_ok());
@@ -1227,4 +1228,98 @@ fn an_open_invite_slows_down_after_a_minute_and_stops_when_closed() {
     a.clock.advance(60_000);
     a.core.tick();
     assert_eq!(puts(&a), 0);
+}
+
+/// The same install started again: its storage and keys are as they were, its memory is empty.
+fn restart(n: Node, seed: &str) -> Node {
+    let Node {
+        core,
+        transport,
+        storage,
+        secure,
+        clock,
+        uid,
+        ..
+    } = n;
+    drop(core);
+    let mut core = Core::new(Ports {
+        storage: storage.clone(),
+        secure: secure.clone(),
+        transport: transport.clone(),
+        clock: clock.clone(),
+        notifier: RecordingNotifier::new(),
+        entropy: Box::new(SeededEntropy::new(seed)),
+    })
+    .unwrap();
+    let events = core.subscribe();
+    Node {
+        core,
+        transport,
+        storage,
+        secure,
+        clock,
+        events,
+        uid,
+    }
+}
+
+#[test]
+fn a_message_the_relay_hands_over_again_after_a_restart_is_not_handled_twice() {
+    // A subscription now reaches back a week, so after a restart the relay hands over everything still stored.
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut a, mut b) = (node("alice", &clock), node("bob", &clock));
+    a.transport.set_signaling(true);
+    b.transport.set_signaling(true);
+    let bob_card = b.core.own_card(Some("Bob")).unwrap();
+    a.core.accept_invite(&bob_card).unwrap();
+    let bob_mailbox = privcord_crypto::seal::mailbox_for(b.uid.as_str());
+    let hello: Vec<_> = put_blobs(&a)
+        .into_iter()
+        .filter(|(m, _, _)| *m == bob_mailbox)
+        .collect();
+    assert!(!hello.is_empty());
+    for (m, blob, _) in &hello {
+        b.core.signal_blob(m, blob);
+    }
+    assert!(b.core.snapshot().requests.iter().any(|r| r.uid == a.uid));
+    // Bob's phone notes what it has handled, then is closed and opened again.
+    clock.advance(25_000);
+    b.core.tick();
+    let mut b = restart(b, "bob again");
+    b.core.tick();
+    // The request that was waiting for a tap is still waiting (it lived in memory only, and would have been lost).
+    assert!(b.core.snapshot().requests.iter().any(|r| r.uid == a.uid));
+    drain_events(&mut b);
+    for (m, blob, _) in &hello {
+        b.core.signal_blob(m, blob);
+    }
+    assert_eq!(b.core.snapshot().requests.len(), 1);
+    assert!(
+        !drain_events(&mut b)
+            .iter()
+            .any(|e| matches!(e, EngineEvent::InviteRequest { .. })),
+        "the same blob handed over again is not a new request"
+    );
+    // And it can still be accepted.
+    assert_eq!(b.core.accept_request(&a.uid).unwrap(), a.uid);
+}
+
+#[test]
+fn asking_someone_to_add_us_back_carries_on_after_the_app_is_closed_and_opened_again() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut a, b) = (node("alice", &clock), node("bob", &clock));
+    a.transport.set_signaling(true);
+    let bob_card = b.core.own_card(Some("Bob")).unwrap();
+    let bob_mailbox = privcord_crypto::seal::mailbox_for(b.uid.as_str());
+    a.core.accept_invite(&bob_card).unwrap();
+    put_blobs(&a);
+    a.core.tick(); // kept
+    let mut a = restart(a, "alice again");
+    a.transport.set_signaling(true);
+    clock.advance(2_000);
+    a.core.tick();
+    assert!(
+        put_blobs(&a).iter().any(|(m, _, _)| *m == bob_mailbox),
+        "the ask goes out again after a restart"
+    );
 }

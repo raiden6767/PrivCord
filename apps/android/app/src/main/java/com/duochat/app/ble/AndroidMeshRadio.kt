@@ -259,7 +259,15 @@ class AndroidMeshRadio(private val context: Context) : MeshRadio {
             .build()
         val data = AdvertiseData.Builder().setIncludeDeviceName(false).addServiceUuid(ParcelUuid(SERVICE)).build()
         val scanResponse = AdvertiseData.Builder().setIncludeDeviceName(false).addManufacturerData(COMPANY_ID, nodeId).build()
-        val callback = object : AdvertiseCallback() {}
+        val callback = object : AdvertiseCallback() {
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                BleLog.add("mesh advertising: started")
+            }
+
+            override fun onStartFailure(errorCode: Int) {
+                BleLog.add("mesh advertising failed (${BleLog.advertiseFailure(errorCode)})")
+            }
+        }
         advertiseCallback = callback
         advertiser.startAdvertising(settings, data, scanResponse, callback)
     }
@@ -283,7 +291,12 @@ class AndroidMeshRadio(private val context: Context) : MeshRadio {
         }
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE)).build()
         val settings = ScanSettings.Builder().setScanMode(mode).build()
+        BleLog.add("mesh scanning: started")
         val callback = object : ScanCallback() {
+            override fun onScanFailed(errorCode: Int) {
+                BleLog.add("mesh scan failed (${BleLog.scanFailure(errorCode)})")
+            }
+
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val theirId = result.scanRecord?.getManufacturerSpecificData(COMPANY_ID) ?: return
                 // Only the phone with the smaller node id connects out, so a pair never links twice.

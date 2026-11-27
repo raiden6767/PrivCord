@@ -162,6 +162,13 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
     ) {
+        // This is its own full-screen window, and on some phones the system does not report the navigation bar or gesture
+        // area to it, so the capture button would sit under it. Room at the bottom that does not depend on that, and
+        // controls that grow and shrink with the screen.
+        val screen = androidx.compose.ui.platform.LocalConfiguration.current
+        val bottomRoom = (screen.screenHeightDp * 0.07f).dp.coerceIn(28.dp, 72.dp)
+        val captureSize = (screen.screenWidthDp * 0.19f).dp.coerceIn(60.dp, 84.dp)
+        val sideSize = (captureSize * 0.74f).coerceAtLeast(48.dp)
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -263,11 +270,11 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
                 )
                 Spacer(Modifier.weight(1f))
                 Row(
-                    Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    Modifier.fillMaxWidth().padding(bottom = bottomRoom),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = { gallery.launch("image/*") }, modifier = Modifier.size(56.dp)) {
+                    IconButton(onClick = { gallery.launch("image/*") }, modifier = Modifier.size(sideSize)) {
                         Icon(Icons.Filled.PhotoLibrary, contentDescription = "Read a code from a picture", tint = Color.White)
                     }
                     // Manual: a full-resolution photo, read with more effort than a live frame gets.
@@ -293,14 +300,14 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
                         },
                         shape = CircleShape,
                         color = Color.White,
-                        modifier = Modifier.size(76.dp).semantics { contentDescription = "Take a photo of the code" },
+                        modifier = Modifier.size(captureSize).semantics { contentDescription = "Take a photo of the code" },
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             if (busy) CircularProgressIndicator(Modifier.size(28.dp), color = Color.Black, strokeWidth = 3.dp)
-                            else Box(Modifier.size(62.dp).background(Color.White, CircleShape).padding(2.dp).background(Color.Black.copy(alpha = 0.08f), CircleShape))
+                            else Box(Modifier.size(captureSize - 14.dp).background(Color.White, CircleShape).padding(2.dp).background(Color.Black.copy(alpha = 0.08f), CircleShape))
                         }
                     }
-                    Spacer(Modifier.size(56.dp))
+                    Spacer(Modifier.size(sideSize))
                 }
             }
         }

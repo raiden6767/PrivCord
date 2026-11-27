@@ -108,7 +108,10 @@ const RECONNECT_ON_SEND_AFTER_MS: i64 = 30_000;
 const KV_DEVICE_ID: &str = "device_id";
 const KV_GROUP_ONLY: &str = "settings.group_only";
 pub(super) const KV_GROUPS: &str = "groups.v1";
-const KV_CHANNELS: &str = "channels.v1";
+/// The channels joined. Kept as a preference ("pref." keys travel to the account's other devices), so a channel joined on
+/// the phone shows up on the laptop too. (Older installs kept it under `channels.v1`; that is read when this is not there.)
+const KV_CHANNELS: &str = "pref.channels.v1";
+const KV_CHANNELS_OLD: &str = "channels.v1";
 const KV_CHANNEL_PEOPLE: &str = "channel.people.v1";
 /// Channel authors whose names we remember at most.
 const MAX_CHANNEL_PEOPLE: usize = 2000;
@@ -476,7 +479,11 @@ impl Core {
             .is_some_and(|v| v == b"1");
         self.ensure_devices()?;
         self.ensure_groups()?;
-        if let Some(bytes) = self.ports.storage.kv(KV_CHANNELS)? {
+        let joined = match self.ports.storage.kv(KV_CHANNELS)? {
+            Some(b) => Some(b),
+            None => self.ports.storage.kv(KV_CHANNELS_OLD)?,
+        };
+        if let Some(bytes) = joined {
             if let Ok(names) = serde_json::from_slice::<Vec<String>>(&bytes) {
                 for n in names {
                     if let Some(name) = normalize_channel_name(&n) {

@@ -200,6 +200,18 @@ impl SeenSet {
         }
     }
 
+    /// The ids held, oldest first (to keep them across a restart).
+    pub fn ids(&self) -> Vec<String> {
+        self.order.iter().cloned().collect()
+    }
+
+    /// Takes ids kept from before (oldest first) as already seen.
+    pub fn restore(&mut self, ids: impl IntoIterator<Item = String>) {
+        for id in ids {
+            self.first_time(&id);
+        }
+    }
+
     /// True the first time `id` is offered.
     pub fn first_time(&mut self, id: &str) -> bool {
         if !self.set.insert(id.to_owned()) {

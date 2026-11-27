@@ -52,7 +52,10 @@ class NostrTransport(
     }
 
     private fun opened(s: ManagedSocket) {
-        val since = System.currentTimeMillis() / 1000 - 120
+        // As far back as a stored message lives on a relay (a week): what was sent while the app was closed still arrives.
+        // (Two minutes, as it was, lost everything sent while the app was away for longer. Live signals that old have
+        // expired and are dropped on receipt.)
+        val since = System.currentTimeMillis() / 1000 - 7 * 24 * 3600
         val filter = JSONObject()
             .put("kinds", JSONArray(listOf(NOSTR_KIND_SIGNAL, NOSTR_KIND_MESSAGE)))
             .put("#t", JSONArray(listOf(mailbox)))

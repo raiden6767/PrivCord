@@ -2899,3 +2899,51 @@ fn a_contact_who_ran_out_of_one_time_keys_is_sent_a_fresh_batch_when_we_come_bac
         .count();
     assert_eq!(big, 0, "no new batch while keys are plentiful");
 }
+
+#[test]
+fn a_channel_joined_on_the_phone_shows_up_on_the_laptop_and_leaving_follows() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    phone.core.create_identity().unwrap();
+    let mut laptop = link_laptop(&mut phone, &mut relay, &clock);
+    let name = phone.core.join_channel("#General Chat").unwrap();
+    for _ in 0..6 {
+        phone.online(&mut relay);
+        laptop.online(&mut relay);
+    }
+    assert!(
+        laptop.core.snapshot().channels.contains(&name),
+        "the laptop did not get the channel: {:?}",
+        laptop.core.snapshot().channels
+    );
+    phone.core.leave_channel(&name).unwrap();
+    for _ in 0..6 {
+        phone.online(&mut relay);
+        laptop.online(&mut relay);
+    }
+    assert!(laptop.core.snapshot().channels.is_empty());
+}
+
+#[test]
+fn a_channel_joined_before_it_travelled_reaches_a_laptop_linked_later() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    phone.core.create_identity().unwrap();
+    // Joined while nothing was linked (and so nothing was recorded).
+    let name = phone.core.join_channel("lounge").unwrap();
+    for _ in 0..3 {
+        phone.online(&mut relay);
+    }
+    let mut laptop = link_laptop(&mut phone, &mut relay, &clock);
+    for _ in 0..8 {
+        phone.online(&mut relay);
+        laptop.online(&mut relay);
+    }
+    assert!(
+        laptop.core.snapshot().channels.contains(&name),
+        "{:?}",
+        laptop.core.snapshot().channels
+    );
+}

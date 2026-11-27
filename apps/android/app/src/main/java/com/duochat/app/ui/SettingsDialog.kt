@@ -454,8 +454,22 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                DetailRow("Friends connected now", "${state.linkCount} of ${state.contacts.size}")
-                DetailRow("Messages waiting to send", state.queuedCount.toString())
+                // The same words, in the same order, as the Windows app's Connection page.
+                Text(
+                    when (state.signaling) {
+                        com.duochat.app.signaling.SignalingStatus.ONLINE -> "Online. Friends can find you."
+                        com.duochat.app.signaling.SignalingStatus.CONNECTING -> "Connecting…"
+                        com.duochat.app.signaling.SignalingStatus.IDLE -> "No connection service is on. Only Bluetooth and open connections work."
+                        com.duochat.app.signaling.SignalingStatus.ERROR -> "Could not reach the connection service. Retrying."
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    "${state.linkCount} of ${state.contacts.size} friends connected" +
+                        if (state.queuedCount > 0) " · ${state.queuedCount} message${if (state.queuedCount == 1) "" else "s"} waiting" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = { advanced = !advanced }) {
                     Text(if (advanced) "Hide advanced options" else "Advanced options (for people who want control)")
@@ -1101,6 +1115,25 @@ private fun BluetoothBlock(
     message?.let {
         Spacer(Modifier.height(4.dp))
         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+    // What the radio did lately (advertising, scans, connections, with Android's codes), so a test that fails says why.
+    val radioLog by androidx.compose.runtime.produceState(com.duochat.app.ble.BleLog.recent()) {
+        while (true) {
+            value = com.duochat.app.ble.BleLog.recent()
+            kotlinx.coroutines.delay(2_000)
+        }
+    }
+    if (radioLog.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Text("What Bluetooth did lately", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            Text(
+                radioLog.joinToString("\n"),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
     if (rationale) {
         AlertDialog(

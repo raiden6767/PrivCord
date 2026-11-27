@@ -115,7 +115,8 @@ export class NostrTransport implements SignalingTransport {
     link.socket = socket;
     socket.onopen = () => {
       link.attempt = 0;
-      const since = Math.floor(Date.now() / 1000) - 120;
+      // As far back as a stored message lives on a relay (a week): what was sent while the app was closed still arrives.
+      const since = Math.floor(Date.now() / 1000) - 7 * 24 * 3600;
       socket.send(
         JSON.stringify(['REQ', this.subId, { kinds: [NOSTR_KIND_SIGNAL, NOSTR_KIND_MESSAGE], '#t': [this.mailbox], since }]),
       );

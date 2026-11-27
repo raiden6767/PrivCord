@@ -48,7 +48,15 @@ pub(super) struct SealedState {
     /// (message, member) pairs handed to other members to pass on: when last, and how many rounds so far.
     meshed: std::collections::HashMap<(MessageId, UserId), (i64, u32)>,
     seen: SeenSet,
+    /// The ids in `seen` are kept across restarts: a subscription now reaches back a week, so without this every start would
+    /// hand the same stored messages over again.
+    seen_loaded: bool,
+    seen_dirty: bool,
+    seen_saved_at: i64,
 }
+
+const KV_SEEN: &str = "signaling.seen.v1";
+const SEEN_SAVE_EVERY_MS: i64 = 20_000;
 
 impl Core {
     pub(super) fn inbound_transport(&self) -> privcord_domain::message::TransportKind {
@@ -239,8 +247,35 @@ impl Core {
         }
     }
 
+    /// Loads the blobs already handled (once), and saves them when they changed (at most every few seconds).
+    fn persist_seen(&mut self) {
+        if !self.sealed.seen_loaded {
+            self.sealed.seen_loaded = true;
+            if let Ok(Some(bytes)) = self.ports.storage.kv(KV_SEEN) {
+                if let Ok(ids) = serde_json::from_slice::<Vec<String>>(&bytes) {
+                    self.sealed.seen.restore(ids);
+                }
+            }
+        }
+        let now = self.now();
+        if self.sealed.seen_dirty && now - self.sealed.seen_saved_at >= SEEN_SAVE_EVERY_MS {
+            self.sealed.seen_dirty = false;
+            self.sealed.seen_saved_at = now;
+            if let Ok(value) = serde_json::to_vec(&self.sealed.seen.ids()) {
+                let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+                    key: KV_SEEN.into(),
+                    value,
+                }]);
+            }
+        }
+    }
+
     /// A blob on our own mailbox (from the service, or handed over by a contact).
     pub(super) fn handle_own_blob(&mut self, blob: SealedBlob) {
+        // The ids are loaded before the first blob is looked at (a blob can arrive before the first tick).
+        if !self.sealed.seen_loaded {
+            self.persist_seen();
+        }
         if !self
             .sealed
             .seen
@@ -248,6 +283,7 @@ impl Core {
         {
             return;
         }
+        self.sealed.seen_dirty = true;
         let (Ok(person), Ok(own)) = (
             UserId::new(blob.from.as_str()),
             UserId::new(blob.to.as_str()),
@@ -564,6 +600,7 @@ impl Core {
     /// Listen on our own mailbox once signaling is up, and (only with store-and-forward on) put messages for friends who
     /// are offline on the relay.
     pub(super) fn tick_sealed(&mut self) {
+        self.persist_seen();
         let available = self.ports.transport.signal_available();
         if !available {
             self.sealed.subscribed.clear();

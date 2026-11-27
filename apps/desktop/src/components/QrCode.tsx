@@ -8,7 +8,7 @@ export function QrCode({ value, label }: { value: string; label: string }) {
       const qr = qrcode(0, 'L');
       qr.addData(value);
       qr.make();
-      return qr.createSvgTag({ scalable: true, margin: 2 });
+      return qr.createSvgTag({ scalable: true, margin: 4 });
     } catch {
       return null;
     }

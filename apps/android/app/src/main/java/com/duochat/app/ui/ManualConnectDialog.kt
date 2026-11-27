@@ -467,6 +467,7 @@ private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
 private fun CodeBlock(code: String, onCopy: () -> Unit) {
     val bitmap = remember(code) { qrBitmap(code) }
     if (bitmap != null) {
+        BrightScreenWhileShown()
         Spacer(Modifier.height(4.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -476,7 +477,7 @@ private fun CodeBlock(code: String, onCopy: () -> Unit) {
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = "Connection QR code",
                 modifier = Modifier
-                    .size(240.dp)
+                    .size(qrSide())
                     .background(androidx.compose.ui.graphics.Color.White)
                     .padding(8.dp),
             )
