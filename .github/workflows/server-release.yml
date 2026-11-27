@@ -1,0 +1,23 @@
+# Builds privcord-server binaries on demand only (CI minutes are limited): run it from the Actions tab.
+name: Server binaries
+permissions:
+  contents: read
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux-x86_64 }
+          - { os: macos-latest, name: macos-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p privcord-server
+      - run: cp target/release/privcord-server privcord-server-${{ matrix.name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: privcord-server-${{ matrix.name }}
+          path: privcord-server-${{ matrix.name }}

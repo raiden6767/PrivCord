@@ -1,0 +1,240 @@
+//! The server's settings: a TOML file (or the defaults), with a few switches on the command line. Every limit has a safe
+//! default, so an empty file is a working relay.
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub nostr: NostrConfig,
+    pub server: ServerConfig,
+    pub relay: RelayConfig,
+    pub turn: TurnConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerConfig {
+    /// Where to listen for the relay (WebSocket) and the small web pages (`/healthz`, `/turn`).
+    pub listen: String,
+    /// Where the relay keeps what is waiting for people (and the TURN secret).
+    pub data_dir: PathBuf,
+    /// Read the visitor's address from `X-Forwarded-For` (only behind a proxy you control, such as Caddy or nginx).
+    pub trust_proxy: bool,
+    /// Who may use this server. Empty: anyone. Otherwise a visitor must present one of these (as `?token=...` on the relay
+    /// address, or as `Authorization: Bearer ...`).
+    pub access_tokens: Vec<String>,
+    /// The words shown to people who add this server: who runs it and how to reach them.
+    pub admin_contact: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RelayConfig {
+    pub enabled: bool,
+    /// Keep sealed messages for people who are offline (up to a week). Off: only live signals pass through.
+    pub store_and_forward: bool,
+    /// Messages per minute from one address.
+    pub rate_limit: u64,
+    pub max_subs_per_conn: usize,
+    pub max_per_mailbox_per_ip: usize,
+    pub max_conns_per_ip: usize,
+    /// Messages kept in all, and their total size.
+    pub max_queued: usize,
+    pub max_queued_bytes: usize,
+    /// What may wait to be written to one connection before it is cut off as too slow.
+    pub max_buffered_per_conn: usize,
+    /// When this much is waiting to be written across all connections, senders are slowed down (their sockets are not
+    /// read) until listeners catch up. Keeps memory flat under a flood.
+    pub backpressure_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TurnConfig {
+    pub enabled: bool,
+    /// Where the TURN server listens (UDP).
+    pub listen: String,
+    /// The address phones reach this machine at from the internet (the one in the TURN answers). Required when enabled.
+    pub public_ip: String,
+    pub realm: String,
+    /// The ports used to relay traffic. Open this UDP range in your firewall.
+    pub min_port: u16,
+    pub max_port: u16,
+    /// How long handed-out credentials last.
+    pub ttl_secs: u64,
+    /// Fixed accounts, `name:password`, for apps that can only type a TURN password in by hand.
+    pub users: Vec<String>,
+    /// Let people relay to private addresses (this machine, your home network). Off, and best left off.
+    pub allow_private_peers: bool,
+    /// A speed limit for each relayed connection, in kilobits per second. 0: none.
+    pub max_kbps: u64,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            listen: "0.0.0.0:8787".into(),
+            data_dir: PathBuf::from("./data"),
+            trust_proxy: false,
+            access_tokens: Vec::new(),
+            admin_contact: String::new(),
+        }
+    }
+}
+
+impl Default for RelayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            store_and_forward: true,
+            rate_limit: 600,
+            max_subs_per_conn: 64,
+            max_per_mailbox_per_ip: 100,
+            max_conns_per_ip: 20,
+            max_queued: 50_000,
+            max_queued_bytes: 256 * 1024 * 1024,
+            max_buffered_per_conn: 64 * 1024 * 1024,
+            backpressure_bytes: 32 * 1024 * 1024,
+        }
+    }
+}
+
+impl Default for TurnConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: "0.0.0.0:3478".into(),
+            public_ip: String::new(),
+            realm: "privcord".into(),
+            min_port: 49152,
+            max_port: 49400,
+            ttl_secs: 3600,
+            users: Vec::new(),
+            allow_private_peers: false,
+            max_kbps: 0,
+        }
+    }
+}
+
+impl Config {
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+        toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// What would stop this from working, in words (empty: fine).
+    pub fn problems(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.relay.enabled && !self.turn.enabled && !self.nostr.enabled {
+            out.push("the relay, Nostr and TURN are all off: there is nothing to run".into());
+        }
+        if self.server.listen.parse::<std::net::SocketAddr>().is_err() {
+            out.push(format!(
+                "server.listen \"{}\" is not an address like 0.0.0.0:8787",
+                self.server.listen
+            ));
+        }
+        for k in self
+            .nostr
+            .allowed_pubkeys
+            .iter()
+            .chain(&self.nostr.blocked_pubkeys)
+        {
+            if k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit()) {
+                out.push(format!("nostr key \"{k}\" is not 64 hex characters"));
+            }
+        }
+        if self.turn.enabled {
+            if self.turn.public_ip.parse::<std::net::IpAddr>().is_err() {
+                out.push("turn.public_ip must be this machine's public IP address (phones are told to send traffic there)".into());
+            }
+            if self.turn.listen.parse::<std::net::SocketAddr>().is_err() {
+                out.push(format!(
+                    "turn.listen \"{}\" is not an address like 0.0.0.0:3478",
+                    self.turn.listen
+                ));
+            }
+            if self.turn.min_port == 0 || self.turn.max_port < self.turn.min_port {
+                out.push(
+                    "turn.min_port and turn.max_port must be a range of ports, lowest first".into(),
+                );
+            }
+            for u in &self.turn.users {
+                if !u.contains(':') {
+                    out.push(format!(
+                        "turn.users entry \"{u}\" must look like name:password"
+                    ));
+                }
+            }
+        }
+        out
+    }
+}
+
+/// The Nostr relay role (NIP-01 and friends), on the same port as the PrivCord relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NostrConfig {
+    /// Off unless you want this server to be a Nostr relay too. Anything published is stored readable by you, the operator.
+    pub enabled: bool,
+    /// Keep events (regular, replaceable, addressable). Off: only live delivery.
+    pub store_events: bool,
+    pub name: String,
+    pub description: String,
+    pub icon: String,
+    pub max_event_bytes: usize,
+    pub max_message_bytes: usize,
+    pub max_tags: usize,
+    pub max_subs_per_conn: usize,
+    pub max_filters: usize,
+    pub max_limit: usize,
+    pub max_subid_len: usize,
+    pub events_per_minute_per_ip: u64,
+    /// Leading zero bits an event id needs (NIP-13). 0: none.
+    pub min_pow: u32,
+    pub auth_required: bool,
+    pub created_at_upper_secs: i64,
+    /// 0: any age.
+    pub created_at_lower_secs: i64,
+    /// Events older than this are dropped (replaceable ones stay). 0: keep.
+    pub retention_days: u64,
+    pub max_events: usize,
+    /// Hex public keys. If any are listed, only they may publish.
+    pub allowed_pubkeys: Vec<String>,
+    pub blocked_pubkeys: Vec<String>,
+    pub allowed_kinds: Vec<u64>,
+    pub blocked_kinds: Vec<u64>,
+}
+
+impl Default for NostrConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            store_events: true,
+            name: "PrivCord server".into(),
+            description: "A relay run by its administrator.".into(),
+            icon: String::new(),
+            max_event_bytes: 131_072,
+            max_message_bytes: 262_144,
+            max_tags: 2_000,
+            max_subs_per_conn: 32,
+            max_filters: 16,
+            max_limit: 500,
+            max_subid_len: 64,
+            events_per_minute_per_ip: 600,
+            min_pow: 0,
+            auth_required: false,
+            created_at_upper_secs: 900,
+            created_at_lower_secs: 0,
+            retention_days: 30,
+            max_events: 1_000_000,
+            allowed_pubkeys: Vec::new(),
+            blocked_pubkeys: Vec::new(),
+            allowed_kinds: Vec::new(),
+            blocked_kinds: Vec::new(),
+        }
+    }
+}

@@ -47,5 +47,8 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist
+      # The deploy step looks the artifact up straight after it was uploaded, and GitHub can answer "none found" for a
+      # moment (it failed this way twice). A short pause avoids that.
+      - run: sleep 15
       - id: deployment
         uses: actions/deploy-pages@v5
