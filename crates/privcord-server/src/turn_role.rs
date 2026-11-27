@@ -279,7 +279,13 @@ pub mod server {
 
     pub struct TurnServer {
         server: Server,
+        /// Where the UDP side listens.
         pub addr: SocketAddr,
+        /// Where TURN over TCP / over TLS listens, if enabled.
+        pub tcp_addr: Option<SocketAddr>,
+        pub tls_addr: Option<SocketAddr>,
+        stop: tokio::sync::watch::Sender<bool>,
+        listeners: Vec<tokio::task::JoinHandle<()>>,
     }
 
     impl std::fmt::Debug for TurnServer {
@@ -290,42 +296,85 @@ pub mod server {
 
     impl TurnServer {
         pub async fn close(&self) {
+            let _ = self.stop.send(true);
             let _ = self.server.close().await;
+        }
+
+        /// Waits for the TCP and TLS listeners to finish (after `close`).
+        pub async fn finish(self) {
+            for l in self.listeners {
+                let _ = l.await;
+            }
         }
     }
 
-    /// Starts the TURN server on UDP. `public_ip` is what phones are told to send traffic to.
+    /// Starts the TURN server: UDP, and TURN over TCP and over TLS when asked. `public_ip` is what phones are told to send
+    /// traffic to.
     pub async fn start(
         cfg: &TurnConfig,
         secret: Vec<u8>,
         public_ip: std::net::IpAddr,
+        tls: Option<&crate::tls::Tls>,
     ) -> Result<TurnServer, String> {
         let socket = tokio::net::UdpSocket::bind(&cfg.listen)
             .await
             .map_err(|e| format!("could not listen for TURN on {} (UDP): {e}", cfg.listen))?;
         let addr = socket.local_addr().map_err(|e| e.to_string())?;
-        let users = cfg
+        let users: HashMap<String, String> = cfg
             .users
             .iter()
             .filter_map(|u| u.split_once(':').map(|(n, p)| (n.to_owned(), p.to_owned())))
             .collect();
-        let relay = RelayAddressGeneratorRanges {
-            relay_address: public_ip,
-            min_port: cfg.min_port,
-            max_port: cfg.max_port,
-            max_retries: 20,
-            address: "0.0.0.0".into(),
-            net: Arc::new(Net::new(None)),
+        // Every transport relays the same way: its own generator (they share the port range; a taken port is retried).
+        let generator = || -> Box<dyn RelayAddressGenerator + Send + Sync> {
+            Box::new(Gen {
+                inner: RelayAddressGeneratorRanges {
+                    relay_address: public_ip,
+                    min_port: cfg.min_port,
+                    max_port: cfg.max_port,
+                    max_retries: 20,
+                    address: "0.0.0.0".into(),
+                    net: Arc::new(Net::new(None)),
+                },
+                allow_private: cfg.allow_private_peers,
+                kbps: cfg.max_kbps,
+            })
         };
+        let mut conn_configs = vec![ConnConfig {
+            conn: Arc::new(socket),
+            relay_addr_generator: generator(),
+        }];
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let mut listeners = Vec::new();
+        let stream_listener = |listen: &str, acceptor: Option<tokio_rustls::TlsAcceptor>| {
+            let listen = listen.to_owned();
+            let stopped = stopped.clone();
+            async move {
+                let tcp = tokio::net::TcpListener::bind(&listen)
+                    .await
+                    .map_err(|e| format!("could not listen for TURN on {listen} (TCP): {e}"))?;
+                let local = tcp.local_addr().map_err(|e| e.to_string())?;
+                let mux = crate::turn_stream::StreamMux::new(local);
+                let task = crate::turn_stream::spawn_listener(mux.clone(), tcp, acceptor, stopped);
+                Ok::<_, String>((mux, task, local))
+            }
+        };
+        let (mut tcp_addr, mut tls_addr) = (None, None);
+        if !cfg.tcp_listen.is_empty() {
+            let (mux, task, local) = stream_listener(&cfg.tcp_listen, None).await?;
+            conn_configs.push(ConnConfig { conn: mux, relay_addr_generator: generator() });
+            listeners.push(task);
+            tcp_addr = Some(local);
+        }
+        if !cfg.tls_listen.is_empty() {
+            let tls = tls.ok_or("turn.tls_listen needs a certificate ([tls])")?;
+            let (mux, task, local) = stream_listener(&cfg.tls_listen, Some(tls.turn.clone())).await?;
+            conn_configs.push(ConnConfig { conn: mux, relay_addr_generator: generator() });
+            listeners.push(task);
+            tls_addr = Some(local);
+        }
         let server = Server::new(ServerConfig {
-            conn_configs: vec![ConnConfig {
-                conn: Arc::new(socket),
-                relay_addr_generator: Box::new(Gen {
-                    inner: relay,
-                    allow_private: cfg.allow_private_peers,
-                    kbps: cfg.max_kbps,
-                }),
-            }],
+            conn_configs,
             realm: cfg.realm.clone(),
             auth_handler: Arc::new(Auth { secret, users }),
             channel_bind_timeout: Duration::from_secs(0),
@@ -333,7 +382,7 @@ pub mod server {
         })
         .await
         .map_err(|e| format!("could not start TURN: {e}"))?;
-        Ok(TurnServer { server, addr })
+        Ok(TurnServer { server, addr, tcp_addr, tls_addr, stop, listeners })
     }
 }
 

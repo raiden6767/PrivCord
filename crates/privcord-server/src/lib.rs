@@ -10,6 +10,8 @@ pub mod relay;
 pub mod store;
 pub mod tls;
 pub mod turn_role;
+#[cfg(feature = "turn")]
+pub mod turn_stream;
 
 use axum::serve::ListenerExt;
 use config::Config;
@@ -25,6 +27,7 @@ pub struct Running {
     done: tokio::task::JoinHandle<()>,
     relay: Option<Arc<Relay>>,
     turn_port: Option<u16>,
+    turn_ports: Option<(Option<u16>, Option<u16>)>,
     tls_addr: Option<SocketAddr>,
     tls: Option<Arc<tls::Tls>>,
 }
@@ -47,6 +50,11 @@ impl Running {
     /// The certificate in use (tests use it to trust a self-signed one).
     pub fn tls(&self) -> Option<&Arc<tls::Tls>> {
         self.tls.as_ref()
+    }
+
+    /// The TCP and TLS ports of the TURN role, when they are on.
+    pub fn turn_stream_ports(&self) -> (Option<u16>, Option<u16>) {
+        self.turn_ports.unwrap_or((None, None))
     }
 
     pub fn turn_port(&self) -> Option<u16> {
@@ -97,9 +105,17 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             .public_ip
             .parse()
             .map_err(|_| "bad turn.public_ip".to_owned())?;
-        let server = turn_role::server::start(&cfg.turn, secret.clone(), ip).await?;
-        let url = format!("turn:{ip}:{}", server.addr.port());
-        Some((server, secret, vec![url]))
+        let server = turn_role::server::start(&cfg.turn, secret.clone(), ip, tls.as_deref()).await?;
+        // What phones are told: UDP first, then the ways through a network that blocks it.
+        let mut urls = vec![format!("turn:{ip}:{}", server.addr.port())];
+        if let Some(a) = server.tcp_addr {
+            urls.push(format!("turn:{ip}:{}?transport=tcp", a.port()));
+        }
+        if let Some(a) = server.tls_addr {
+            let host = if cfg.tls.domain.is_empty() { ip.to_string() } else { cfg.tls.domain.clone() };
+            urls.push(format!("turns:{host}:{}?transport=tcp", a.port()));
+        }
+        Some((server, secret, urls))
     } else {
         None
     };
@@ -118,6 +134,10 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     };
     #[cfg(feature = "turn")]
     let turn_port = turn_server.as_ref().map(|t| t.addr.port());
+    #[cfg(feature = "turn")]
+    let turn_ports = turn_server.as_ref().map(|t| (t.tcp_addr.map(|a| a.port()), t.tls_addr.map(|a| a.port())));
+    #[cfg(not(feature = "turn"))]
+    let turn_ports: Option<(Option<u16>, Option<u16>)> = None;
     #[cfg(not(feature = "turn"))]
     let turn_port = None;
     #[cfg(not(feature = "turn"))]
@@ -212,6 +232,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         #[cfg(feature = "turn")]
         if let Some(t) = turn_server {
             t.close().await;
+            t.finish().await;
         }
         if let Some(s) = sweeper {
             let _ = s.await;
@@ -227,6 +248,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         done,
         relay,
         turn_port,
+        turn_ports,
         tls_addr,
         tls,
     })
