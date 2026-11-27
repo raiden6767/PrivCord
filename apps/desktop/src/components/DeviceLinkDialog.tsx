@@ -140,9 +140,11 @@ export function DeviceLinkDialog({
         <p className="status-text error" role="alert">
           {ended === 'expired' ? 'The code expired. Start again.' : ended === 'cancelled' ? 'Linking was cancelled.' : 'Linking did not work. Start again.'}
         </p>
+      ) : mode === 'join' && stage === 'matched' && !offer ? (
+        <p className="muted">Digits match. Waiting for your other device to finish…</p>
       ) : link?.stage === 'code' && link.code ? (
         <div className="link-compare">
-          <p>{mode === 'host' ? `${link.name ?? 'A device'} wants to join. Does it show these digits?` : 'Check that your other device shows the same digits, then confirm there.'}</p>
+          <p>{mode === 'host' ? `${link.name ?? 'A device'} wants to join. Does it show these digits?` : 'Look at your other device. Does it show the same digits?'}</p>
           <p className="link-digits" aria-label="Six digit code">
             {link.code.slice(0, 3)} {link.code.slice(3)}
           </p>
@@ -156,7 +158,17 @@ export function DeviceLinkDialog({
               </button>
             </div>
           ) : (
-            <p className="muted small">If they differ, cancel: someone else may have your code.</p>
+            <>
+              <div className="button-row">
+                <button type="button" className="button primary" disabled={busy} onClick={() => void submitDigits(link.code ?? '')}>
+                  <CheckIcon size={15} /> They match
+                </button>
+                <button type="button" className="button" disabled={busy} onClick={close}>
+                  They don't match, cancel
+                </button>
+              </div>
+              <p className="muted small">Only tap this after you have looked at your other device. If the digits differ, someone else may have your code.</p>
+            </>
           )}
         </div>
       ) : mode === 'host' ? (
