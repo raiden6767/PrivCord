@@ -73,10 +73,8 @@ impl Device {
                     SignalOp::Subscribe(m) => {
                         self.subscribed.insert(m);
                     }
-                    SignalOp::Put { mailbox, blob, .. } => {
-                        if !relay.lose {
-                            relay.boxes.entry(mailbox).or_default().push(blob)
-                        }
+                    SignalOp::Put { mailbox, blob, .. } if !relay.lose => {
+                        relay.boxes.entry(mailbox).or_default().push(blob)
                     }
                     _ => {}
                 }
