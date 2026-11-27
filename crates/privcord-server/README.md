@@ -242,3 +242,5 @@ docker build -t privcord-server -f crates/privcord-server/Dockerfile .
 docker run -d --network host -v privcord-data:/data privcord-server
 ```
 (`--network host` keeps the TURN port range simple.)
+
+The admin panel embeds the Bricolage Grotesque and Figtree fonts (SIL Open Font License 1.1, the same files as the landing page; see `site/THIRD_PARTY.md`).

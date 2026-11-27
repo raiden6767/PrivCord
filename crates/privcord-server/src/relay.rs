@@ -84,7 +84,18 @@ pub struct Session {
     pub nostr: crate::nostr::Session,
 }
 
+/// The limits an administrator can change while the server runs (the settings file gives the starting values).
+#[derive(Debug)]
+pub struct RelayLimits {
+    /// Keep messages for people who are offline.
+    pub keep_offline: std::sync::atomic::AtomicBool,
+    pub frames_per_minute: AtomicU64,
+    pub connections_per_address: AtomicUsize,
+    pub mailboxes_per_connection: AtomicUsize,
+}
+
 pub struct Relay {
+    limits: RelayLimits,
     cfg: RelayConfig,
     shards: Vec<Mutex<Shard>>,
     stats: Stats,
@@ -127,6 +138,12 @@ impl Relay {
     /// `store` is `Some` when messages are kept for offline people.
     pub fn new(cfg: RelayConfig, store: Option<Store>, now_ms: i64) -> Self {
         let relay = Self {
+            limits: RelayLimits {
+                keep_offline: std::sync::atomic::AtomicBool::new(true),
+                frames_per_minute: AtomicU64::new(cfg.rate_limit),
+                connections_per_address: AtomicUsize::new(cfg.max_conns_per_ip),
+                mailboxes_per_connection: AtomicUsize::new(cfg.max_subs_per_conn),
+            },
             cfg,
             shards: (0..SHARDS).map(|_| Mutex::new(Shard::default())).collect(),
             stats: Stats::default(),
@@ -166,6 +183,30 @@ impl Relay {
         self.store.is_some()
     }
 
+    pub fn limits(&self) -> &RelayLimits {
+        &self.limits
+    }
+
+    /// Devices connected right now.
+    pub fn open_connections(&self) -> usize {
+        lock(&self.conn_counts).values().sum()
+    }
+
+    /// Removes every message waiting for a recipient (the store is emptied too). How many there were.
+    pub fn clear_stored(&self, now: i64) -> usize {
+        let mut removed = 0;
+        for shard in &self.shards {
+            let mut s = lock(shard);
+            removed += s.queues.values().map(Vec::len).sum::<usize>();
+            s.queues.clear();
+        }
+        self.queued.store(0, Ordering::Relaxed);
+        self.bytes.store(0, Ordering::Relaxed);
+        self.mailboxes.store(0, Ordering::Relaxed);
+        self.compact(now);
+        removed
+    }
+
     pub fn queued(&self) -> usize {
         self.queued.load(Ordering::Relaxed)
     }
@@ -178,7 +219,7 @@ impl Relay {
     pub fn admit(&self, ip: &str) -> bool {
         let mut counts = lock(&self.conn_counts);
         let open = counts.entry(ip.to_owned()).or_insert(0);
-        if *open >= self.cfg.max_conns_per_ip {
+        if *open >= self.limits.connections_per_address.load(Ordering::Relaxed) {
             self.stats.rejected.fetch_add(1, Ordering::Relaxed);
             return false;
         }
@@ -241,7 +282,7 @@ impl Relay {
             *entry = (0, now + RATE_WINDOW_MS);
         }
         entry.0 += 1;
-        entry.0 > self.cfg.rate_limit
+        entry.0 > self.limits.frames_per_minute.load(Ordering::Relaxed)
     }
 
     /// One frame from a connection.
@@ -308,7 +349,7 @@ impl Relay {
         let Some(mailbox) = valid(obj.get("mailbox")) else {
             return fail("bad mailbox");
         };
-        if session.mailboxes.len() >= self.cfg.max_subs_per_conn
+        if session.mailboxes.len() >= self.limits.mailboxes_per_connection.load(Ordering::Relaxed)
             && !session.mailboxes.contains(mailbox)
         {
             return fail("too many subscriptions");
@@ -386,7 +427,8 @@ impl Relay {
         }
         let mut stored_event_ts = now;
         if kind == Some("msg") {
-            let Some(store) = &self.store else {
+            let keeping = self.limits.keep_offline.load(Ordering::Relaxed);
+            let Some(store) = self.store.as_ref().filter(|_| keeping) else {
                 return fail("store-and-forward disabled");
             };
             let mut shard = lock(self.shard(mailbox));
@@ -529,6 +571,7 @@ impl Relay {
             "queued": self.queued(),
             "mailboxes": self.mailbox_count(),
             "connections": self.stats.connections.load(Ordering::Relaxed),
+            "open_connections": self.open_connections(),
             "put": self.stats.put.load(Ordering::Relaxed),
             "delivered": self.stats.delivered.load(Ordering::Relaxed),
             "rejected": self.stats.rejected.load(Ordering::Relaxed),

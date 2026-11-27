@@ -96,7 +96,17 @@ struct Stats {
     reqs: AtomicU64,
 }
 
+/// The Nostr limits an administrator can change while the server runs.
+#[derive(Debug)]
+pub struct NostrLimits {
+    pub events_per_minute: AtomicU64,
+    pub requests_per_minute: AtomicU64,
+    /// Days to keep events (0: for ever).
+    pub keep_days: AtomicU64,
+}
+
 pub struct Nostr {
+    limits: NostrLimits,
     pub cfg: NostrConfig,
     store: Option<Store>,
     policy: RwLock<Policy>,
@@ -170,6 +180,11 @@ impl Nostr {
             .transpose()?;
         let policy = Policy::from_config(&cfg);
         Ok(Self {
+            limits: NostrLimits {
+                events_per_minute: AtomicU64::new(cfg.events_per_minute_per_ip),
+                requests_per_minute: AtomicU64::new(cfg.reqs_per_minute_per_conn),
+                keep_days: AtomicU64::new(cfg.retention_days),
+            },
             cfg,
             store,
             policy: RwLock::new(policy),
@@ -186,6 +201,15 @@ impl Nostr {
     #[allow(clippy::indexing_slicing)] // shard_of is below SHARDS
     fn shard(&self, k: &SubKey) -> &Mutex<HashMap<SubKey, Vec<SubRef>>> {
         &self.subs[shard_of(k)]
+    }
+
+    pub fn limits(&self) -> &NostrLimits {
+        &self.limits
+    }
+
+    /// Removes every stored event; how many there were.
+    pub fn clear_events(&self) -> usize {
+        self.store.as_ref().map_or(0, Store::clear)
     }
 
     pub fn policy(&self) -> Policy {
@@ -283,7 +307,7 @@ impl Nostr {
     }
 
     fn rate_limited(&self, ip: &str, now_ms: i64) -> bool {
-        let limit = self.cfg.events_per_minute_per_ip;
+        let limit = self.limits.events_per_minute.load(Ordering::Relaxed);
         if limit == 0 {
             return false;
         }
@@ -525,7 +549,7 @@ impl Nostr {
 
     /// A cap on how fast one connection may ask (REQ and COUNT both cost the store work).
     fn req_allowed(&self, sess: &mut Session, now: i64) -> bool {
-        let cap = self.cfg.reqs_per_minute_per_conn;
+        let cap = self.limits.requests_per_minute.load(Ordering::Relaxed);
         if cap == 0 {
             return true;
         }
@@ -695,7 +719,7 @@ impl Nostr {
                 .store(now.unsigned_abs(), Ordering::Relaxed);
             store.sweep(
                 now,
-                i64::try_from(self.cfg.retention_days).unwrap_or(0) * 86_400,
+                i64::try_from(self.limits.keep_days.load(Ordering::Relaxed)).unwrap_or(0) * 86_400,
                 self.cfg.max_events,
             );
             store.compact(false);

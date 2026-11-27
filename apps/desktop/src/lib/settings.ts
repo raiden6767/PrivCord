@@ -25,6 +25,8 @@ export interface AppSettings {
   updateChecks: boolean;
   /** "Later" on the update prompt: do not ask again before this time (milliseconds since 1970). */
   updateSnoozedUntil: number;
+  /** Show the advanced options in Settings (beginners see the short list). */
+  advanced: boolean;
 }
 
 export const ACCENTS = [
@@ -47,6 +49,7 @@ const DEFAULTS: AppSettings = {
   panicWipe: false,
   updateChecks: true,
   updateSnoozedUntil: 0,
+  advanced: false,
 };
 
 export function parseSettings(raw: string | null): AppSettings {
@@ -78,6 +81,7 @@ export function parseSettings(raw: string | null): AppSettings {
       updateChecks: typeof parsed.updateChecks === 'boolean' ? parsed.updateChecks : DEFAULTS.updateChecks,
       updateSnoozedUntil:
         typeof parsed.updateSnoozedUntil === 'number' && Number.isFinite(parsed.updateSnoozedUntil) ? parsed.updateSnoozedUntil : DEFAULTS.updateSnoozedUntil,
+      advanced: typeof parsed.advanced === 'boolean' ? parsed.advanced : DEFAULTS.advanced,
       displayName:
         typeof parsed.displayName === 'string'
           ? parsed.displayName.trim().slice(0, 40)

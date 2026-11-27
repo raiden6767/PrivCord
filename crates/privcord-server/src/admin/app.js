@@ -2,12 +2,12 @@
 (() => {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const store = (() => { try { return window.sessionStorage; } catch { return null; } })();
-  let token = (store && store.getItem('pc-admin-token')) || '';
-  let me = null;
-  let timer = null;
+  const store = (k) => { try { return window[k]; } catch { return null; } };
+  const session = store('sessionStorage'), local = store('localStorage');
+  let token = (session && session.getItem('pc-admin-token')) || '';
+  let me = null, current = 'home', timer = null;
 
-  // ---- small helpers ----
+  // ---------- small helpers ----------
   function el(tag, attrs, ...kids) {
     const n = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs || {})) {
@@ -19,19 +19,32 @@
     for (const kid of kids.flat()) if (kid != null && kid !== false) n.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
     return n;
   }
-  // Like replaceChildren, but optional (null) parts are left out instead of being shown as the text "null".
   const put = (node, ...kids) => node.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
-  // A polite announcement for screen readers (cleared first so repeating the same message is still read out).
   const say = (msg) => { $('status').textContent = ''; setTimeout(() => { $('status').textContent = msg; }, 30); };
-  const when = (secs) => (secs ? new Date(secs * 1000).toLocaleString() : 'never');
-  const dur = (s) => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`; };
+  const when = (secs) => (secs ? new Date(secs * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : 'never');
+  const ago = (secs) => { if (!secs) return 'not seen yet'; const m = Math.max(0, Math.round((Date.now() / 1000 - secs) / 60)); return m < 1 ? 'seen just now' : m < 60 ? `seen ${m} min ago` : m < 1440 ? `seen ${Math.round(m / 60)} h ago` : `seen ${when(secs)}`; };
+  const dur = (s) => { const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : `${m} min`; };
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  // Icons are drawn here, one stroke weight (no emoji or glyphs standing in for icons).
+  const PATHS = {
+    copy: 'M9 9h11v11H9z M5 15V4h11', check: 'M5 12.5l4.5 4.5L19 7', trash: 'M4 7h16 M9 7V4h6v3 M6 7l1 13h10l1-13 M10 11v5 M14 11v5',
+    alert: 'M12 3.5l9.5 16.5h-19z M12 10v4.5 M12 17.2v.1', sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5L19 19 M5 19l1.5-1.5 M17.5 6.5L19 5',
+    moon: 'M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z', arrow: 'M5 12h14 M13 6l6 6-6 6', plus: 'M12 5v14 M5 12h14',
+  };
+  function icon(name) {
+    const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('class', 'ic'); s.setAttribute('aria-hidden', 'true');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', PATHS[name]); s.append(p);
+    return s;
+  }
 
   async function api(path, opts = {}) {
     const res = await fetch('/admin/api' + path, {
       method: opts.method || 'GET',
       headers: Object.assign({ Authorization: 'Bearer ' + token }, opts.body ? { 'Content-Type': 'application/json' } : {}),
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-      cache: 'no-store',
+      body: opts.body ? JSON.stringify(opts.body) : undefined, cache: 'no-store',
     });
     let data = null;
     try { data = await res.json(); } catch { /* not JSON */ }
@@ -40,73 +53,86 @@
     return data;
   }
 
-  // ---- errors shown next to the field they are about, and tied to it for screen readers ----
-  let errCount = 0;
-  function errorFor(input) {
-    const p = el('p', { class: 'error', id: `err-${++errCount}`, hidden: true });
-    const set = (msg) => {
-      p.textContent = msg || ''; p.hidden = !msg;
-      if (msg) { input.setAttribute('aria-invalid', 'true'); input.setAttribute('aria-describedby', p.id); }
-      else { input.removeAttribute('aria-invalid'); input.removeAttribute('aria-describedby'); }
-    };
-    input.addEventListener('input', () => { if (!p.hidden) set(''); });
-    return [p, set];
-  }
+  // ---------- parts shared by the pages ----------
+  function skeleton() { return el('div', { 'aria-hidden': 'true' }, el('div', { class: 'sk title' }), el('div', { class: 'sk w90' }), el('div', { class: 'sk w75' }), el('div', { class: 'sk w85' })); }
+  const errorState = (msg, retry) => el('div', { class: 'err-state', role: 'alert' }, el('p', {}, msg), el('button', { class: 'btn ghost sm', type: 'button', on: { click: retry } }, 'Try again'));
 
-  // ---- copying: say when it worked, say when it did not, and always leave a manual way ----
   const copyTimers = new WeakMap();
-  function report(btn, tip, msg) {
-    clearTimeout(copyTimers.get(btn));
-    tip.textContent = '';
-    requestAnimationFrame(() => { tip.textContent = msg; });
-    copyTimers.set(btn, setTimeout(() => { tip.textContent = ''; }, 3000));
-  }
-  async function copyText(text, codeEl, btn, tip) {
-    try {
-      await navigator.clipboard.writeText(text);
-      report(btn, tip, 'Copied');
-    } catch {
-      // No clipboard access (a page served over plain http, or permission denied): select the text so Ctrl+C works.
-      const r = document.createRange(); r.selectNodeContents(codeEl);
-      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
-      report(btn, tip, 'Selected. Press Ctrl+C');
-    }
-  }
-  function addr(text, what) {
-    const code = el('code', {}, text);
-    const tip = el('span', { class: 'tip', role: 'status' });
-    const btn = el('button', { type: 'button', 'aria-label': `Copy ${what || 'address'}` }, 'Copy');
-    btn.addEventListener('click', () => copyText(text, code, btn, tip));
-    return el('div', { class: 'addr' }, code, btn, tip);
+  function copyRow(text, what, primary) {
+    const code = el('code', {}, text), tip = el('span', { class: 'tip', role: 'status' });
+    const btn = el('button', { type: 'button', class: 'btn sm ' + (primary ? 'primary' : 'ghost'), 'aria-label': `Copy ${what}` }, icon('copy'), 'Copy');
+    btn.addEventListener('click', async () => {
+      let msg = 'Copied';
+      try { await navigator.clipboard.writeText(text); } catch {
+        // No clipboard here (a page served over plain http): select the text so Ctrl+C works.
+        const r = document.createRange(); r.selectNodeContents(code); const s = getSelection(); s.removeAllRanges(); s.addRange(r); msg = 'Selected. Press Ctrl+C';
+      }
+      clearTimeout(copyTimers.get(btn)); tip.textContent = ''; requestAnimationFrame(() => { tip.textContent = msg; });
+      copyTimers.set(btn, setTimeout(() => { tip.textContent = ''; }, 3000));
+    });
+    return el('div', { class: 'copyrow' }, code, btn, tip);
   }
 
-  // ---- theme: follow the system; the button picks the opposite of what is showing, and undoing it returns to the system ----
+  // A button that asks before it acts, in place (no modal): the safe answer gets focus.
+  function confirmAction({ label, ask, yes, onConfirm, solid, small }) {
+    const wrap = el('div');
+    const open = el('button', { type: 'button', class: 'btn danger' + (small === false ? '' : ' sm') }, label);
+    const back = () => { put(wrap, open); open.focus(); };
+    open.addEventListener('click', () => {
+      const no = el('button', { type: 'button', class: 'btn ghost sm', on: { click: back } }, 'Keep it');
+      const go = el('button', { type: 'button', class: 'btn danger solid sm' }, yes || 'Yes, remove');
+      go.addEventListener('click', async () => {
+        go.setAttribute('aria-busy', 'true'); go.disabled = true; go.textContent = 'Working…';
+        try { await onConfirm(); } catch (e) { say(e.message); put(wrap, el('p', { class: 'msg bad', role: 'alert' }, e.message), open); }
+      });
+      put(wrap, el('div', { class: 'confirm', role: 'group', 'aria-label': 'Confirm' }, el('p', {}, ask), no, go)); no.focus();
+    });
+    put(wrap, open);
+    return wrap;
+  }
+
+  function switchRow({ id, label, hint, checked, disabled, onChange }) {
+    const btn = el('button', { type: 'button', class: 'switch', role: 'switch', id, 'aria-checked': String(!!checked), 'aria-describedby': id + '-h', disabled: !!disabled },
+      el('span', { class: 'track', 'aria-hidden': 'true' }), el('span', {}, label));
+    btn.addEventListener('click', async () => {
+      const next = btn.getAttribute('aria-checked') !== 'true';
+      btn.setAttribute('aria-checked', String(next));
+      try { await onChange(next); say(`${label}: ${next ? 'on' : 'off'}`); }
+      catch (e) { btn.setAttribute('aria-checked', String(!next)); say(e.message); put(hintEl, e.message); hintEl.className = 'hint msg bad'; }
+    });
+    const hintEl = el('p', { class: 'hint', id: id + '-h' }, hint);
+    return el('div', {}, btn, hintEl);
+  }
+
+  // ---------- Advanced + theme ----------
+  const html = document.documentElement;
+  function setAdvanced(on, save) {
+    html.setAttribute('data-advanced', on ? 'on' : 'off'); $('adv').setAttribute('aria-checked', String(on));
+    if (save && local) { try { on ? local.setItem('pc-admin-advanced', '1') : local.removeItem('pc-admin-advanced'); } catch { /* not saved */ } }
+  }
+  setAdvanced(!!(local && local.getItem('pc-admin-advanced')), false);
+  $('adv').addEventListener('click', () => { const on = $('adv').getAttribute('aria-checked') !== 'true'; setAdvanced(on, true); say(on ? 'Advanced options shown' : 'Advanced options hidden'); if (me && current === 'settings') show('settings'); });
+
   const meta = document.querySelector('meta[name="color-scheme"]');
   const systemDark = () => matchMedia('(prefers-color-scheme: dark)').matches;
   const showingDark = () => (meta.content === 'dark' ? true : meta.content === 'light' ? false : systemDark());
-  function themeLabel() {
-    const toDark = !showingDark();
-    $('theme').textContent = toDark ? 'Dark theme' : 'Light theme';
-    $('theme').setAttribute('aria-label', toDark ? 'Switch to dark theme' : 'Switch to light theme');
+  function themeButton() {
+    const toDark = !showingDark(), b = $('theme');
+    b.setAttribute('aria-label', toDark ? 'Switch to dark theme' : 'Switch to light theme'); put(b, icon(toDark ? 'moon' : 'sun'));
   }
   $('theme').addEventListener('click', () => {
-    const target = showingDark() ? 'light' : 'dark';
-    const system = systemDark() ? 'dark' : 'light';
+    const target = showingDark() ? 'light' : 'dark', system = systemDark() ? 'dark' : 'light';
     try { if (target === system) localStorage.removeItem('color-scheme'); else localStorage.setItem('color-scheme', target); } catch { /* not saved */ }
-    meta.content = target === system ? 'light dark' : target;
-    themeLabel();
+    meta.content = target === system ? 'light dark' : target; themeButton();
   });
-  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', themeLabel);
-  window.addEventListener('storage', (e) => {
-    if (e.key !== 'color-scheme') return;
-    meta.content = e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'light dark'; themeLabel();
-  });
-  themeLabel();
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', themeButton);
+  window.addEventListener('storage', (e) => { if (e.key === 'color-scheme') { meta.content = e.newValue === 'light' || e.newValue === 'dark' ? e.newValue : 'light dark'; themeButton(); } });
+  themeButton();
 
-  // ---- sign in / out ----
+  // ---------- sign in / out ----------
   function signOut(message) {
     token = ''; me = null; clearInterval(timer);
-    if (store) store.removeItem('pc-admin-token');
+    if (session) session.removeItem('pc-admin-token');
     $('app').hidden = true; $('who').hidden = true; $('login').hidden = false;
     const err = $('loginError'); err.hidden = !message; err.textContent = message || '';
     $('token').value = ''; $('token').focus();
@@ -117,215 +143,212 @@
     try { await start(); } catch (err) { if (token) signOut(err.message === 'signed out' ? '' : err.message); }
   });
 
-  // ---- sections (tabs) ----
-  const SECTIONS = [
-    ['overview', 'Overview', renderOverview],
-    ['access', 'Access', renderAccess],
-    ['admins', 'Admins', renderAdmins, (m) => m.role === 'owner'],
-    ['nostr', 'Nostr rules', renderNostr],
-    ['turn', 'TURN', renderTurn],
+  // ---------- pages ----------
+  const PAGES = [
+    ['home', 'Home', home], ['people', 'People', people], ['rules', 'Rules', rules, (m, o) => o.roles.nostr], ['settings', 'Settings', settings],
   ];
-  let current = 'overview';
-  const visibleTabs = () => [...$('tabs').querySelectorAll('[role="tab"]')];
-
+  let overviewCache = null;
+  const tabsOf = () => [...$('tabs').querySelectorAll('[role="tab"]')];
   function buildTabs() {
     const tabs = $('tabs'); tabs.replaceChildren();
-    for (const [id, label, , allowed] of SECTIONS) {
-      if (allowed && !allowed(me)) continue;
+    for (const [id, label, , allowed] of PAGES) {
+      if (allowed && !allowed(me, overviewCache)) continue;
       tabs.append(el('button', { role: 'tab', id: 'tab-' + id, type: 'button', 'aria-selected': String(id === current), tabindex: id === current ? '0' : '-1', 'aria-controls': 'view', on: { click: () => show(id) } }, label));
     }
     tabs.onkeydown = (e) => {
-      const list = visibleTabs(); const i = list.indexOf(document.activeElement);
-      if (i < 0) return;
+      const list = tabsOf(), i = list.indexOf(document.activeElement); if (i < 0) return;
       const to = { ArrowRight: (i + 1) % list.length, ArrowLeft: (i + list.length - 1) % list.length, Home: 0, End: list.length - 1 }[e.key];
-      if (to === undefined) return;
-      e.preventDefault(); list[to].focus(); list[to].click(); // arrow keys move and select, as a tab list should
+      if (to === undefined) return; e.preventDefault(); list[to].focus(); list[to].click();
     };
   }
   function show(id) {
     current = id; clearInterval(timer);
-    for (const b of visibleTabs()) { const on = b.id === 'tab-' + id; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
+    for (const b of tabsOf()) { const on = b.id === 'tab-' + id; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
     $('view').setAttribute('aria-labelledby', 'tab-' + id);
-    const section = SECTIONS.find((s) => s[0] === id);
-    put($('view'), el('p', { class: 'muted' }, 'Loading…'));
-    section[2]().catch((err) => { if (err.message !== 'signed out') put($('view'), el('p', { class: 'error', role: 'alert' }, err.message)); });
+    put($('view'), skeleton());
+    PAGES.find((p) => p[0] === id)[2]().catch((err) => { if (err.message !== 'signed out') put($('view'), errorState(err.message, () => show(id))); });
     if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
   }
+  const go = (id) => { if (tabsOf().some((b) => b.id === 'tab-' + id)) { tabsOf().find((b) => b.id === 'tab-' + id).focus(); show(id); } };
 
-  async function renderOverview() {
+  // ----- Home: is it healthy, and how do I connect -----
+  async function home() {
     const draw = async () => {
-      const o = await api('/overview');
-      if (current !== 'overview') return;
-      const on = (b) => el('span', { class: 'pill' + (b ? ' on' : '') }, b ? 'On' : 'Off');
-      const stat = (n, l) => el('div', { class: 'stat' }, el('div', { class: 'n' }, n), el('div', { class: 'l' }, l));
+      const o = overviewCache = await api('/overview');
+      if (current !== 'home') return;
       const c = o.counters || {}, n = c.nostr || null;
+      const row = (what, detail, state) => el('div', { class: 'item' }, el('span', { class: 'what' }, what), state, detail ? el('span', { class: 'detail' }, detail) : null);
+      const onoff = (b) => el('span', { class: 'state' }, el('span', { class: 'dot' + (b ? ' on' : ''), 'aria-hidden': 'true' }), b ? 'On' : 'Off');
       put($('view'),
-        ...o.warnings.map((w) => el('div', { class: 'alert', role: 'note' }, w)),
-        el('section', { class: 'card' },
-          el('h2', {}, 'What is running'),
-          el('p', { class: 'muted' }, `Version ${o.version}, up ${dur(o.uptime_secs)}.`),
-          el('div', { class: 'grid' },
-            el('div', { class: 'stat' }, el('div', { class: 'l' }, 'Relay'), on(o.roles.relay)),
-            el('div', { class: 'stat' }, el('div', { class: 'l' }, 'Nostr'), on(o.roles.nostr)),
-            el('div', { class: 'stat' }, el('div', { class: 'l' }, 'TURN'), on(o.roles.turn)),
-            el('div', { class: 'stat' }, el('div', { class: 'l' }, 'Who can connect'), el('span', { class: 'pill' + (o.access.private ? ' on' : '') }, o.access.private ? 'Token holders only' : 'Anyone')))),
-        el('section', { class: 'card' },
-          el('h2', {}, 'Connect your apps'),
-          el('p', { class: 'muted' }, 'Add these in the app’s relay settings. If you made access tokens, add one to the relay address as ?token=…'),
-          o.roles.relay || o.roles.nostr ? el('div', {}, el('h3', {}, 'Relay'), addr(o.addresses.relay, 'relay address')) : null,
-          o.addresses.turn ? el('div', {}, el('h3', {}, 'TURN (voice and files when phones cannot connect directly)'), ...o.addresses.turn.map((t) => addr(t, 'TURN address'))) : null),
-        el('section', { class: 'card' },
-          el('h2', {}, 'Activity since the server started'),
-          el('div', { class: 'grid counts' },
-            stat(c.connections ?? 0, 'connections'), stat(c.mailboxes ?? 0, 'mailboxes holding messages'), stat(c.queued ?? 0, 'messages waiting for their recipient'),
-            stat(c.delivered ?? 0, 'messages delivered'), stat(c.put ?? 0, 'messages received'), stat(c.rejected ?? 0, 'requests refused'),
-            n ? stat(n.events, 'Nostr events stored') : null, n ? stat(n.delivered, 'Nostr events delivered') : null, n ? stat(n.rejected, 'Nostr events refused') : null)));
+        el('div', { class: 'page-head' }, el('h2', {}, 'Home'), el('p', { class: 'lead' }, o.access.private ? 'This server is private. Only people you gave a token can connect.' : 'This server is open: anyone who finds it can connect.')),
+        o.warnings.length ? el('section', { 'aria-labelledby': 'attn-h' }, el('h3', { id: 'attn-h' }, 'Needs your attention'),
+          el('div', { class: 'attn' }, o.warnings.map((w) => el('div', { class: 'item' }, icon('alert'), el('span', {}, w.text), w.go ? el('button', { type: 'button', class: 'btn ghost sm act', on: { click: () => go(w.go) } }, w.go === 'people' ? 'Add a token' : w.go === 'rules' ? 'Set rules' : 'Open settings') : null)))) : null,
+        el('section', {}, el('h3', {}, 'Connect your apps'),
+          el('p', { class: 'muted' }, 'Add this address as the relay in each app (Settings, Connection).' + (o.access.private ? ' Add a token to the end as ?token=…' : '')),
+          copyRow(o.addresses.relay, 'relay address', true)),
+        o.addresses.turn ? el('section', { class: 'adv' }, el('h3', {}, 'For calls and files'),
+          el('p', { class: 'muted' }, 'Used when two phones cannot reach each other directly. The first is UDP; the others get through networks that block it.'),
+          o.addresses.turn.map((t) => el('div', { class: 'gap-t' }, copyRow(t, 'call address')))) : null,
+        el('section', {}, el('h3', {}, 'Status'),
+          el('div', { class: 'list' },
+            row('Devices connected now', null, el('span', { class: 'num what' }, String(c.open_connections ?? 0))),
+            row('Messages and calls (relay)', null, onoff(o.roles.relay)),
+            row('Nostr', null, onoff(o.roles.nostr)),
+            row('Calls through this server (TURN)', null, onoff(o.roles.turn)),
+            row('Running for', `Version ${o.version}`, el('span', { class: 'num what' }, dur(o.uptime_secs))))),
+        el('section', { class: 'adv' }, el('h3', {}, 'Activity since it started'),
+          el('div', { class: 'list' }, [
+            ['Messages received', c.put], ['Messages delivered', c.delivered], ['Messages waiting for someone offline', c.queued], ['Mailboxes holding messages', c.mailboxes],
+            ['Requests refused', c.rejected], ...(n ? [['Nostr events stored', n.events], ['Nostr events delivered', n.delivered], ['Nostr events refused', n.rejected]] : []),
+          ].map(([l, v]) => el('div', { class: 'item' }, el('span', {}, l), el('span', { class: 'num what' }, String(v ?? 0)))))));
+      buildTabs();
     };
-    await draw(); timer = setInterval(() => draw().catch(() => {}), 5000);
+    await draw();
+    timer = setInterval(() => { if (!$('view').contains(document.activeElement)) draw().catch(() => {}); }, 8000);
   }
 
-  async function renderAccess() {
+  // ----- People: who can connect (and, for owners, who can manage) -----
+  async function people() {
     const canChange = me.role !== 'viewer';
-    const intro = el('div'); const listBox = el('div');
-    const secretBox = el('div');
+    const secretBox = el('div', { 'aria-live': 'polite' }), listBox = el('div'), intro = el('p', { class: 'lead' });
     const nameIn = el('input', { id: 'tname', name: 'name', maxlength: '60', required: true, autocomplete: 'off', placeholder: 'For example: Alice’s phone' });
-    const [nameErr, setNameErr] = errorFor(nameIn);
-    // The list is redrawn on its own, so a freshly made token stays on screen while the list updates.
+    const nameMsg = el('p', { class: 'msg bad', hidden: true, id: 'tname-e' });
+    const fail = (m) => { nameMsg.textContent = m; nameMsg.hidden = !m; m ? (nameIn.setAttribute('aria-invalid', 'true'), nameIn.setAttribute('aria-describedby', 'tname-e')) : (nameIn.removeAttribute('aria-invalid'), nameIn.removeAttribute('aria-describedby')); };
+    nameIn.addEventListener('input', () => fail(''));
     async function fill() {
       const d = await api('/access-tokens');
-      put(intro,
-        el('p', {}, d.tokens.length || d.from_settings_file
-          ? 'This server is private: apps must present one of these tokens.'
-          : 'This server is open: anyone who finds it can use it. Make a token to turn that off.'),
-        d.from_settings_file ? el('p', { class: 'muted' }, `${d.from_settings_file} more token(s) come from the settings file and cannot be changed here.`) : null);
+      const open = !d.tokens.length && !d.from_settings_file;
+      put(intro, open ? 'Anyone who finds this server can use it. Make a token for each person to make it private.' : 'Only people with one of these tokens can connect. Make one for each person or device, and remove it when they leave.');
       put(listBox, d.tokens.length
-        ? el('div', { class: 'scroll' }, el('table', {}, el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Name'), el('th', { scope: 'col' }, 'Made'), el('th', { scope: 'col' }, el('span', { class: 'sr-status' }, 'Actions')))),
-            el('tbody', {}, d.tokens.map((t) => el('tr', {}, el('td', {}, t.name), el('td', {}, when(t.created)),
-              el('td', {}, canChange ? el('button', { class: 'danger', type: 'button', 'aria-label': `Remove token ${t.name}`, on: { click: async () => {
-                const last = d.tokens.length === 1 && !d.from_settings_file;
-                const ask = last
-                  ? `“${t.name}” is the last token. Removing it opens this server to ANYONE. Remove it anyway?`
-                  : `Remove “${t.name}”? Anyone using it is disconnected next time they connect.`;
-                if (!confirm(ask)) return;
-                try { await api('/access-tokens/' + encodeURIComponent(t.id) + (last ? '?open=true' : ''), { method: 'DELETE' }); say('Token removed'); fill(); } catch (e) { say(e.message); }
-              } } }, 'Remove') : null))))))
-        : el('p', { class: 'muted' }, 'No tokens made here yet.'));
+        ? el('div', { class: 'list' }, d.tokens.map((t) => el('div', { class: 'item' }, el('span', { class: 'what' }, t.name), el('span', { class: 'detail' }, `Made ${when(t.created)}`),
+            canChange ? el('div', { class: 'act' }, confirmAction({ label: 'Remove', yes: 'Yes, remove', ask: (d.tokens.length === 1 && !d.from_settings_file) ? `“${t.name}” is the last token. Removing it opens this server to anyone.` : `Remove “${t.name}”? They are disconnected the next time they connect.`,
+              onConfirm: async () => { await api('/access-tokens/' + encodeURIComponent(t.id) + ((d.tokens.length === 1 && !d.from_settings_file) ? '?open=true' : ''), { method: 'DELETE' }); say('Token removed'); fill(); } })) : null)))
+        : el('div', { class: 'empty' }, el('h3', {}, 'No tokens yet'), el('p', { class: 'muted' }, 'Make the first one above, then give it to the person it is for.')),
+        d.from_settings_file ? el('p', { class: 'hint' }, `${plural(d.from_settings_file, 'more token comes', 'more tokens come')} from the settings file and can’t be changed here.`) : null);
     }
     await fill();
     put($('view'),
-      el('section', { class: 'card' }, el('h2', {}, 'Access'), intro, listBox),
-      canChange ? el('section', { class: 'card' }, el('h3', {}, 'Make a token'),
-        el('p', { class: 'muted' }, 'One per person or device, so you can remove one without affecting the others. The token is shown once.'),
+      el('div', { class: 'page-head' }, el('h2', {}, 'People'), intro),
+      canChange ? el('section', {}, el('h3', {}, 'Make a token'),
         el('form', { on: { submit: async (e) => {
-          e.preventDefault(); setNameErr('');
+          e.preventDefault(); fail('');
           try {
             const r = await api('/access-tokens', { method: 'POST', body: { name: nameIn.value } });
-            put(secretBox, el('div', { class: 'secret' }, el('strong', {}, 'Copy this now. It will not be shown again.'), addr(r.token, 'access token')));
+            put(secretBox, el('div', { class: 'secret' }, el('p', { class: 'label' }, 'Copy this now. It is shown only once.'), copyRow(r.token, 'access token', true)));
             nameIn.value = ''; say('Token made'); fill();
-          } catch (err) { setNameErr(err.message); nameIn.focus(); }
-        } } },
-          el('div', { class: 'row' }, el('div', {}, el('label', { for: 'tname' }, 'Name'), nameIn, nameErr),
-            el('button', { class: 'primary', type: 'submit' }, 'Make token')), el('div', { 'aria-live': 'polite' }, secretBox))) : null);
+          } catch (err) { fail(err.message); nameIn.focus(); }
+        } } }, el('div', { class: 'inline' }, el('div', { class: 'grow' }, el('label', { for: 'tname' }, 'Who is it for?'), nameIn), el('button', { class: 'btn primary', type: 'submit' }, icon('plus'), 'Make token')), nameMsg), secretBox) : null,
+      el('section', {}, el('h3', {}, 'Tokens'), listBox),
+      me.role === 'owner' ? el('section', { class: 'adv', id: 'admins' }) : null);
+    if (me.role === 'owner') adminsSection().catch((e) => put($('admins'), errorState(e.message, () => adminsSection())));
+  }
+  async function adminsSection() {
+    const host = $('admins'); const d = await api('/admins');
+    const secretBox = el('div', { 'aria-live': 'polite' });
+    const nameIn = el('input', { id: 'aname', maxlength: '60', required: true, autocomplete: 'off', placeholder: 'For example: Sam' });
+    const roleIn = el('select', { id: 'arole' }, el('option', { value: 'moderator' }, 'Moderator: rules, tokens, remove events'), el('option', { value: 'viewer' }, 'Viewer: look only'), el('option', { value: 'owner' }, 'Owner: everything'));
+    const msg = el('p', { class: 'msg bad', role: 'alert', hidden: true });
+    put(host, el('h3', {}, 'Admins'), el('p', { class: 'muted' }, 'People who can sign in to this panel, each with their own token.'),
+      el('div', { class: 'list' }, d.admins.map((a) => el('div', { class: 'item' }, el('span', { class: 'what' }, a.name), el('span', { class: 'detail' }, `${a.role}, ${ago(a.last_used)}`),
+        el('div', { class: 'act' }, confirmAction({ label: 'Remove', ask: `Remove ${a.name}? Their token stops working at once.`, onConfirm: async () => { await api('/admins/' + encodeURIComponent(a.id), { method: 'DELETE' }); say('Admin removed'); adminsSection(); } }))))),
+      el('form', { class: 'gap-t', on: { submit: async (e) => {
+        e.preventDefault(); msg.hidden = true;
+        try { const r = await api('/admins', { method: 'POST', body: { name: nameIn.value, role: roleIn.value } }); put(secretBox, el('div', { class: 'secret' }, el('p', { class: 'label' }, 'Give this token to them. It is shown only once.'), copyRow(r.token, 'admin token', true))); nameIn.value = ''; say('Admin added'); }
+        catch (err) { msg.textContent = err.message; msg.hidden = false; nameIn.focus(); }
+      } } }, el('div', { class: 'inline' }, el('div', { class: 'grow' }, el('label', { for: 'aname' }, 'Name'), nameIn), el('div', { class: 'grow' }, el('label', { for: 'arole' }, 'Role'), roleIn), el('button', { class: 'btn ghost', type: 'submit' }, 'Add admin')), msg), secretBox);
   }
 
-  async function renderAdmins() {
-    const d = await api('/admins');
-    const secretBox = el('div');
-    const nameIn = el('input', { id: 'aname', name: 'name', maxlength: '60', required: true, autocomplete: 'off', placeholder: 'For example: Sam' });
-    const [nameErr, setNameErr] = errorFor(nameIn);
-    const roleIn = el('select', { id: 'arole', name: 'role' }, el('option', { value: 'moderator' }, 'Moderator: change rules, tokens, remove events'),
-      el('option', { value: 'viewer' }, 'Viewer: look only'), el('option', { value: 'owner' }, 'Owner: everything, including admins'));
-    put($('view'),
-      el('section', { class: 'card' }, el('h2', {}, 'Admins'),
-        el('p', { class: 'muted' }, 'People who can sign in to this panel. Each has their own token, so you can remove one without affecting the others.'),
-        el('div', { class: 'scroll' }, el('table', {}, el('thead', {}, el('tr', {}, el('th', { scope: 'col' }, 'Name'), el('th', { scope: 'col' }, 'Role'), el('th', { scope: 'col' }, 'Last seen'), el('th', { scope: 'col' }, el('span', { class: 'sr-status' }, 'Actions')))),
-          el('tbody', {}, d.admins.map((a) => el('tr', {}, el('td', {}, a.name), el('td', {}, el('span', { class: 'pill' }, a.role)), el('td', {}, when(a.last_used)),
-            el('td', {}, el('button', { class: 'danger', type: 'button', 'aria-label': `Remove admin ${a.name}`, on: { click: async () => {
-              if (!confirm(`Remove ${a.name}? Their token stops working at once.`)) return;
-              try { await api('/admins/' + encodeURIComponent(a.id), { method: 'DELETE' }); say('Admin removed'); renderAdmins(); } catch (e) { say(e.message); }
-            } } }, 'Remove')))))))),
-      el('section', { class: 'card' }, el('h3', {}, 'Add an admin'),
-        el('form', { on: { submit: async (e) => {
-          e.preventDefault(); setNameErr('');
-          try {
-            const r = await api('/admins', { method: 'POST', body: { name: nameIn.value, role: roleIn.value } });
-            put(secretBox, el('div', { class: 'secret' }, el('strong', {}, 'Give this token to them. It will not be shown again.'), addr(r.token, 'admin token')));
-            nameIn.value = ''; say('Admin added');
-          } catch (err) { setNameErr(err.message); nameIn.focus(); }
-        } } },
-          el('div', { class: 'row' }, el('div', {}, el('label', { for: 'aname' }, 'Name'), nameIn, nameErr), el('div', {}, el('label', { for: 'arole' }, 'Role'), roleIn),
-            el('button', { class: 'primary', type: 'submit' }, 'Add admin')), el('div', { 'aria-live': 'polite' }, secretBox))));
-  }
-
-  async function renderNostr() {
-    let p;
-    try { p = await api('/nostr/policy'); } catch (e) {
-      put($('view'), el('section', { class: 'card' }, el('h2', {}, 'Nostr rules'), el('p', { class: 'muted' }, 'The Nostr side is switched off in the settings file ([nostr] enabled = true to use it).'))); return;
-    }
-    const canChange = me.role !== 'viewer';
-    const allowedKeys = el('textarea', { id: 'ak', spellcheck: 'false', disabled: !canChange }, p.allowed_pubkeys.join('\n'));
+  // ----- Rules: who may publish on the Nostr side -----
+  async function rules() {
+    const p = await api('/nostr/policy'); const canChange = me.role !== 'viewer';
+    const listed = p.allowed_pubkeys.length > 0;
+    const msg = el('p', { class: 'msg', role: 'status' });
+    const allowedKeys = el('textarea', { id: 'ak', spellcheck: 'false', 'aria-describedby': 'ak-h', disabled: !canChange }, p.allowed_pubkeys.join('\n'));
     const blockedKeys = el('textarea', { id: 'bk', spellcheck: 'false', disabled: !canChange }, p.blocked_pubkeys.join('\n'));
-    const kindsAttrs = { inputmode: 'numeric', pattern: '[0-9, ]*', title: 'Numbers separated by commas', disabled: !canChange };
-    const allowedKinds = el('input', Object.assign({ id: 'ako', value: p.allowed_kinds.join(', ') }, kindsAttrs));
-    const blockedKinds = el('input', Object.assign({ id: 'bko', value: p.blocked_kinds.join(', ') }, kindsAttrs));
-    const evId = el('input', { id: 'evid', spellcheck: 'false', required: true, pattern: '[0-9a-fA-F]{64}', title: '64 hex characters', placeholder: '64 hex characters' });
-    const [saveErr, setSaveErr] = errorFor(allowedKeys);
-    const [evErr, setEvErr] = errorFor(evId);
-    const saved = el('p', { role: 'status' });
+    const kind = (id, v) => el('input', { id, value: v.join(', '), inputmode: 'numeric', pattern: '[0-9, ]*', title: 'Numbers separated by commas', disabled: !canChange });
+    const allowedKinds = kind('ako', p.allowed_kinds), blockedKinds = kind('bko', p.blocked_kinds);
+    const anyone = el('input', { type: 'radio', name: 'who', id: 'w-any', checked: !listed, disabled: !canChange }), only = el('input', { type: 'radio', name: 'who', id: 'w-only', checked: listed, disabled: !canChange });
+    const keysBox = el('div', { class: 'field', hidden: !listed }, el('label', { for: 'ak' }, 'Public keys allowed to publish'), allowedKeys, el('p', { class: 'hint', id: 'ak-h' }, 'One per line, in hex (64 characters).'));
+    for (const r of [anyone, only]) r.addEventListener('change', () => { keysBox.hidden = !only.checked; });
     const split = (t) => t.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean);
+    const evId = el('input', { id: 'evid', spellcheck: 'false', required: true, pattern: '[0-9a-fA-F]{64}', title: '64 hex characters', placeholder: '64 hex characters' });
+    const evMsg = el('p', { class: 'msg bad', role: 'alert', hidden: true });
     put($('view'),
-      el('section', { class: 'card' }, el('h2', {}, 'Nostr rules'),
-        el('p', { class: 'muted' }, 'Who may publish what. Saved here, they take effect at once and survive a restart.'),
-        el('form', { on: { submit: async (e) => {
-          e.preventDefault(); setSaveErr(''); saved.textContent = '';
-          try {
-            await api('/nostr/policy', { method: 'PUT', body: {
-              allowed_pubkeys: split(allowedKeys.value), blocked_pubkeys: split(blockedKeys.value),
-              allowed_kinds: split(allowedKinds.value).map(Number), blocked_kinds: split(blockedKinds.value).map(Number) } });
-            saved.textContent = 'Saved.'; say('Rules saved');
-          } catch (err) { setSaveErr(err.message); }
-        } } },
-          el('label', { for: 'ak' }, 'Only these authors may publish'), allowedKeys, saveErr,
-          el('p', { class: 'hint' }, 'Public keys in hex, one per line. Leave empty to let anyone publish.'),
-          el('label', { for: 'bk' }, 'These authors are blocked'), blockedKeys,
-          el('label', { for: 'ako' }, 'Only these kinds are accepted'), allowedKinds,
-          el('p', { class: 'hint' }, 'Numbers separated by commas. Leave empty to accept every kind.'),
-          el('label', { for: 'bko' }, 'These kinds are refused'), blockedKinds,
-          canChange ? el('p', {}, el('button', { class: 'primary', type: 'submit' }, 'Save rules')) : el('p', { class: 'muted' }, 'You can look but not change.'), saved)),
-      canChange ? el('section', { class: 'card' }, el('h3', {}, 'Remove an event'),
+      el('div', { class: 'page-head' }, el('h2', {}, 'Rules'), el('p', { class: 'lead' }, 'Who may publish on this server’s Nostr side. Changes apply at once.')),
+      el('form', { on: { submit: async (e) => {
+        e.preventDefault(); msg.textContent = '';
+        const keys = only.checked ? split(allowedKeys.value) : [];
+        if (only.checked && !keys.length) { msg.className = 'msg bad'; msg.textContent = 'Add at least one public key, or choose “Anyone”.'; allowedKeys.focus(); return; }
+        try { await api('/nostr/policy', { method: 'PUT', body: { allowed_pubkeys: keys, blocked_pubkeys: split(blockedKeys.value), allowed_kinds: split(allowedKinds.value).map(Number), blocked_kinds: split(blockedKinds.value).map(Number) } }); msg.className = 'msg good'; msg.textContent = 'Saved.'; say('Rules saved'); }
+        catch (err) { msg.className = 'msg bad'; msg.textContent = err.message; }
+      } } },
+        el('fieldset', { class: 'bare' }, el('legend', { class: 'label' }, 'Who may publish'),
+          el('div', { class: 'choice' }, el('label', { for: 'w-any' }, anyone, el('span', {}, 'Anyone', el('span', { class: 'hint' }, 'Best for a public relay.'))), el('label', { for: 'w-only' }, only, el('span', {}, 'Only people I list', el('span', { class: 'hint' }, 'Best for your own and your friends’ keys.'))))),
+        keysBox,
+        el('div', { class: 'adv' }, el('div', { class: 'field' }, el('label', { for: 'bk' }, 'Blocked public keys'), blockedKeys, el('p', { class: 'hint' }, 'One per line.')),
+          el('div', { class: 'field' }, el('label', { for: 'ako' }, 'Only accept these kinds'), allowedKinds, el('p', { class: 'hint' }, 'Numbers separated by commas. Empty accepts every kind.')),
+          el('div', { class: 'field' }, el('label', { for: 'bko' }, 'Refuse these kinds'), blockedKinds)),
+        canChange ? el('div', { class: 'field' }, el('button', { class: 'btn primary', type: 'submit' }, 'Save rules'), msg) : el('p', { class: 'muted gap-t' }, 'You can look but not change.')),
+      canChange ? el('section', { class: 'adv' }, el('h3', {}, 'Remove one event'),
         el('p', { class: 'muted' }, 'Removes a stored event for good and refuses it if anyone publishes it again.'),
-        el('form', { on: { submit: async (e) => {
-          e.preventDefault(); setEvErr('');
-          if (!confirm('Remove this event for good?')) return;
+        el('form', { class: 'gap-t', on: { submit: async (e) => {
+          e.preventDefault(); evMsg.hidden = true;
           try { const r = await api('/nostr/events/' + encodeURIComponent(evId.value.trim()), { method: 'DELETE' }); say(r.removed ? 'Event removed' : 'It was not stored here; it is refused from now on'); evId.value = ''; }
-          catch (err) { setEvErr(err.message); }
+          catch (err) { evMsg.textContent = err.message; evMsg.hidden = false; }
+        } } }, el('div', { class: 'inline' }, el('div', { class: 'grow' }, el('label', { for: 'evid' }, 'Event id'), evId), el('button', { class: 'btn danger', type: 'submit' }, 'Remove event')), evMsg)) : null);
+  }
+
+  // ----- Settings: clear data first, then the few things beginners need, then Advanced -----
+  async function settings() {
+    const s = await api('/settings'); const canChange = me.role !== 'viewer';
+    const r = s.relay, n = s.nostr;
+    const clearRow = (what, count, noun, path, after) => el('div', { class: 'item' }, el('span', { class: 'what' }, what),
+      el('span', { class: 'detail num' }, count ? `${plural(count, noun[0], noun[1])} stored now` : 'Nothing stored right now'),
+      canChange ? el('div', { class: 'act' }, count ? confirmAction({ label: 'Clear…', yes: 'Yes, clear', ask: `This removes ${plural(count, noun[0], noun[1])} for good. People who have not received them yet never will.`,
+        onConfirm: async () => { const d = await api(path, { method: 'POST', body: { confirm: true } }); say(`${plural(d.removed, noun[0], noun[1])} cleared`); after(); } }) : null) : null);
+    const num = (id, label, hint, value, min, max, key) => {
+      const input = el('input', { id, type: 'number', inputmode: 'numeric', min: String(min), max: String(max), value: String(value), disabled: !canChange, 'data-key': key });
+      return el('div', { class: 'field' }, el('label', { for: id }, label), input, el('p', { class: 'hint' }, hint));
+    };
+    const msg = el('p', { class: 'msg', role: 'status' });
+    const fields = [];
+    const add = (f) => { fields.push(f); return f; };
+    put($('view'),
+      el('div', { class: 'page-head' }, el('h2', {}, 'Settings')),
+      el('section', { 'aria-labelledby': 'clear-h' }, el('h3', { id: 'clear-h' }, 'Clear data'),
+        el('p', { class: 'muted' }, 'These cannot be undone, so each one asks first.'),
+        el('div', { class: 'list' }, r ? clearRow('Stored messages', r.stored_messages, ['message', 'messages'], '/clear/messages', () => show('settings')) : null,
+          n ? clearRow('Nostr events', n.stored_events, ['event', 'events'], '/clear/nostr', () => show('settings')) : null)),
+      r ? el('section', {}, el('h3', {}, 'Messages'),
+        switchRow({ id: 'keep', label: 'Keep messages for people who are offline', checked: r.keep_offline_messages, disabled: !canChange || !r.can_keep_offline_messages,
+          hint: r.can_keep_offline_messages ? 'They arrive when the person opens the app (kept for up to 7 days). Turn off and only people online right now receive messages.' : 'Switched off in the settings file (store_and_forward = false).',
+          onChange: async (v) => { await api('/settings', { method: 'PUT', body: { keep_offline_messages: v } }); } })) : null,
+      el('section', { class: 'adv' }, el('h3', {}, 'Limits'),
+        el('p', { class: 'muted' }, 'Protect the server from one device or address using too much. Applied at once and kept after a restart.'),
+        el('form', { on: { submit: async (e) => {
+          e.preventDefault(); msg.className = 'msg'; msg.textContent = '';
+          const body = {}; for (const f of fields) body[f.dataset.key] = Number(f.value);
+          try { await api('/settings', { method: 'PUT', body }); msg.className = 'msg good'; msg.textContent = 'Saved.'; say('Limits saved'); }
+          catch (err) { msg.className = 'msg bad'; msg.textContent = err.message; }
         } } },
-          el('div', { class: 'row' }, el('div', {}, el('label', { for: 'evid' }, 'Event id'), evId, evErr), el('button', { class: 'danger', type: 'submit' }, 'Remove event')))) : null);
+          r ? [add(num('l-frames', 'Messages per minute from one address', 'Every request counts. Lower it if a single address floods the server.', r.frames_per_minute, 10, 1000000, 'frames_per_minute')),
+               add(num('l-conns', 'Devices per address', 'How many devices may connect from one network address (a home with many phones needs several).', r.connections_per_address, 1, 10000, 'connections_per_address')),
+               add(num('l-boxes', 'Mailboxes one device may listen to', 'Each friend or group uses one.', r.mailboxes_per_connection, 1, 1000, 'mailboxes_per_connection'))] : null,
+          n ? [add(num('l-ev', 'Nostr events per minute from one address', '0 turns this limit off.', n.events_per_minute, 0, 100000, 'nostr_events_per_minute')),
+               add(num('l-rq', 'Nostr requests per minute from one device', '0 turns this limit off.', n.requests_per_minute, 0, 100000, 'nostr_requests_per_minute')),
+               add(num('l-days', 'Keep Nostr events for (days)', '0 keeps them for ever.', n.keep_days, 0, 3650, 'nostr_keep_days'))] : null,
+          canChange ? el('div', { class: 'field' }, el('button', { class: 'btn primary', type: 'submit' }, 'Save limits'), msg) : null)));
   }
 
-  async function renderTurn() {
-    const o = await api('/overview');
-    const t = o.addresses.turn;
-    put($('view'), el('section', { class: 'card' }, el('h2', {}, 'TURN'),
-      el('p', { class: 'muted' }, 'When two phones cannot connect directly (different mobile networks, strict routers) their voice and files go through this server.'),
-      t ? el('div', {}, el('h3', {}, 'Addresses the apps are given'), ...t.map((x) => addr(x, 'TURN address')),
-          el('p', { class: 'hint' }, 'The first is UDP. The ones marked transport=tcp and turns: are for networks that block UDP.'),
-          el('p', {}, 'Credentials last an hour and are handed out automatically; there is nothing to set up per person.'))
-        : el('p', {}, 'TURN is switched off. Set [turn] enabled = true in the settings file.'),
-      el('p', { class: 'hint' }, 'Remember to open the UDP port range and the TCP ports in your firewall or router. Run “privcord-server doctor” on the server to check.')));
-  }
-
-  // ---- start ----
+  // ---------- start ----------
   async function start() {
-    me = await api('/me');
-    if (store) store.setItem('pc-admin-token', token);
+    me = await api('/me'); overviewCache = await api('/overview');
+    if (session) session.setItem('pc-admin-token', token);
     $('login').hidden = true; $('app').hidden = false; $('who').hidden = false;
-    $('whoText').textContent = me.name === me.role ? me.role : `${me.name} · ${me.role}`;
     const wanted = location.hash.slice(1);
-    current = SECTIONS.some((s) => s[0] === wanted && (!s[3] || s[3](me))) ? wanted : 'overview';
+    current = PAGES.some((p) => p[0] === wanted && (!p[3] || p[3](me, overviewCache))) ? wanted : 'home';
     buildTabs(); show(current);
   }
-  window.addEventListener('hashchange', () => { const id = location.hash.slice(1); if (me && SECTIONS.some((s) => s[0] === id && (!s[3] || s[3](me))) && id !== current) show(id); });
-  if (token) start().catch(() => signOut(''));
-  else $('token').focus();
+  window.addEventListener('hashchange', () => { const id = location.hash.slice(1); if (me && id !== current && tabsOf().some((b) => b.id === 'tab-' + id)) show(id); });
+  if (token) start().catch(() => signOut('')); else $('token').focus();
 })();

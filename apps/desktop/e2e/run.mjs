@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { addFriend, build, connected, device, installBleSim, invites, isConnected, launch, onboard, openAdd, groupAdd, groupRemove,
   memberNames, messageMember, newGroup, openChat, openGroupDetails, pair, setName, pasteInvite, realPath, relayNet, saveFile, say, sendFile, serve,
-  setGroupOnly, startNostrRelay, startRelay, startTurn, uidOf, uiPath } from './lib.mjs';
+  setGroupOnly, showAdvanced, startNostrRelay, startRelay, startTurn, uidOf, uiPath } from './lib.mjs';
 
 const only = process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1].split(',') : null;
 const results = [];
@@ -694,7 +694,7 @@ await scenario(15, 'app lock: passkey (virtual Windows Hello) gates the app; fai
   const lockSwitch = () => page.locator('button[role="switch"][aria-label^="Lock PrivCord"]');
   const openSecurity = async () => {
     await page.click('button[aria-label="Settings"]');
-    await page.click('.tab:has-text("Security")');
+    await page.click('.tab:has-text("Privacy")');
   };
   check((await page.locator('.lock-screen').count()) === 0, 'not locked by default');
   await openSecurity();
@@ -1030,8 +1030,7 @@ await scenario(20, 'delete for everyone, reactions, search, backup and restore, 
   await B.page.keyboard.press('Escape');
   // Ann wipes her chats, then restores them
   await A.page.click('button[aria-label="Settings"]');
-  await A.page.click('.tab:has-text("Security")');
-  await A.page.click('summary:has-text("More privacy tools")');
+  await A.page.click('.tab:has-text("Privacy")');
   await A.page.click('button:has-text("Clear all chats")').catch(() => undefined);
   const clearBtn = A.page.locator('button:has-text("Clear all chats"), button:has-text("Clear chats")');
   if (await A.page.locator('.modal:has-text("Clear")').count()) await A.page.keyboard.press('Escape');
@@ -1063,8 +1062,8 @@ await scenario(21, 'panic wipe: off by default; once on, three quick Ctrl+Shift+
   await sleep(800);
   check((await page.locator('.sidebar').count()) === 1, 'with the setting off nothing happens');
   await page.click('button[aria-label="Settings"]');
-  await page.click('.tab:has-text("Security")');
-  await page.click('summary:has-text("More privacy tools")');
+  await page.click('.tab:has-text("Privacy")');
+  await showAdvanced(page);
   await page.click('.toggle-row:has-text("Panic wipe") [role="switch"]');
   await page.keyboard.press('Escape');
   await press3();

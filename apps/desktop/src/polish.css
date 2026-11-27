@@ -136,3 +136,9 @@
     transition: none;
   }
 }
+
+/* Settings: Advanced switch row and the "Your data" block kept at the top of Privacy. */
+.adv-row { display: flex; align-items: center; gap: 12px; padding: 10px 2px 12px; }
+.adv-row p { margin: 2px 0 0; }
+.data-actions { display: grid; gap: 10px; }
+.data-actions h3 { margin: 0; font-size: 1rem; }

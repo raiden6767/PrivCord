@@ -343,6 +343,24 @@ impl Store {
         had
     }
 
+    /// Removes every stored event. Bans and deletions are kept, so what was removed on purpose stays refused.
+    pub fn clear(&self) -> usize {
+        let removed = {
+            let mut w = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+            let n = w.by_id.len();
+            let keep = (
+                std::mem::take(&mut w.deleted),
+                std::mem::take(&mut w.deleted_addrs),
+                std::mem::take(&mut w.banned),
+            );
+            *w = Inner::default();
+            (w.deleted, w.deleted_addrs, w.banned) = keep;
+            n
+        };
+        self.compact(true);
+        removed
+    }
+
     pub fn len(&self) -> usize {
         self.inner
             .read()

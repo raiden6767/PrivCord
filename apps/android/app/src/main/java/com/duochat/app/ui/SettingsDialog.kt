@@ -112,8 +112,7 @@ fun SettingsDialog(
     var linking by remember { mutableStateOf(false) }
     var displayName by remember { mutableStateOf(settings.displayName) }
     var nameStatus by remember { mutableStateOf<String?>(null) }
-    var advanced by remember { mutableStateOf(false) }
-    var technical by remember { mutableStateOf(false) }
+    val advanced = settings.advanced
     var stunText by remember { mutableStateOf(settings.network.stun.joinToString("\n")) }
     val firstTurn = settings.network.turn.firstOrNull()
     var turnUrls by remember { mutableStateOf(firstTurn?.urls?.joinToString("\n").orEmpty()) }
@@ -193,6 +192,95 @@ fun SettingsDialog(
                 }
                 Spacer(Modifier.height(8.dp))
 
+                Spacer(Modifier.height(8.dp))
+                ToggleRow(
+                    title = "Show advanced settings",
+                    description = "Linked devices, connection options, diagnostics and power-user tools. Everything works without them.",
+                    checked = settings.advanced,
+                    onChange = { on -> onUpdateSettings { copy(advanced = on) } },
+                )
+                Spacer(Modifier.height(12.dp))
+
+                // The things you may want to delete come first, so they are never a long scroll away.
+                SectionTitle("Your data")
+                Text(
+                    "Messages are encrypted on this phone with a key in the Android Keystore and travel straight between " +
+                        "phones; no server can read or keep them. Deleting here never touches your friends' phones.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                if (clearConfirm) {
+                    WrapRow(8.dp) {
+                        Button(
+                            onClick = {
+                                clearing = true
+                                onClearLocalData { result ->
+                                    clearing = false
+                                    clearConfirm = false
+                                    clearStatus = result.fold(
+                                        onSuccess = { "Local data cleared." },
+                                        onFailure = { it.message ?: "Could not clear local data." },
+                                    )
+                                }
+                            },
+                            enabled = !clearing,
+                        ) {
+                            if (clearing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(15.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text("Yes, clear all messages")
+                        }
+                        TextButton(onClick = { clearConfirm = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                } else {
+                    OutlinedButton(onClick = { clearConfirm = true }) {
+                        Text("Clear all messages")
+                    }
+                }
+                clearStatus?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Erase everything", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Permanently deletes your chats, friends, groups, keys and settings from this phone and starts over " +
+                                "with a new identity. You will be asked to confirm twice.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 6.dp),
+                        )
+                        Button(
+                            onClick = {
+                                onDismiss()
+                                onOpenNuke()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) {
+                            Text("Erase everything")
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+
                 SectionTitle("Profile")
                 Text(
                     "There are no accounts. Your identity is a key that lives on this phone. " +
@@ -221,28 +309,6 @@ fun SettingsDialog(
                 nameStatus?.let {
                     Spacer(Modifier.height(6.dp))
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                SectionTitle("Devices")
-                val devicesLine by androidx.compose.runtime.produceState<String?>(null, state.devices) {
-                    value = com.duochat.app.data.parseDevicesLine(insight("devices_summary", com.duochat.app.data.devicesInput(state.devices)))
-                }
-                devicesLine?.let {
-                    DevicesStrip(it)
-                    Spacer(Modifier.height(10.dp))
-                }
-                DevicesSection(state, onLinkNew = { onCancelDeviceLink(); linking = true }, onRemoval = onDeviceRemoval)
-                if (linking) {
-                    LinkHostDialog(
-                        state = state,
-                        onStart = onStartDeviceLink,
-                        onScanned = onHostScannedLink,
-                        onConfirm = onConfirmDeviceLink,
-                        onCancel = onCancelDeviceLink,
-                        onClose = { linking = false },
-                    )
                 }
 
                 Spacer(Modifier.height(20.dp))
@@ -475,9 +541,6 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { advanced = !advanced }) {
-                    Text(if (advanced) "Hide advanced options" else "Advanced options (for people who want control)")
-                }
                 if (advanced) {
                     Spacer(Modifier.height(8.dp))
                 val hostsJson by androidx.compose.runtime.produceState("[]", settings.network, settings.updateChecks) {
@@ -789,103 +852,59 @@ SectionTitle("Security")
                 )
                 Spacer(Modifier.height(10.dp))
                 ToggleRow(
+                    "Hide the app from screenshots and the app switcher",
+                    "Screenshots, screen recordings and the recent-apps preview show a blank screen. Applies to your chats, on every device you link.",
+                    state.prefs.secureScreen,
+                ) { on -> onSetSecureScreen(on) }
+                Spacer(Modifier.height(14.dp))
+                if (advanced) {
+                ToggleRow(
                     title = "Stay group-only with people I meet in groups",
                     description = "You still read and reply in the groups you share, but nobody you only know through a group can message you directly, and you cannot message them, unless you swap invites yourselves.",
                     checked = settings.groupOnly,
                     onChange = { value -> onUpdateSettings { copy(groupOnly = value) } },
                 )
                 Spacer(Modifier.height(10.dp))
-                Text(
-                    "Messages are encrypted on this phone with a key in the Android Keystore and travel straight between " +
-                        "phones; no server can read or keep them. Deleting here never touches your friends' phones.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(10.dp))
-                if (clearConfirm) {
-                    WrapRow(8.dp) {
-                        Button(
-                            onClick = {
-                                clearing = true
-                                onClearLocalData { result ->
-                                    clearing = false
-                                    clearConfirm = false
-                                    clearStatus = result.fold(
-                                        onSuccess = { "Local data cleared." },
-                                        onFailure = { it.message ?: "Could not clear local data." },
-                                    )
-                                }
-                            },
-                            enabled = !clearing,
-                        ) {
-                            if (clearing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(15.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Text("Yes, clear all messages")
-                        }
-                        TextButton(onClick = { clearConfirm = false }) {
-                            Text("Cancel")
-                        }
-                    }
-                } else {
-                    OutlinedButton(onClick = { clearConfirm = true }) {
-                        Text("Clear all messages")
-                    }
-                }
-                clearStatus?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.height(14.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Erase everything", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Permanently deletes your chats, friends, groups, keys and settings from this phone and starts over " +
-                                "with a new identity. You will be asked to confirm twice.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 6.dp),
-                        )
-                        Button(
-                            onClick = {
-                                onDismiss()
-                                onOpenNuke()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        ) {
-                            Text("Erase everything")
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
 ToggleRow(
                     "Panic wipe",
                     "Tap the \"Chats\" title on the home screen three times quickly and everything on this phone is erased at once, with no confirmation. Your 12 recovery words are the only way back, so keep them somewhere safe first.",
                     settings.panicWipe,
                 ) { on -> onUpdateSettings { copy(panicWipe = on) } }
-                ToggleRow(
-                    "Hide the app from screenshots and the app switcher",
-                    "Screenshots, screen recordings and the recent-apps preview show a blank screen. Applies to your chats, on every device you link.",
-                    state.prefs.secureScreen,
-                ) { on -> onSetSecureScreen(on) }
-                Spacer(Modifier.height(14.dp))
+                                }
                 SectionTitle("Backup")
                 BackupSection({ pass, done -> onExportBackup(pass) { r -> if (r.isSuccess) onUpdateSettings { copy(lastBackupAt = System.currentTimeMillis()) }; done(r) } }, onImportBackup)
+                Spacer(Modifier.height(20.dp))
+
+SectionTitle("Updates")
+                ToggleRow(
+                    "Check for updates",
+                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 3_600_000} hours while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
+                    settings.updateChecks,
+                ) { onUpdateSettings { copy(updateChecks = it) } }
+                UpdateCheckRow(settings.network)
+                Spacer(Modifier.height(20.dp))
+
+                if (advanced) {
+                SectionTitle("Devices")
+                val devicesLine by androidx.compose.runtime.produceState<String?>(null, state.devices) {
+                    value = com.duochat.app.data.parseDevicesLine(insight("devices_summary", com.duochat.app.data.devicesInput(state.devices)))
+                }
+                devicesLine?.let {
+                    DevicesStrip(it)
+                    Spacer(Modifier.height(10.dp))
+                }
+                DevicesSection(state, onLinkNew = { onCancelDeviceLink(); linking = true }, onRemoval = onDeviceRemoval)
+                if (linking) {
+                    LinkHostDialog(
+                        state = state,
+                        onStart = onStartDeviceLink,
+                        onScanned = onHostScannedLink,
+                        onConfirm = onConfirmDeviceLink,
+                        onCancel = onCancelDeviceLink,
+                        onClose = { linking = false },
+                    )
+                }
+
                 Spacer(Modifier.height(20.dp))
 
 val storageJson by androidx.compose.runtime.produceState("[]", state.messages) { value = storageByChatJson() }
@@ -898,19 +917,11 @@ val storageJson by androidx.compose.runtime.produceState("[]", state.messages) {
                 )
                 Spacer(Modifier.height(20.dp))
 
-SectionTitle("Updates")
-                ToggleRow(
-                    "Check for updates",
-                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 3_600_000} hours while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
-                    settings.updateChecks,
-                ) { onUpdateSettings { copy(updateChecks = it) } }
-                UpdateCheckRow(settings.network)
-                Spacer(Modifier.height(20.dp))
-
 SectionTitle("Diagnostic log")
                 DiagLogSection(status = diagStatus, export = diagExport, clear = onDiagClear, setEnabled = onSetDiagEnabled)
                 Spacer(Modifier.height(20.dp))
 
+                }
 SectionTitle("About PrivCord")
                 Text(
                     "Private messaging for friends and groups, with no accounts and no server.",
@@ -920,10 +931,7 @@ SectionTitle("About PrivCord")
                 DetailRow("Version", com.duochat.app.BuildConfig.VERSION_NAME)
                 DetailRow("Created by", AppConfig.CREATED_BY)
                 DetailRow("License", AppConfig.LICENSE_SHORT)
-                TextButton(onClick = { technical = !technical }) {
-                    Text(if (technical) "Hide technical details" else "Technical details")
-                }
-                if (technical) {
+                if (advanced) {
                 Text("On this phone", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 DetailRow("Messages", state.usage.messages.toString())
                 DetailRow("Friends", state.usage.contacts.toString())

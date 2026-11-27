@@ -10,7 +10,7 @@ use axum::{
     extract::{ConnectInfo, DefaultBodyLimit, Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -67,8 +67,29 @@ struct PolicyJson {
     blocked_kinds: Vec<u64>,
 }
 
+/// Limits changed from the panel. Only what was changed is here; the rest follow the settings file.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct SettingsJson {
+    #[serde(default)]
+    keep_offline_messages: Option<bool>,
+    #[serde(default)]
+    frames_per_minute: Option<u64>,
+    #[serde(default)]
+    connections_per_address: Option<u64>,
+    #[serde(default)]
+    mailboxes_per_connection: Option<u64>,
+    #[serde(default)]
+    nostr_events_per_minute: Option<u64>,
+    #[serde(default)]
+    nostr_requests_per_minute: Option<u64>,
+    #[serde(default)]
+    nostr_keep_days: Option<u64>,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 struct Stored {
+    #[serde(default)]
+    settings: Option<SettingsJson>,
     #[serde(default)]
     admins: Vec<Admin>,
     #[serde(default)]
@@ -212,6 +233,36 @@ impl AdminState {
         self.app.set_extra_tokens(&extra);
         if let (Some(p), Some(n)) = (&g.0.policy, self.app.relay.as_ref().and_then(|r| r.nostr())) {
             n.set_policy(policy_from_json(p));
+        }
+        if let (Some(s), Some(r)) = (&g.0.settings, self.app.relay.as_ref()) {
+            use std::sync::atomic::Ordering::Relaxed;
+            let l = r.limits();
+            if let Some(v) = s.keep_offline_messages {
+                l.keep_offline.store(v, Relaxed);
+            }
+            if let Some(v) = s.frames_per_minute {
+                l.frames_per_minute.store(v, Relaxed);
+            }
+            if let Some(v) = s.connections_per_address {
+                l.connections_per_address
+                    .store(usize::try_from(v).unwrap_or(usize::MAX), Relaxed);
+            }
+            if let Some(v) = s.mailboxes_per_connection {
+                l.mailboxes_per_connection
+                    .store(usize::try_from(v).unwrap_or(usize::MAX), Relaxed);
+            }
+            if let Some(n) = r.nostr() {
+                let nl = n.limits();
+                if let Some(v) = s.nostr_events_per_minute {
+                    nl.events_per_minute.store(v, Relaxed);
+                }
+                if let Some(v) = s.nostr_requests_per_minute {
+                    nl.requests_per_minute.store(v, Relaxed);
+                }
+                if let Some(v) = s.nostr_keep_days {
+                    nl.keep_days.store(v, Relaxed);
+                }
+            }
         }
     }
 
@@ -385,9 +436,9 @@ async fn overview(
         format!("ws://{host}:{}", port_of(&c.server.listen))
     };
     let from_panel = lock(&a.state.inner).0.access_tokens.len();
-    let mut warnings: Vec<String> = Vec::new();
+    let mut warnings: Vec<Value> = Vec::new();
     if !app.requires_token() && c.relay.enabled {
-        warnings.push("Anyone who finds this server can use it: no access tokens are set. Add one under Access to make it private.".into());
+        warnings.push(json!({ "text": "Anyone who finds this server can use it: no access tokens are set. Make a token under People to make it private.", "go": "people" }));
     }
     if c.admin
         .listen
@@ -395,16 +446,16 @@ async fn overview(
         .is_ok_and(|s| !s.ip().is_loopback())
         && !c.admin.tls
     {
-        warnings.push("This panel is served over plain HTTP on a non-local address: tokens travel unencrypted. Use localhost, a VPN, or turn on admin.tls.".into());
+        warnings.push(json!({ "text": "This panel is served over plain HTTP on a non-local address: tokens travel unencrypted. Use localhost, a VPN, or turn on admin.tls.", "go": null }));
     }
     if a.state.tls_self_signed {
-        warnings.push("The TLS certificate is self-signed: apps and browsers will not trust it. Use real certificate files for production.".into());
+        warnings.push(json!({ "text": "The TLS certificate is self-signed: apps and browsers will not trust it. Use real certificate files for production.", "go": null }));
     }
     if c.turn.enabled && c.turn.tcp_listen.is_empty() && c.turn.tls_listen.is_empty() {
-        warnings.push("TURN accepts UDP only: phones on networks that block UDP cannot use it. Set turn.tcp_listen and turn.tls_listen.".into());
+        warnings.push(json!({ "text": "TURN accepts UDP only: phones on networks that block UDP cannot use it. Set turn.tcp_listen and turn.tls_listen.", "go": null }));
     }
     if c.nostr.enabled && c.nostr.allowed_pubkeys.is_empty() && !app.requires_token() {
-        warnings.push("The Nostr side accepts events from anyone. Set allowed authors under Nostr rules if this relay is for your own use.".into());
+        warnings.push(json!({ "text": "The Nostr side accepts events from anyone. Set allowed authors under Rules if this relay is for your own use.", "go": "rules" }));
     }
     let mut counters = app.relay.as_ref().map_or(json!({}), |r| r.health());
     if let Some(o) = counters.as_object_mut() {
@@ -524,6 +575,145 @@ async fn put_policy(
         return text(StatusCode::INTERNAL_SERVER_ERROR, &e);
     }
     Json(json!({ "ok": true })).into_response()
+}
+
+fn settings_view(a: &AdminApp) -> Value {
+    use std::sync::atomic::Ordering::Relaxed;
+    let app = &a.state.app;
+    let relay = app.relay.as_ref();
+    let nostr = relay.and_then(|r| r.nostr());
+    json!({
+        "relay": relay.map(|r| json!({
+            "keep_offline_messages": r.limits().keep_offline.load(Relaxed) && r.store_and_forward(),
+            "can_keep_offline_messages": r.store_and_forward(),
+            "frames_per_minute": r.limits().frames_per_minute.load(Relaxed),
+            "connections_per_address": r.limits().connections_per_address.load(Relaxed),
+            "mailboxes_per_connection": r.limits().mailboxes_per_connection.load(Relaxed),
+            "stored_messages": r.queued(),
+        })),
+        "nostr": nostr.map(|n| json!({
+            "events_per_minute": n.limits().events_per_minute.load(Relaxed),
+            "requests_per_minute": n.limits().requests_per_minute.load(Relaxed),
+            "keep_days": n.limits().keep_days.load(Relaxed),
+            "stored_events": n.store().map_or(0, crate::nostr::store::Store::len),
+        })),
+    })
+}
+
+async fn get_settings(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    Json(settings_view(&a)).into_response()
+}
+
+async fn put_settings(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Change);
+    // Each value is checked against a sensible range; only what is present is changed.
+    let num = |k: &str, lo: u64, hi: u64| -> Result<Option<u64>, String> {
+        match body.get(k) {
+            None | Some(Value::Null) => Ok(None),
+            Some(v) => v
+                .as_u64()
+                .filter(|n| (lo..=hi).contains(n))
+                .map(Some)
+                .ok_or(format!("{k} must be a whole number from {lo} to {hi}")),
+        }
+    };
+    let parsed = (|| -> Result<SettingsJson, String> {
+        Ok(SettingsJson {
+            keep_offline_messages: match body.get("keep_offline_messages") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(
+                    v.as_bool()
+                        .ok_or("keep_offline_messages must be true or false")?,
+                ),
+            },
+            frames_per_minute: num("frames_per_minute", 10, 1_000_000)?,
+            connections_per_address: num("connections_per_address", 1, 10_000)?,
+            mailboxes_per_connection: num("mailboxes_per_connection", 1, 1_000)?,
+            nostr_events_per_minute: num("nostr_events_per_minute", 0, 100_000)?,
+            nostr_requests_per_minute: num("nostr_requests_per_minute", 0, 100_000)?,
+            nostr_keep_days: num("nostr_keep_days", 0, 3_650)?,
+        })
+    })();
+    let new = match parsed {
+        Ok(n) => n,
+        Err(e) => return text(StatusCode::BAD_REQUEST, &e),
+    };
+    {
+        let mut g = lock(&a.state.inner);
+        let cur = g.0.settings.get_or_insert_with(SettingsJson::default);
+        macro_rules! take {
+            ($f:ident) => {
+                if new.$f.is_some() {
+                    cur.$f = new.$f;
+                }
+            };
+        }
+        take!(keep_offline_messages);
+        take!(frames_per_minute);
+        take!(connections_per_address);
+        take!(mailboxes_per_connection);
+        take!(nostr_events_per_minute);
+        take!(nostr_requests_per_minute);
+        take!(nostr_keep_days);
+        if let Err(e) = a.state.save(&mut g) {
+            return text(StatusCode::INTERNAL_SERVER_ERROR, &e);
+        }
+    }
+    a.state.apply();
+    Json(settings_view(&a)).into_response()
+}
+
+/// Removing data cannot be undone, so the request has to say it is meant.
+fn confirmed(body: &Value) -> bool {
+    body.get("confirm").and_then(Value::as_bool) == Some(true)
+}
+
+async fn clear_messages(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Change);
+    if !confirmed(&body) {
+        return text(
+            StatusCode::BAD_REQUEST,
+            "send {\"confirm\": true} to remove every stored message",
+        );
+    }
+    let Some(r) = a.state.app.relay.as_ref() else {
+        return text(StatusCode::NOT_FOUND, "the relay is off");
+    };
+    Json(json!({ "removed": r.clear_stored(now_ms()) })).into_response()
+}
+
+async fn clear_nostr(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Change);
+    if !confirmed(&body) {
+        return text(
+            StatusCode::BAD_REQUEST,
+            "send {\"confirm\": true} to remove every stored Nostr event",
+        );
+    }
+    let Some(n) = nostr_of(&a) else {
+        return text(StatusCode::NOT_FOUND, "the Nostr role is off");
+    };
+    Json(json!({ "removed": n.clear_events() })).into_response()
 }
 
 async fn ban_event(
@@ -718,6 +908,9 @@ const INDEX: &str = include_str!("admin/index.html");
 const CSS: &str = include_str!("admin/app.css");
 const JS: &str = include_str!("admin/app.js");
 const THEME_JS: &str = include_str!("admin/theme.js");
+const BRAND: &str = include_str!("admin/brand.svg");
+const FONT_DISPLAY: &[u8] = include_bytes!("admin/fonts/bricolage.woff2");
+const FONT_TEXT: &[u8] = include_bytes!("admin/fonts/figtree.ttf");
 
 fn asset(content_type: &'static str, body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, content_type)], body).into_response()
@@ -734,7 +927,7 @@ async fn secure_headers(req: axum::extract::Request, next: axum::middleware::Nex
         ("x-frame-options", "DENY"),
         (
             "content-security-policy",
-            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; \
+            "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; \
              base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         ),
     ] {
@@ -768,8 +961,25 @@ pub fn router(state: Arc<AdminState>) -> Router {
             "/admin/theme.js",
             get(|| async { asset("text/javascript; charset=utf-8", THEME_JS) }),
         )
+        .route(
+            "/admin/brand.svg",
+            get(|| async { asset("image/svg+xml", BRAND) }),
+        )
+        .route(
+            "/admin/fonts/bricolage.woff2",
+            get(|| async {
+                ([(header::CONTENT_TYPE, "font/woff2")], FONT_DISPLAY).into_response()
+            }),
+        )
+        .route(
+            "/admin/fonts/figtree.ttf",
+            get(|| async { ([(header::CONTENT_TYPE, "font/ttf")], FONT_TEXT).into_response() }),
+        )
         .route("/admin/api/me", get(me))
         .route("/admin/api/overview", get(overview))
+        .route("/admin/api/settings", get(get_settings).put(put_settings))
+        .route("/admin/api/clear/messages", post(clear_messages))
+        .route("/admin/api/clear/nostr", post(clear_nostr))
         .route("/admin/api/nostr/policy", get(get_policy).put(put_policy))
         .route("/admin/api/nostr/events/{id}", delete(ban_event))
         .route("/admin/api/access-tokens", get(list_tokens).post(add_token))

@@ -138,6 +138,19 @@ relay() { # modeA modeB transport port -> ok / FAIL
   if [ $rc = 0 ]; then echo "ok  ($(grep '^OK' $W/ra.out | sed 's/OK pong from [0-9.:]* in //'), $(grep -o 'allocated in [^,]*' $W/ra.out | head -n 1))"
   else echo "FAIL (phone A: $(grep -m1 '^FAIL' $W/ra.out | cut -c1-70))"; fi; }
 
+# Can a TURN user aim a packet at a service on the server's own loopback by naming the server's public address?
+loopback() {
+  nat natA na-p na-i cone; nat natB nb-p nb-i cone; rm -f $W/lb.out
+  ex srv python3 -c "
+import socket,sys
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind(('127.0.0.1',5555)); s.settimeout(9)
+try:
+    d,a=s.recvfrom(100); open('$W/lb.out','w').write('GOT '+d.decode())
+except socket.timeout: pass" &
+  local lp=$!; sleep 0.5
+  ex phA $PROBE --transport udp --server 203.0.113.10:3478 --user "$U" --pass "$P" --peer-ip 203.0.113.10 send --to 203.0.113.10:5555 > $W/lbp.out 2>&1
+  wait $lp 2>/dev/null
+  [ -s $W/lb.out ] && echo "REACHED loopback: $(cat $W/lb.out)" || echo "blocked"; }
 pass=0; fail=0
 scen() { # label expected command... (LAB_ONLY=word runs only scenarios whose label contains it; LAB_DEBUG=1 shows the logs)
   local label=$1 want=$2; shift 2
@@ -161,6 +174,7 @@ scen "office blocks UDP on both sides: TURN over UDP (blocked)" FAIL relay udp-b
 scen "office blocks UDP on both sides: TURN over TCP 3478" ok relay udp-blocked udp-blocked tcp 3478
 scen "only TCP 443 gets out: TURN over TCP 3478 (blocked)" FAIL relay tls-only tls-only tcp 3478
 scen "only TCP 443 gets out: TURN over TLS 443" ok relay tls-only tls-only tls 443
+scen "TURN cannot reach a service on the server's own loopback" blocked loopback
 scen "mixed: one phone UDP-blocked, one behind a symmetric NAT (TCP)" ok relay udp-blocked symmetric tcp 3478
 echo; echo "$pass as expected, $fail not"
 [ $fail = 0 ]
