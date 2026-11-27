@@ -60,8 +60,18 @@ fn b64() -> base64::engine::GeneralPurpose {
 
 /// Reads a key written as 64 hex characters (whitespace around it is ignored).
 pub fn parse_key(text: &str) -> Result<[u8; 32], String> {
-    crate::nostr::event::unhex::<32>(text.trim().to_ascii_lowercase().as_str())
-        .ok_or_else(|| "the storage key must be 64 hex characters (32 random bytes)".to_owned())
+    let bad = || "the storage key must be 64 hex characters (32 random bytes)".to_owned();
+    let t = text.trim();
+    if t.len() != 64 || !t.is_ascii() {
+        return Err(bad());
+    }
+    // Read pair by pair from the text, so the key is only ever made of what was given (no buffer made up in advance).
+    let bytes: Vec<u8> = (0..64)
+        .step_by(2)
+        .map(|i| t.get(i..i + 2).and_then(|p| u8::from_str_radix(p, 16).ok()))
+        .collect::<Option<_>>()
+        .ok_or_else(bad)?;
+    <[u8; 32]>::try_from(bytes).map_err(|_| bad())
 }
 
 impl Codec {
@@ -228,8 +238,11 @@ pub struct ReadReport {
 mod tests {
     use super::*;
 
+    /// A fresh random key: the tests use no key that is written down in the source.
     fn key() -> [u8; 32] {
-        [7u8; 32]
+        let mut k = [0u8; 32];
+        getrandom::fill(&mut k).unwrap();
+        k
     }
 
     #[test]
@@ -293,7 +306,7 @@ mod tests {
             Decoded::Payload("{\"secret\":\"words\"}".into())
         );
         assert_eq!(c.decode("queue", &line), Decoded::Corrupt);
-        let other = Codec::with_key(&[9u8; 32], true).unwrap();
+        let other = Codec::with_key(&key(), true).unwrap();
         assert_eq!(other.decode("nostr", &line), Decoded::Corrupt);
         assert_eq!(Codec::plain().decode("nostr", &line), Decoded::NeedsKey);
         let mut bytes = line.into_bytes();
