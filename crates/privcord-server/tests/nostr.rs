@@ -275,7 +275,7 @@ async fn expiring_events_are_refused_when_late_and_vanish_when_due() {
         &k,
         1,
         now(),
-        vec![vec!["expiration", &(now() + 1).to_string()]],
+        vec![vec!["expiration", &(now() + 3).to_string()]],
         "brief",
     );
     assert!(c.publish(&brief).await.0);
@@ -283,7 +283,7 @@ async fn expiring_events_are_refused_when_late_and_vanish_when_due() {
         c.req("a", vec![json!({ "authors": [pk(&k)] })]).await.len(),
         1
     );
-    tokio::time::sleep(Duration::from_millis(2300)).await;
+    tokio::time::sleep(Duration::from_millis(4300)).await;
     assert!(c
         .req("b", vec![json!({ "authors": [pk(&k)] })])
         .await
