@@ -211,6 +211,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             app.clone(),
             tls.as_ref().is_some_and(|t| t.self_signed),
         )?;
+        let _ = app.admin.set(Arc::downgrade(&state));
         let tcp = tokio::net::TcpListener::bind(&admin_cfg.listen)
             .await
             .map_err(|e| {

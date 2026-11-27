@@ -309,6 +309,18 @@ impl Store {
                     {
                         store.ban_inner(id);
                         n += 1;
+                    } else if let Some(id) = v
+                        .get("unban")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(super::event::unhex::<32>)
+                    {
+                        store
+                            .inner
+                            .write()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .banned
+                            .remove(&id);
+                        n += 1;
                     } else if let Some(e) = Event::parse_trusted(&v) {
                         store.insert_inner(Arc::new(e), false);
                         n += 1;
@@ -453,6 +465,43 @@ impl Store {
         self.log
             .as_ref()
             .is_none_or(|f| lock(f).sync_data().is_ok())
+    }
+
+    /// The events an administrator banned (refused whoever publishes them).
+    pub fn banned_events(&self) -> Vec<Id> {
+        let mut v: Vec<Id> = self
+            .inner
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .banned
+            .iter()
+            .copied()
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Takes a ban back: the event may be published (and stored) again. Whether it was banned.
+    pub fn unban_event(&self, id: &Id) -> bool {
+        let was = self
+            .inner
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .banned
+            .remove(id);
+        if was {
+            if let Some(f) = &self.log {
+                let mut line = self.codec.encode(
+                    LABEL,
+                    &format!("{{\"unban\":\"{}\"}}", super::event::hex(id)),
+                );
+                line.push('\n');
+                let _ = lock(f).write_all(line.as_bytes());
+                self.lines
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        was
     }
 
     /// An administrator removes an event for good (moderation): it goes, and nobody can publish it again.

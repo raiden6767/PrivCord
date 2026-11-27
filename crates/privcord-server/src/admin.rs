@@ -97,9 +97,26 @@ struct Stored {
     /// The Nostr rules last saved from the panel; they win over the settings file.
     #[serde(default)]
     policy: Option<PolicyJson>,
+    /// Why a public key, an event or an address was banned or blocked (kept for the management API's lists): keys like
+    /// `pk:<hex>`, `ev:<hex>`, `ip:<address>`.
+    #[serde(default)]
+    reasons: std::collections::BTreeMap<String, String>,
+    /// Addresses refused by the management API's `blockip`.
+    #[serde(default)]
+    blocked_ips: Vec<String>,
+    /// Name, description and icon set through the management API.
+    #[serde(default)]
+    relay_info: Option<RelayInfo>,
     /// One-time setup codes made with `admin-invite`: hashes only, each for one named admin, until it expires.
     #[serde(default)]
     invites: Vec<Invite>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+struct RelayInfo {
+    name: Option<String>,
+    description: Option<String>,
+    icon: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -368,6 +385,239 @@ impl AdminState {
         Ok(secret)
     }
 
+    /// The NIP-86 management API: one call. `method` and `params` are as the client sent them. The result goes back as
+    /// `{"result": ...}`, an error as `{"error": "..."}`. Whatever is changed is saved with the panel's settings, applied at once
+    /// and kept across restarts.
+    pub fn nip86(&self, method: &str, params: &[Value]) -> Result<Value, String> {
+        const METHODS: [&str; 18] = [
+            "supportedmethods",
+            "banpubkey",
+            "listbannedpubkeys",
+            "allowpubkey",
+            "listallowedpubkeys",
+            "listeventsneedingmoderation",
+            "allowevent",
+            "banevent",
+            "listbannedevents",
+            "changerelayname",
+            "changerelaydescription",
+            "changerelayicon",
+            "allowkind",
+            "disallowkind",
+            "listallowedkinds",
+            "blockip",
+            "unblockip",
+            "listblockedips",
+        ];
+        let n = self
+            .app
+            .relay
+            .as_ref()
+            .and_then(|r| r.nostr())
+            .ok_or("the Nostr role is off")?
+            .clone();
+        let text = |i: usize| -> Result<String, String> {
+            params
+                .get(i)
+                .and_then(Value::as_str)
+                .map(|s| s.trim().to_owned())
+                .ok_or_else(|| format!("parameter {} must be text", i + 1))
+        };
+        let reason = |i: usize| {
+            params
+                .get(i)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .chars()
+                .take(200)
+                .collect::<String>()
+        };
+        let key = |i: usize| -> Result<String, String> {
+            let k = text(i)?.to_lowercase();
+            crate::nostr::event::unhex::<32>(&k)
+                .map(|_| k.clone())
+                .ok_or_else(|| "a public key or event id is 64 hex characters".to_owned())
+        };
+        let mut g = lock(&self.inner);
+        // The rules as they are now: those saved, else those from the settings file.
+        let mut p = g.0.policy.clone().unwrap_or_else(|| {
+            let cur = n.policy();
+            let hexes = |s: &std::collections::HashSet<[u8; 32]>| {
+                let mut v: Vec<String> = s.iter().map(|k| crate::nostr::event::hex(k)).collect();
+                v.sort();
+                v
+            };
+            let mut ak: Vec<u64> = cur.allowed_kinds.iter().copied().collect();
+            ak.sort_unstable();
+            let mut bk: Vec<u64> = cur.blocked_kinds.iter().copied().collect();
+            bk.sort_unstable();
+            PolicyJson {
+                allowed_pubkeys: hexes(&cur.allowed_pubkeys),
+                blocked_pubkeys: hexes(&cur.blocked_pubkeys),
+                allowed_kinds: ak,
+                blocked_kinds: bk,
+            }
+        });
+        let list = |items: Vec<(String, String)>, name: &str| -> Value {
+            Value::Array(
+                items
+                    .into_iter()
+                    .map(|(k, r)| json!({ name: k, "reason": r }))
+                    .collect(),
+            )
+        };
+        let result = match method {
+            "supportedmethods" => json!(METHODS),
+            "banpubkey" => {
+                let k = key(0)?;
+                p.allowed_pubkeys.retain(|x| *x != k);
+                if !p.blocked_pubkeys.contains(&k) {
+                    p.blocked_pubkeys.push(k.clone());
+                }
+                g.0.reasons.insert(format!("pk:{k}"), reason(1));
+                json!(true)
+            }
+            "allowpubkey" => {
+                let k = key(0)?;
+                p.blocked_pubkeys.retain(|x| *x != k);
+                if !p.allowed_pubkeys.contains(&k) {
+                    p.allowed_pubkeys.push(k.clone());
+                }
+                g.0.reasons.insert(format!("pk:{k}"), reason(1));
+                json!(true)
+            }
+            "listbannedpubkeys" => list(
+                p.blocked_pubkeys
+                    .iter()
+                    .map(|k| {
+                        (
+                            k.clone(),
+                            g.0.reasons
+                                .get(&format!("pk:{k}"))
+                                .cloned()
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect(),
+                "pubkey",
+            ),
+            "listallowedpubkeys" => list(
+                p.allowed_pubkeys
+                    .iter()
+                    .map(|k| {
+                        (
+                            k.clone(),
+                            g.0.reasons
+                                .get(&format!("pk:{k}"))
+                                .cloned()
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect(),
+                "pubkey",
+            ),
+            "listeventsneedingmoderation" => json!([]),
+            "banevent" => {
+                let id = key(0)?;
+                n.ban_event(&id);
+                g.0.reasons.insert(format!("ev:{id}"), reason(1));
+                json!(true)
+            }
+            "allowevent" => {
+                let id = key(0)?;
+                n.unban_event(&id);
+                g.0.reasons.remove(&format!("ev:{id}"));
+                json!(true)
+            }
+            "listbannedevents" => list(
+                n.banned_events()
+                    .into_iter()
+                    .map(|id| {
+                        let r =
+                            g.0.reasons
+                                .get(&format!("ev:{id}"))
+                                .cloned()
+                                .unwrap_or_default();
+                        (id, r)
+                    })
+                    .collect(),
+                "id",
+            ),
+            "changerelayname" | "changerelaydescription" | "changerelayicon" => {
+                let v = text(0)?.chars().take(500).collect::<String>();
+                let info = g.0.relay_info.get_or_insert_with(RelayInfo::default);
+                match method {
+                    "changerelayname" => info.name = Some(v),
+                    "changerelaydescription" => info.description = Some(v),
+                    _ => info.icon = Some(v),
+                }
+                json!(true)
+            }
+            "allowkind" | "disallowkind" => {
+                let k = params
+                    .first()
+                    .and_then(Value::as_u64)
+                    .filter(|k| *k <= 65_535)
+                    .ok_or("a kind is a number from 0 to 65535")?;
+                if method == "allowkind" {
+                    p.blocked_kinds.retain(|x| *x != k);
+                    if !p.allowed_kinds.contains(&k) {
+                        p.allowed_kinds.push(k);
+                    }
+                } else {
+                    p.allowed_kinds.retain(|x| *x != k);
+                }
+                json!(true)
+            }
+            "listallowedkinds" => json!(p.allowed_kinds),
+            "blockip" => {
+                let ip: std::net::IpAddr = text(0)?
+                    .parse()
+                    .map_err(|_| "that is not an IP address".to_owned())?;
+                let s = ip.to_string();
+                if !g.0.blocked_ips.contains(&s) {
+                    g.0.blocked_ips.push(s.clone());
+                }
+                g.0.reasons.insert(format!("ip:{s}"), reason(1));
+                json!(true)
+            }
+            "unblockip" => {
+                let ip: std::net::IpAddr = text(0)?
+                    .parse()
+                    .map_err(|_| "that is not an IP address".to_owned())?;
+                let s = ip.to_string();
+                g.0.blocked_ips.retain(|x| *x != s);
+                g.0.reasons.remove(&format!("ip:{s}"));
+                json!(true)
+            }
+            "listblockedips" => list(
+                g.0.blocked_ips
+                    .iter()
+                    .map(|ip| {
+                        (
+                            ip.clone(),
+                            g.0.reasons
+                                .get(&format!("ip:{ip}"))
+                                .cloned()
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect(),
+                "ip",
+            ),
+            other => return Err(format!("method not supported: {other}")),
+        };
+        // What changed is kept and applied: the rules, the blocked addresses and the relay's name.
+        if !method.starts_with("list") && method != "supportedmethods" {
+            n.set_policy(policy_from_json(&p));
+            g.0.policy = Some(p);
+            self.save(&mut g)?;
+            drop(g);
+            self.apply();
+        }
+        Ok(result)
+    }
+
     fn save(&self, g: &mut MutexGuard<'_, (Stored, Option<SystemTime>)>) -> Result<(), String> {
         write_atomic(&self.path, &g.0)?;
         g.1 = mtime(&self.path);
@@ -383,6 +633,18 @@ impl AdminState {
                 .filter_map(|t| crate::nostr::event::unhex::<32>(&t.hash))
                 .collect();
         self.app.set_extra_tokens(&extra);
+        let ips: std::collections::HashSet<std::net::IpAddr> =
+            g.0.blocked_ips
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect();
+        self.app.set_blocked_ips(ips);
+        if let (Some(i), Some(n)) = (
+            &g.0.relay_info,
+            self.app.relay.as_ref().and_then(|r| r.nostr()),
+        ) {
+            n.set_info(i.name.clone(), i.description.clone(), i.icon.clone());
+        }
         if let (Some(p), Some(n)) = (&g.0.policy, self.app.relay.as_ref().and_then(|r| r.nostr())) {
             n.set_policy(policy_from_json(p));
         }

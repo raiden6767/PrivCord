@@ -6,6 +6,7 @@
 
 pub mod event;
 pub mod filter;
+pub mod nip98;
 pub mod store;
 
 use crate::config::NostrConfig;
@@ -108,6 +109,8 @@ pub struct NostrLimits {
 pub struct Nostr {
     limits: NostrLimits,
     pub cfg: NostrConfig,
+    /// Name, description and icon set through the management API (they win over the settings file).
+    info_override: RwLock<(Option<String>, Option<String>, Option<String>)>,
     store: Option<Store>,
     policy: RwLock<Policy>,
     subs: Vec<Mutex<HashMap<SubKey, Vec<SubRef>>>>,
@@ -189,6 +192,7 @@ impl Nostr {
             .transpose()?;
         let policy = Policy::from_config(&cfg);
         Ok(Self {
+            info_override: RwLock::new((None, None, None)),
             limits: NostrLimits {
                 events_per_minute: AtomicU64::new(cfg.events_per_minute_per_ip),
                 requests_per_minute: AtomicU64::new(cfg.reqs_per_minute_per_conn),
@@ -242,6 +246,41 @@ impl Nostr {
         self.store.as_ref()
     }
 
+    /// Takes a ban on an event back. `None` for something that is not an event id; otherwise whether it was banned.
+    pub fn unban_event(&self, id_hex: &str) -> Option<bool> {
+        let id = unhex::<32>(id_hex)?;
+        Some(self.store.as_ref().is_some_and(|s| s.unban_event(&id)))
+    }
+
+    /// The events banned by an administrator, as hex.
+    pub fn banned_events(&self) -> Vec<String> {
+        self.store
+            .as_ref()
+            .map(|s| s.banned_events().iter().map(|i| hex(i)).collect())
+            .unwrap_or_default()
+    }
+
+    /// Public keys (hex) allowed to use the management API: `admin_pubkey` and `admin_pubkeys`.
+    pub fn admin_keys(&self) -> Vec<Id> {
+        std::iter::once(&self.cfg.admin_pubkey)
+            .chain(self.cfg.admin_pubkeys.iter())
+            .filter_map(|k| unhex::<32>(k.trim().to_lowercase().as_str()))
+            .collect()
+    }
+
+    /// Changes what the information document says about this relay (kept until the next change).
+    pub fn set_info(
+        &self,
+        name: Option<String>,
+        description: Option<String>,
+        icon: Option<String>,
+    ) {
+        *self
+            .info_override
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = (name, description, icon);
+    }
+
     pub fn counters(&self) -> Value {
         json!({
             "events": self.store.as_ref().map_or(0, Store::len),
@@ -257,12 +296,17 @@ impl Nostr {
     /// NIP-11.
     pub fn info(&self, contact: &str) -> Value {
         let c = &self.cfg;
+        let over = self
+            .info_override
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let mut doc = json!({
-            "name": c.name,
-            "description": c.description,
+            "name": over.0.as_deref().unwrap_or(&c.name),
+            "description": over.1.as_deref().unwrap_or(&c.description),
             "contact": contact,
             "pubkey": c.admin_pubkey,
-            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45, 50, 62, 70],
+            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45, 50, 62, 70, 86, 98],
             "software": "https://github.com/raiden6767/privcord",
             "version": env!("CARGO_PKG_VERSION"),
             "limitation": {
@@ -279,8 +323,9 @@ impl Nostr {
                 "created_at_upper_limit": c.created_at_upper_secs,
             },
         });
-        if let (false, Some(o)) = (c.icon.is_empty(), doc.as_object_mut()) {
-            o.insert("icon".into(), Value::from(c.icon.clone()));
+        let icon = over.2.clone().unwrap_or_else(|| c.icon.clone());
+        if let (false, Some(o)) = (icon.is_empty(), doc.as_object_mut()) {
+            o.insert("icon".into(), Value::from(icon));
         }
         doc
     }

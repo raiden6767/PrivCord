@@ -10,7 +10,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -36,6 +36,11 @@ pub struct App {
     pub started: std::time::Instant,
     next_conn: AtomicU64,
     turn_asks: Mutex<HashMap<String, (u32, u64)>>,
+    mgmt_asks: Mutex<HashMap<String, (u32, u64)>>,
+    /// Addresses refused by the management API (`blockip`): they cannot open the relay's socket.
+    blocked_ips: std::sync::RwLock<std::collections::HashSet<std::net::IpAddr>>,
+    /// The admin state, once it exists: the management API changes what the panel saves.
+    pub admin: std::sync::OnceLock<std::sync::Weak<crate::admin::AdminState>>,
 }
 
 impl App {
@@ -66,6 +71,9 @@ impl App {
             started: std::time::Instant::now(),
             next_conn: AtomicU64::new(1),
             turn_asks: Mutex::new(HashMap::new()),
+            mgmt_asks: Mutex::new(HashMap::new()),
+            blocked_ips: std::sync::RwLock::new(std::collections::HashSet::new()),
+            admin: std::sync::OnceLock::new(),
         }
     }
 
@@ -77,6 +85,21 @@ impl App {
             .tokens
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = all;
+    }
+
+    /// Replaces the blocked addresses.
+    pub fn set_blocked_ips(&self, ips: std::collections::HashSet<std::net::IpAddr>) {
+        *self
+            .blocked_ips
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = ips;
+    }
+
+    pub fn ip_blocked(&self, ip: std::net::IpAddr) -> bool {
+        self.blocked_ips
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&ip)
     }
 
     /// Whether clients must present a token.
@@ -171,6 +194,13 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/.well-known/privcord-server", get(about))
         .route("/turn", get(turn_credentials))
         .route("/metrics", get(metrics))
+        // NIP-86: management calls are POSTs to the relay's own address; a GET there is still the relay's socket.
+        .route(
+            "/",
+            post(management)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+                .fallback(socket),
+        )
         .fallback(socket)
         .with_state(app)
 }
@@ -295,6 +325,111 @@ async fn turn_credentials(
         .into_response()
 }
 
+/// NIP-86 (relay management), authenticated with NIP-98: `POST /` with `Content-Type: application/nostr+json+rpc`, the body
+/// `{"method": ..., "params": [...]}` and `Authorization: Nostr <signed event>` from one of the configured administrator keys.
+async fn management(
+    State(app): State<Arc<App>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let reply = |code: StatusCode, v: Value| {
+        (
+            code,
+            [("content-type", "application/nostr+json+rpc")],
+            Json(v),
+        )
+            .into_response()
+    };
+    let rpc = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|c| c.starts_with("application/nostr+json+rpc"));
+    let Some(n) = app.relay.as_ref().and_then(|r| r.nostr()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let keys = n.admin_keys();
+    if !rpc || keys.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let now = now_ms().max(0) as u64 / 1000;
+    {
+        // A few calls a minute from one address: checking a signature is cheap, but not free.
+        let ip = client_ip(
+            addr,
+            &headers,
+            app.cfg.server.trust_proxy,
+            &app.cfg.server.real_ip_header,
+            &app.trusted_proxies,
+        );
+        let mut asks = app
+            .mgmt_asks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        asks.retain(|_, (_, reset)| *reset > now);
+        let e = asks.entry(ip).or_insert((0, now + 60));
+        e.0 += 1;
+        if e.0 > 60 {
+            return reply(
+                StatusCode::TOO_MANY_REQUESTS,
+                json!({ "error": "too many calls; wait a minute" }),
+            );
+        }
+    }
+    let mut hosts: Vec<String> = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .into_iter()
+        .collect();
+    hosts.extend(crate::nostr::nip98::host_and_path(&app.cfg.nostr.relay_url).map(|(h, _)| h));
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let path = uri.path_and_query().map_or("/", |p| p.as_str());
+    match crate::nostr::nip98::verify(
+        auth,
+        "POST",
+        &hosts,
+        path,
+        &body,
+        i64::try_from(now).unwrap_or(0),
+    ) {
+        Err(why) => return reply(StatusCode::UNAUTHORIZED, json!({ "error": why })),
+        Ok(pk) if !keys.contains(&pk) => {
+            return reply(
+                StatusCode::UNAUTHORIZED,
+                json!({ "error": "that key is not an administrator of this relay" }),
+            )
+        }
+        Ok(_) => {}
+    }
+    let Some(admin) = app.admin.get().and_then(std::sync::Weak::upgrade) else {
+        return reply(
+            StatusCode::OK,
+            json!({ "error": "turn the admin panel on ([admin] enabled = true): it keeps what the management API changes" }),
+        );
+    };
+    let Ok(call) = serde_json::from_slice::<Value>(&body) else {
+        return reply(
+            StatusCode::OK,
+            json!({ "error": "the body must be JSON: {\"method\": ..., \"params\": [...]}" }),
+        );
+    };
+    let method = call.get("method").and_then(Value::as_str).unwrap_or("");
+    let params: Vec<Value> = call
+        .get("params")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    match admin.nip86(method, &params) {
+        Ok(result) => reply(StatusCode::OK, json!({ "result": result })),
+        Err(e) => reply(StatusCode::OK, json!({ "error": e })),
+    }
+}
+
 /// Anything else: a WebSocket for the relay (the apps connect to the root path, with or without a query).
 async fn socket(
     State(app): State<Arc<App>>,
@@ -336,6 +471,10 @@ async fn socket(
         &app.cfg.server.real_ip_header,
         &app.trusted_proxies,
     );
+    // An address an administrator blocked (the management API): the peer's own, and the one a proxy reported.
+    if app.ip_blocked(addr.ip()) || ip.parse().is_ok_and(|a| app.ip_blocked(a)) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let biggest = if app.cfg.nostr.enabled {
         app.cfg.nostr.max_message_bytes
     } else {

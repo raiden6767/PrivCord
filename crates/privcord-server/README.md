@@ -44,14 +44,27 @@ talking Nostr; one that sends an object is talking PrivCord). The PrivCord apps 
 
 | | |
 |---|---|
-| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT, NIP-50 search (every word, any case; newest first), NIP-62 request to vanish, NIP-70 protected events |
+| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT, NIP-50 search (every word, any case; newest first), NIP-62 request to vanish, NIP-70 protected events, NIP-86 relay management (with NIP-98 HTTP auth) |
 | Checks | every event's id and Schnorr signature, size, tag count, `created_at` window, expiry; hex must be lowercase |
 | Rules you set | allowed and blocked public keys, allowed and blocked kinds, minimum proof of work, authentication required, per-address publish rate, retention (days), event cap |
-| Not yet | NIP-86 management API and NIP-98 HTTP auth (the admin panel does that job), NIP-77 sync, NIP-05 write checks, NIP-29 groups |
+| Not yet | NIP-77 sync, NIP-05 write checks, NIP-29 groups |
 | Storage | in memory with indexes by time, author, kind and tag, plus an append-only log in `data_dir` (synced to disk twice a second), compacted when it doubles |
 
 Whoever publishes to a Nostr relay publishes readable content: unlike PrivCord's sealed messages, you can read what is stored
 here. That is your responsibility as the operator.
+
+### Management API (NIP-86)
+
+Set `[nostr] admin_pubkey = "<hex>"` (and more keys in `admin_pubkeys`) and turn the admin panel on (`[admin] enabled = true`: what the
+API changes is saved with the panel's settings). Any Nostr relay manager can then `POST` to the relay's own address with
+`Content-Type: application/nostr+json+rpc`, a body like `{"method":"banpubkey","params":["<hex>","spam"]}` and an
+`Authorization: Nostr <base64 of a signed kind 27235 event>` header (NIP-98: the event names the URL, `POST` and the SHA-256 of the
+body, and is good for a minute). Supported: `supportedmethods`, `banpubkey`, `allowpubkey`, `listbannedpubkeys`,
+`listallowedpubkeys`, `banevent`, `allowevent`, `listbannedevents`, `listeventsneedingmoderation` (always empty: nothing waits
+for review), `allowkind`, `disallowkind`, `listallowedkinds`, `changerelayname`, `changerelaydescription`, `changerelayicon`,
+`blockip`, `unblockip`, `listblockedips`. Changes apply at once and survive a restart. A blocked address cannot open the relay's
+socket but can still make management calls (that is how it is unblocked). Without administrator keys the endpoint does not exist;
+a request from anyone else is a 401, and 60 calls a minute are allowed from one address.
 
 ### What happens in a crash
 

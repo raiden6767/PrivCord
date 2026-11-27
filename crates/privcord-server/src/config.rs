@@ -301,8 +301,11 @@ pub struct NostrConfig {
     pub persist: bool,
     /// NIP-42: send direct messages (kinds 4 and 1059) only to the authenticated sender and recipient.
     pub auth_dms: bool,
-    /// The administrator's Nostr public key (hex), shown in the information document.
+    /// The administrator's Nostr public key (hex), shown in the information document. It may also use the management API.
     pub admin_pubkey: String,
+    /// More public keys (hex) allowed to use the NIP-86 management API, signed with NIP-98. With `admin_pubkey` empty too, the
+    /// API is off. It also needs `[admin] enabled = true`: what it changes is saved with the panel's settings.
+    pub admin_pubkeys: Vec<String>,
     /// Leading zero bits an event id needs (NIP-13). 0: none.
     pub min_pow: u32,
     pub auth_required: bool,
@@ -344,6 +347,7 @@ impl Default for NostrConfig {
             persist: true,
             auth_dms: false,
             admin_pubkey: String::new(),
+            admin_pubkeys: Vec::new(),
             min_pow: 0,
             auth_required: false,
             created_at_upper_secs: 900,
