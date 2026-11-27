@@ -97,6 +97,18 @@ struct Stored {
     /// The Nostr rules last saved from the panel; they win over the settings file.
     #[serde(default)]
     policy: Option<PolicyJson>,
+    /// One-time setup codes made with `admin-invite`: hashes only, each for one named admin, until it expires.
+    #[serde(default)]
+    invites: Vec<Invite>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct Invite {
+    hash: String,
+    name: String,
+    role: Role,
+    /// Seconds since 1970.
+    expires: i64,
 }
 
 fn sha_hex(s: &str) -> String {
@@ -210,7 +222,7 @@ impl AdminState {
         });
         // No admin yet: nobody is made and no token exists. A setup code that works once, for 15 minutes, lets the person
         // who runs the server claim ownership from the panel (the token is then shown once, in their browser).
-        let first = if lock(&state.inner).0.admins.is_empty() {
+        let first = if !state.has_valid_owner() {
             let (code, hash) = new_setup_code();
             *lock(&state.setup) = Some((hash, now_ms() / 1000 + SETUP_CODE_SECS));
             Some(code)
@@ -221,8 +233,10 @@ impl AdminState {
         Ok((state, first))
     }
 
-    /// Makes another admin from the command line (works while the server runs: it notices the file changed).
-    pub fn add_admin_offline(
+    /// Makes a one-time setup code for another admin from the command line (works while the server runs: it notices the
+    /// file changed). The person enters it on the panel's login page and gets their own token there: no long-lived secret
+    /// is printed. Only the code's hash is kept.
+    pub fn add_admin_invite_offline(
         dir: &std::path::Path,
         name: &str,
         role: Role,
@@ -233,24 +247,40 @@ impl AdminState {
             Ok(t) => serde_json::from_str(&t).map_err(|e| format!("{}: {e}", path.display()))?,
             Err(_) => Stored::default(),
         };
-        let (secret, hash) = new_secret("pca_");
-        stored.admins.push(Admin {
-            id: new_id(),
-            name: name.to_owned(),
-            role,
+        let now = now_ms() / 1000;
+        stored.invites.retain(|i| i.expires > now);
+        let (code, hash) = new_setup_code();
+        stored.invites.push(Invite {
             hash,
-            created: now_ms() / 1000,
-            last_used: 0,
+            name: name.chars().take(60).collect(),
+            role,
+            expires: now + SETUP_CODE_SECS,
         });
         write_atomic(&path, &stored)?;
-        Ok(secret)
+        Ok(code)
+    }
+
+    /// Whether this admin's token has run out (`admin.token_days`; 0 means it never does).
+    fn expired(&self, a: &Admin, now: i64) -> bool {
+        let days = i64::from(self.app.cfg.admin.token_days);
+        days > 0 && a.created + days * 86_400 <= now
+    }
+
+    /// An owner whose token still works. With none, a setup code is printed at start so the panel cannot be locked out.
+    fn has_valid_owner(&self) -> bool {
+        let now = now_ms() / 1000;
+        lock(&self.inner)
+            .0
+            .admins
+            .iter()
+            .any(|a| a.role == Role::Owner && !self.expired(a, now))
     }
 
     /// Whether a setup code is waiting to be used (no admin yet and the code has not expired).
     fn setup_open(&self) -> bool {
         self.reload_if_changed();
         let now = now_ms() / 1000;
-        let open = lock(&self.inner).0.admins.is_empty()
+        let open = !self.has_valid_owner()
             && lock(&self.setup)
                 .as_ref()
                 .is_some_and(|(_, until)| *until > now);
@@ -260,7 +290,8 @@ impl AdminState {
         open
     }
 
-    /// The setup code makes the first owner and returns the token, once. Wrong codes count like wrong tokens.
+    /// A setup code (printed at start, or made with `admin-invite`) makes an admin and returns their token, once. Wrong codes
+    /// count like wrong tokens.
     #[allow(clippy::result_large_err)]
     fn claim(&self, ip: IpAddr, code: &str) -> Result<String, Response> {
         let now = now_ms() / 1000;
@@ -274,43 +305,66 @@ impl AdminState {
                 ));
             }
         }
-        if !self.setup_open() {
-            return Err(text(
-                StatusCode::CONFLICT,
-                "setup is closed: sign in with an admin token, or restart the server for a new setup code",
-            ));
-        }
         let hash = sha_hex(&normalize_code(code));
-        let right = lock(&self.setup)
-            .as_ref()
-            .is_some_and(|(h, _)| ct_eq_hex(h, &hash));
-        if !right {
-            let mut f = lock(&self.fails);
-            f.entry(ip).or_insert((0, now + 60)).0 += 1;
-            return Err(text(
+        let wrong = || {
+            lock(&self.fails).entry(ip).or_insert((0, now + 60)).0 += 1;
+            text(
                 StatusCode::UNAUTHORIZED,
-                "that setup code is not right",
-            ));
-        }
+                "that setup code is not right, or it has expired or been used",
+            )
+        };
+        // The code printed at start (when there is no owner), or a one-time code made with `admin-invite`.
+        let first_run = self.setup_open()
+            && lock(&self.setup)
+                .as_ref()
+                .is_some_and(|(h, _)| ct_eq_hex(h, &hash));
+        self.reload_if_changed();
         let (secret, token_hash) = new_secret("pca_");
         let mut g = lock(&self.inner);
-        if !g.0.admins.is_empty() {
-            return Err(text(StatusCode::CONFLICT, "setup is closed"));
-        }
+        let (name, role) = if first_run {
+            ("owner".to_owned(), Role::Owner)
+        } else {
+            g.0.invites.retain(|i| i.expires > now);
+            let Some(i) = g.0.invites.iter().position(|i| ct_eq_hex(&i.hash, &hash)) else {
+                drop(g);
+                return Err(wrong());
+            };
+            let inv = g.0.invites.remove(i);
+            (inv.name, inv.role)
+        };
+        // Tokens that have run out are dropped when a new one is made, so the list stays honest.
+        g.0.admins.retain(|a| !self.expired(a, now));
         g.0.admins.push(Admin {
             id: new_id(),
-            name: "owner".into(),
-            role: Role::Owner,
+            name,
+            role,
             hash: token_hash,
             created: now,
             last_used: 0,
         });
         if let Err(e) = self.save(&mut g) {
-            g.0.admins.clear();
             return Err(text(StatusCode::INTERNAL_SERVER_ERROR, &e));
         }
         drop(g);
-        *lock(&self.setup) = None; // one use
+        if first_run {
+            *lock(&self.setup) = None; // one use
+        }
+        Ok(secret)
+    }
+
+    /// Replaces the signed-in admin's own token (the old one stops working at once) and starts a new lifetime.
+    fn rotate(&self, id: &str) -> Result<String, String> {
+        let (secret, hash) = new_secret("pca_");
+        let mut g = lock(&self.inner);
+        let now = now_ms() / 1000;
+        let a =
+            g.0.admins
+                .iter_mut()
+                .find(|a| a.id == id)
+                .ok_or("no such admin")?;
+        a.hash = hash;
+        a.created = now;
+        self.save(&mut g)?;
         Ok(secret)
     }
 
@@ -423,6 +477,12 @@ impl AdminState {
                 "sign in with an admin token",
             ));
         };
+        if self.expired(admin, now) {
+            return Err(text(
+                StatusCode::UNAUTHORIZED,
+                "that token has expired: make a new one with a setup code",
+            ));
+        }
         // (last_used is kept in memory only: writing the file on every request would be wasteful)
         admin.last_used = now;
         Ok(admin.clone())
@@ -519,7 +579,22 @@ async fn me(
     headers: HeaderMap,
 ) -> Response {
     let me = admin_or_return!(a, headers, addr, Need::Read);
-    Json(json!({ "name": me.name, "role": me.role })).into_response()
+    let days = i64::from(a.state.app.cfg.admin.token_days);
+    let left = (days > 0).then(|| ((me.created + days * 86_400 - now_ms() / 1000) / 86_400).max(0));
+    Json(json!({ "name": me.name, "role": me.role, "days_left": left })).into_response()
+}
+
+/// The signed-in admin replaces their own token: the old one stops working at once, the new one is shown once.
+async fn rotate_me(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let me = admin_or_return!(a, headers, addr, Need::Read);
+    match a.state.rotate(&me.id) {
+        Ok(token) => Json(json!({ "token": token })).into_response(),
+        Err(e) => text(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
 }
 
 async fn overview(
@@ -1092,6 +1167,7 @@ pub fn router(state: Arc<AdminState>) -> Router {
         )
         .route("/admin/api/setup", get(setup_status).post(setup_claim))
         .route("/admin/api/me", get(me))
+        .route("/admin/api/me/token", post(rotate_me))
         .route("/admin/api/overview", get(overview))
         .route("/admin/api/settings", get(get_settings).put(put_settings))
         .route("/admin/api/clear/messages", post(clear_messages))

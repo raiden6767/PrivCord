@@ -370,6 +370,8 @@ pub struct AdminConfig {
     /// Allow the panel over plain HTTP on an address other than this machine (a VPN or a private network you trust).
     /// Off: the server refuses to start that way, because admin tokens would cross the network unencrypted.
     pub allow_plain_http: bool,
+    /// Days an admin token works before it must be replaced (from the panel, or with a new setup code). 0: never expires.
+    pub token_days: u32,
 }
 
 impl Default for AdminConfig {
@@ -379,6 +381,7 @@ impl Default for AdminConfig {
             listen: "127.0.0.1:8788".into(),
             tls: false,
             allow_plain_http: false,
+            token_days: 90,
         }
     }
 }

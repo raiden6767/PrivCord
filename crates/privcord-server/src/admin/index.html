@@ -32,9 +32,9 @@
       <p id="loginError" class="msg bad" role="alert" hidden></p>
       <button type="submit" class="btn primary">Sign in</button>
     </form>
-    <form id="setupForm" class="setup" autocomplete="off" hidden>
-      <h3>First time here?</h3>
-      <p class="muted">Enter the setup code the server printed when it started. It works once, for 15 minutes. If it has run out, restart the server for a new one.</p>
+    <form id="setupForm" class="setup" autocomplete="off">
+      <h3 id="setupTitle">Have a setup code?</h3>
+      <p class="muted" id="setupHelp">An admin can make you a code with <code>privcord-server admin-invite</code>. It works once, for 15 minutes, and you get your own token here.</p>
       <label for="code">Setup code</label>
       <input id="code" name="code" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="abcd-efgh-jkmn-pqrs-tuvw" required>
       <p id="setupError" class="msg bad" role="alert" hidden></p>

@@ -531,19 +531,83 @@ async fn an_event_can_be_removed_for_good_by_a_moderator() {
     r.stop().await;
 }
 
+async fn use_code(r: &Running, code: &str) -> (u16, Value) {
+    let (status, _, body) = http(
+        r.admin_addr().unwrap(),
+        "POST",
+        "/admin/api/setup",
+        None,
+        Some(json!({ "code": code })),
+    )
+    .await;
+    (status, serde_json::from_str(&body).unwrap_or(Value::Null))
+}
+
 #[tokio::test]
-async fn an_admin_made_on_the_command_line_works_without_restarting_the_server() {
+async fn an_admin_invited_on_the_command_line_gets_their_own_token_without_restarting_the_server() {
     let (r, dir, _owner) = boot().await;
-    let token = AdminState::add_admin_offline(dir.path(), "late", Role::Viewer).unwrap();
-    let (code, me) = api(&r, "GET", "/me", &token, None).await;
+    let code = AdminState::add_admin_invite_offline(dir.path(), "late", Role::Viewer).unwrap();
+    // the file holds a hash, never the code
+    let saved = std::fs::read_to_string(dir.path().join("admin.json")).unwrap();
+    assert!(
+        !saved.contains(&code.replace('-', "")) && !saved.contains(&code),
+        "{saved}"
+    );
+    let (status, body) = use_code(&r, &code).await;
+    assert_eq!(status, 200, "{body}");
+    let token = body["token"].as_str().unwrap().to_owned();
+    let (code2, me) = api(&r, "GET", "/me", &token, None).await;
     assert_eq!(
-        (code, me["name"].as_str(), me["role"].as_str()),
+        (code2, me["name"].as_str(), me["role"].as_str()),
         (200, Some("late"), Some("viewer"))
     );
-    // the file holds hashes only
+    assert_eq!(use_code(&r, &code).await.0, 401, "a code works once");
     let saved = std::fs::read_to_string(dir.path().join("admin.json")).unwrap();
     assert!(!saved.contains(&token));
     r.stop().await;
+}
+
+#[tokio::test]
+async fn an_expired_invite_is_refused() {
+    let (r, dir, _owner) = boot().await;
+    let code = AdminState::add_admin_invite_offline(dir.path(), "late", Role::Viewer).unwrap();
+    let path = dir.path().join("admin.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["invites"][0]["expires"] = json!(1);
+    std::fs::write(&path, v.to_string()).unwrap();
+    assert_eq!(use_code(&r, &code).await.0, 401);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn a_token_expires_a_new_setup_code_appears_at_start_and_a_token_can_be_replaced() {
+    let (r, dir, token) = boot().await;
+    // replacing your own token: the old one stops, the new one works
+    let (status, new) = api(&r, "POST", "/me/token", &token, Some(json!({}))).await;
+    assert_eq!(status, 200);
+    let new = new["token"].as_str().unwrap().to_owned();
+    assert_eq!(api(&r, "GET", "/me", &token, None).await.0, 401);
+    let (status, me) = api(&r, "GET", "/me", &new, None).await;
+    assert_eq!(status, 200);
+    assert!(me["days_left"].as_i64().unwrap() >= 89, "{me}");
+    r.stop().await;
+    // the token's lifetime runs out (as if it were made long ago)
+    let path = dir.path().join("admin.json");
+    let mut v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    v["admins"][0]["created"] = json!(1);
+    std::fs::write(&path, v.to_string()).unwrap();
+    let r2 = start(config(dir.path())).await.unwrap();
+    assert_eq!(api(&r2, "GET", "/me", &new, None).await.0, 401, "expired");
+    // with no valid owner left the server prints a setup code again, so the panel can never be locked out
+    let code = r2.admin_setup_code().expect("a new setup code").to_owned();
+    let (status, body) = use_code(&r2, &code).await;
+    assert_eq!(status, 200, "{body}");
+    let owner = body["token"].as_str().unwrap().to_owned();
+    assert_eq!(
+        api(&r2, "GET", "/me", &owner, None).await.1["role"],
+        "owner"
+    );
+    r2.stop().await;
 }
 
 #[tokio::test]
@@ -873,7 +937,7 @@ async fn the_setup_code_works_once_wrong_ones_are_refused_and_nothing_secret_is_
         Some(json!({ "code": code })),
     )
     .await;
-    assert_eq!(again.0, 409, "a used code is closed");
+    assert_eq!(again.0, 401, "a used code is closed");
     let (_, _, open) = http(a, "GET", "/admin/api/setup", None, None).await;
     assert!(open.contains("\"open\":false"), "{open}");
     assert_eq!(api(&r, "GET", "/me", &token, None).await.1["role"], "owner");

@@ -36,8 +36,9 @@ enum Cmd {
     },
     /// Check this machine and network for what would stop the server working.
     Doctor,
-    /// Make an admin token for the admin panel (works while the server runs).
-    AdminToken {
+    /// Make a one-time setup code for another admin (works while the server runs). They enter it on the panel's login page
+    /// and get their own token there; nothing long-lived is printed.
+    AdminInvite {
         /// A name for this admin.
         #[arg(long, default_value = "admin")]
         name: String,
@@ -146,7 +147,7 @@ fn main() -> std::process::ExitCode {
         Cmd::Init { turn } => init(&cli.config, turn),
         Cmd::Serve => rt.block_on(serve(&cli.config)),
         Cmd::Doctor => rt.block_on(doctor(&cli.config)),
-        Cmd::AdminToken { name, role } => admin_token(&cli.config, &name, &role),
+        Cmd::AdminInvite { name, role } => admin_invite(&cli.config, &name, &role),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
@@ -186,7 +187,7 @@ fn load(path: &std::path::Path) -> Result<Config, String> {
     }
 }
 
-fn admin_token(path: &std::path::Path, name: &str, role: &str) -> Result<(), String> {
+fn admin_invite(path: &std::path::Path, name: &str, role: &str) -> Result<(), String> {
     let cfg = load(path)?;
     let role = match role {
         "owner" => privcord_server::admin::Role::Owner,
@@ -198,15 +199,15 @@ fn admin_token(path: &std::path::Path, name: &str, role: &str) -> Result<(), Str
             ))
         }
     };
-    // A long-lived secret must not go into a pipe, a journal or a log file: only to a terminal.
-    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
-        return Err(
-            "refusing to print an admin token into a pipe or a log: run this in a terminal".into(),
-        );
-    }
-    let token =
-        privcord_server::admin::AdminState::add_admin_offline(&cfg.server.data_dir, name, role)?;
-    println!("admin token for {name} ({role:?}), shown once, keep it safe:\n{token}");
+    let code = privcord_server::admin::AdminState::add_admin_invite_offline(
+        &cfg.server.data_dir,
+        name,
+        role,
+    )?;
+    println!(
+        "setup code for {name} ({role:?}), works once, for 15 minutes: {code}\n\
+         They open the admin panel, enter it under \"Have a setup code?\", and get their own token there."
+    );
     Ok(())
 }
 

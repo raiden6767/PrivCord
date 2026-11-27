@@ -299,8 +299,10 @@
   }
 
   // ----- Settings: clear data first, then the few things beginners need, then Advanced -----
+  let freshToken = null; // a replacement token, shown once after the page redraws
   async function settings() {
     const s = await api('/settings'); const canChange = me.role !== 'viewer';
+    const mine = await api('/me'); const shown = freshToken; freshToken = null;
     const r = s.relay, n = s.nostr;
     const clearRow = (what, count, noun, path, after) => el('div', { class: 'item' }, el('span', { class: 'what' }, what),
       el('span', { class: 'detail num' }, count ? `${plural(count, noun[0], noun[1])} stored now` : 'Nothing stored right now'),
@@ -337,15 +339,23 @@
           n ? [add(num('l-ev', 'Nostr events per minute from one address', '0 turns this limit off.', n.events_per_minute, 0, 100000, 'nostr_events_per_minute')),
                add(num('l-rq', 'Nostr requests per minute from one device', '0 turns this limit off.', n.requests_per_minute, 0, 100000, 'nostr_requests_per_minute')),
                add(num('l-days', 'Keep Nostr events for (days)', '0 keeps them for ever.', n.keep_days, 0, 3650, 'nostr_keep_days'))] : null,
-          canChange ? el('div', { class: 'field' }, el('button', { class: 'btn primary', type: 'submit' }, 'Save limits'), msg) : null)));
+          canChange ? el('div', { class: 'field' }, el('button', { class: 'btn primary', type: 'submit' }, 'Save limits'), msg) : null)),
+      el('section', {}, el('h3', {}, 'Your sign-in'),
+        el('p', { class: 'muted' }, mine.days_left == null ? 'Your token does not expire.' : `Your token works for ${plural(mine.days_left, 'more day', 'more days')}. Replace it before then, or ask an owner for a setup code.`),
+        shown ? el('div', { class: 'secret' }, el('p', { class: 'label' }, 'This is your new token. Copy it now: it is shown only once, and the old one no longer works.'), copyRow(shown, 'new token', true)) : null,
+        confirmAction({ label: 'Replace my token…', yes: 'Yes, replace it', ask: 'The old token stops working at once. You will see the new one once: copy it.',
+          onConfirm: async () => { const r = await api('/me/token', { method: 'POST', body: {} }); token = r.token; if (session) session.setItem('pc-admin-token', token); freshToken = r.token; say('Token replaced'); show('settings'); } })));
   }
 
   // ---------- first run: the setup code makes the owner, and the token is shown once, here ----------
   async function offerSetup() {
     try {
       const r = await fetch('/admin/api/setup', { cache: 'no-store' });
-      $('setupForm').hidden = !(r.ok && (await r.json()).open);
-    } catch { /* the form stays hidden */ }
+      if (r.ok && (await r.json()).open) {
+        $('setupTitle').textContent = 'First time here?';
+        $('setupHelp').textContent = 'Enter the setup code the server printed when it started. It works once, for 15 minutes. If it has run out, restart the server for a new one.';
+      }
+    } catch { /* the form keeps its general wording */ }
   }
   $('setupForm').addEventListener('submit', async (e) => {
     e.preventDefault();

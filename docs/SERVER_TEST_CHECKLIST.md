@@ -18,7 +18,7 @@ Edit the file: in `[admin]` set `enabled = true`; in `[turn]` set `tcp_listen = 
 
 ```sh
 ./privcord-server doctor               # it tells you what to open and what is wrong
-./privcord-server serve                # prints the admin address and a one-time SETUP CODE (15 minutes): enter it on the page to get your owner token
+./privcord-server serve                # prints the admin address and a one-time SETUP CODE (15 minutes): enter it on the page to get your owner token; `admin-invite` makes codes for other admins
 ```
 
 On a **VPS**: allow in its firewall TCP 8787, UDP 3478, TCP 3478 and UDP 49152-49400.

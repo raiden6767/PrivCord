@@ -103,6 +103,8 @@ admission service, and logging each client's address and browser (this server ke
 [admin]
 enabled = true
 listen = "127.0.0.1:8788"
+# token_days = 90              # admin tokens expire after this many days (0 = never)
+# allow_plain_http = false     # only for a VPN you trust: the panel over plain HTTP on a non-local address
 ```
 
 Start the server and it prints `admin panel: http://127.0.0.1:8788/admin` and a **setup code** that works once, for 15 minutes.
@@ -119,8 +121,11 @@ server for a new code. Then sign in with the token and you can:
 | **Nostr rules** | allowed and blocked authors and kinds, applied at once and saved; remove an event for good |
 | **TURN** | the addresses phones are given and what to open in the firewall |
 
-`privcord-server admin-token --name Sam --role moderator` makes another token from the command line (a running server notices). It
-prints only to a terminal and refuses to write a token into a pipe or a log.
+`privcord-server admin-invite --name Sam --role moderator` makes a **one-time setup code** for another admin (a running server
+notices). Sam opens the panel, enters it under "Have a setup code?", and gets their own token there; nothing long-lived is ever
+printed. Tokens **expire after 90 days** (`admin.token_days`, 0 = never): the Settings page shows the days left and replaces your token
+in one click (the old one stops at once). If every owner's token has run out, the server prints a new setup code at start, so the
+panel can never lock you out.
 
 **Where to reach it from.** The panel has its own listener, on localhost by default, and is never served on the relay's port.
 To reach it from elsewhere you do not need anything built in:
@@ -249,3 +254,10 @@ docker run -d --network host -v privcord-data:/data privcord-server
 (`--network host` keeps the TURN port range simple.)
 
 The admin panel embeds the Bricolage Grotesque and Figtree fonts (SIL Open Font License 1.1, the same files as the landing page; see `site/THIRD_PARTY.md`).
+
+## Running it as a service (hardened)
+
+`contrib/privcord-server.service` is a systemd unit that gives the server only what it needs: its own data directory, network
+sockets, no privileges (`NoNewPrivileges`, an empty capability set; use `CAP_NET_BIND_SERVICE` for ports below 1024), a
+read-only system (`ProtectSystem=strict`), a filtered set of system calls, and memory and task limits. The steps are in the
+file's header; `systemd-analyze security privcord-server` scores it.
