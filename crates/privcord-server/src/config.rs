@@ -39,6 +39,17 @@ pub struct ServerConfig {
     pub access_tokens: Vec<String>,
     /// The words shown to people who add this server: who runs it and how to reach them.
     pub admin_contact: String,
+    /// A client has this long to send the whole request head (and, between requests, to start the next one) before the
+    /// connection is closed: a client that sends one byte a minute cannot hold a connection (the "slow header" attack).
+    pub header_timeout_secs: u64,
+    /// A request that has not been answered after this long gets a 408 (a body that trickles in, a stuck handler).
+    pub request_timeout_secs: u64,
+    /// Connections in the request/response phase, in all (a WebSocket leaves this count once it is upgraded: the relay's own
+    /// limits apply to it).
+    pub max_http_connections: usize,
+    /// The same, from one address (a /64 for IPv6). 0: no limit; it is also off with `trust_proxy`, where every visitor
+    /// arrives from the proxy.
+    pub max_http_connections_per_ip: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +114,10 @@ impl Default for ServerConfig {
             metrics: false,
             access_tokens: Vec::new(),
             admin_contact: String::new(),
+            header_timeout_secs: 10,
+            request_timeout_secs: 30,
+            max_http_connections: 20_000,
+            max_http_connections_per_ip: 100,
         }
     }
 }

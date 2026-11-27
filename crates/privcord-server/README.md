@@ -298,6 +298,18 @@ docker run -d --network host -v privcord-data:/data privcord-server
 
 The admin panel embeds the Bricolage Grotesque and Figtree fonts (SIL Open Font License 1.1, the same files as the landing page; see `site/THIRD_PARTY.md`).
 
+## Slow and greedy clients
+
+The web side (the relay's port, HTTPS and the admin panel) does not use a stock accept loop: a client has `header_timeout_secs`
+(10) to send its whole request head, also while waiting for the next request on a kept-alive connection, so a client that sends
+one byte a minute, or says nothing at all, is cut off (the "slow header" attack); a request not answered in `request_timeout_secs`
+(30) gets a 408 (a body that trickles in); the head's size is bounded; and a connection that is over `max_http_connections`
+(20,000) or `max_http_connections_per_ip` (100, per /64 for IPv6, off with `trust_proxy`) is dropped before anything is read. A
+WebSocket leaves these counts once upgraded: the relay's per-address and rate limits apply to it. `tests/hardening.rs` attacks
+the real server with a half-sent head, a silent connection, a stalled body and many connections. Not covered: a flood big enough
+to fill the network link (that needs a provider or a proxy in front), and slow *reading* of a response by a client, which the
+relay already cuts off for WebSockets (`stall_secs`).
+
 ## Running it as a service (hardened)
 
 `contrib/privcord-server.service` is a systemd unit that gives the server only what it needs: its own data directory, network

@@ -10,6 +10,7 @@ pub mod net;
 pub mod nostr;
 pub mod record;
 pub mod relay;
+pub mod serve;
 pub mod store;
 pub mod tls;
 pub mod turn_role;
@@ -177,9 +178,10 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     let https_listen = cfg.tls.https_listen.clone();
     let admin_cfg = cfg.admin.clone();
     let data_dir = cfg.server.data_dir.clone();
+    let http_limits = serve::HttpLimits::from_config(&cfg.server);
     let app = Arc::new(net::App::new(cfg, relay.clone(), turn_info));
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
-    let router = net::router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
+    let router = net::router(app.clone());
     let mut for_server = stopped.clone();
     // HTTPS: the same web side, over TLS, on its own port.
     let (tls_addr, tls_server) = match (&tls, https_listen.is_empty()) {
@@ -190,17 +192,13 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             let listener =
                 tls::TlsListener::new(tcp, t.https.clone()).map_err(|e| e.to_string())?;
             let addr = axum::serve::Listener::local_addr(&listener).map_err(|e| e.to_string())?;
-            // (The no-op tap is what lets axum read the peer address from this listener.)
-            let listener = listener.tap_io(|_| {});
-            let routes =
-                net::router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
+            let routes = net::router(app.clone());
             let mut stop_tls = stopped.clone();
             let task = tokio::spawn(async move {
-                let _ = axum::serve(listener, routes)
-                    .with_graceful_shutdown(async move {
-                        let _ = stop_tls.wait_for(|s| *s).await;
-                    })
-                    .await;
+                serve::run(listener, routes, http_limits, async move {
+                    let _ = stop_tls.wait_for(|s| *s).await;
+                })
+                .await;
             });
             (Some(addr), Some(task))
         }
@@ -222,20 +220,17 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
                 )
             })?;
         let bound = tcp.local_addr().map_err(|e| e.to_string())?;
-        let routes = admin::router(state).into_make_service_with_connect_info::<SocketAddr>();
+        let routes = admin::router(state);
         let mut stop_admin = stopped.clone();
         let shutdown = async move {
             let _ = stop_admin.wait_for(|s| *s).await;
         };
         let task = match (admin_cfg.tls, &tls) {
             (true, Some(t)) => {
-                let listener = tls::TlsListener::new(tcp, t.https.clone())
-                    .map_err(|e| e.to_string())?
-                    .tap_io(|_| {});
+                let listener =
+                    tls::TlsListener::new(tcp, t.https.clone()).map_err(|e| e.to_string())?;
                 tokio::spawn(async move {
-                    let _ = axum::serve(listener, routes)
-                        .with_graceful_shutdown(shutdown)
-                        .await;
+                    serve::run(listener, routes, http_limits, shutdown).await;
                 })
             }
             _ => {
@@ -243,9 +238,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
                     let _ = c.set_nodelay(true);
                 });
                 tokio::spawn(async move {
-                    let _ = axum::serve(listener, routes)
-                        .with_graceful_shutdown(shutdown)
-                        .await;
+                    serve::run(listener, routes, http_limits, shutdown).await;
                 })
             }
         };
@@ -278,11 +271,10 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         let listener = listener.tap_io(|tcp| {
             let _ = tcp.set_nodelay(true);
         });
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = for_server.wait_for(|s| *s).await;
-            })
-            .await;
+        serve::run(listener, router, http_limits, async move {
+            let _ = for_server.wait_for(|s| *s).await;
+        })
+        .await;
     });
     // With `durable`, events are confirmed after a batched disk sync; this task does the batching.
     let committer = relay
