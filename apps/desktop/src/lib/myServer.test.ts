@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_NETWORK_CONFIG } from '@duochat/protocol';
-import { candidates, discover, needsRefresh, overlay, parseSavedServers, refresh, relayUrl, strip, stunFromTurn, type FetchLike } from './myServer';
+import { candidates, discover, isPrivateHost, needsRefresh, overlay, parseSavedServers, refresh, relayUrl, strip, stunFromTurn, type FetchLike } from './myServer';
 
 // Taken from a running privcord-server (GET /.well-known/privcord-server and GET /turn).
 const ABOUT = {
@@ -31,6 +31,19 @@ describe('my server', () => {
     expect(candidates('ftp://x')).toEqual([]);
     expect(candidates('a b')).toEqual([]);
     expect(candidates('user@host')).toEqual([]);
+  });
+
+  it('never sends a token over plain http to a public host', async () => {
+    let asked = false;
+    const spy: FetchLike = async () => {
+      asked = true;
+      return { ok: false, status: 500, json: async () => ({}) };
+    };
+    await expect(discover('http://relay.example.com', 'tok', spy)).rejects.toMatchObject({ kind: 'invalid' });
+    expect(asked).toBe(false);
+    expect(isPrivateHost('http://192.168.1.5:8787')).toBe(true);
+    expect(isPrivateHost('http://8.8.8.8')).toBe(false);
+    expect(isPrivateHost('http://localhost:8787')).toBe(true);
   });
 
   it('derives STUN from the plain TURN address only', () => {

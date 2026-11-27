@@ -32,6 +32,21 @@ class MyServerTest {
     }
 
     @Test
+    fun `plain http is never tried`() {
+        var asked = false
+        try {
+            MyServer.discover("http://relay.example.com", "tok", { _, _ -> asked = true; 500 to "" })
+            fail("expected an error")
+        } catch (e: MyServerException) {
+            assertEquals(MyServerException.Kind.INVALID, e.kind)
+        }
+        assertFalse(asked)
+        assertTrue(MyServer.isPrivateHost("http://192.168.1.5:8787"))
+        assertFalse(MyServer.isPrivateHost("http://8.8.8.8"))
+        assertTrue(MyServer.isPrivateHost("http://localhost:8787"))
+    }
+
+    @Test
     fun `stun comes only from the plain turn address`() {
         assertEquals(listOf("stun:203.0.113.7:13578"), MyServer.stunFromTurn(listOf("turn:203.0.113.7:13578", "turn:203.0.113.7:13579?transport=tcp")))
     }

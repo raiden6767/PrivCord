@@ -62,6 +62,16 @@ export function candidates(input: string): string[] {
   return [];
 }
 
+/** Plain http is for this machine and private networks only: a token must never cross the internet unencrypted. */
+export function isPrivateHost(base: string): boolean {
+  const host = base.replace(/^https?:\/\//i, '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.localhost') || host === '::1') return true;
+  const m = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host);
+  if (!m) return false;
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127);
+}
+
 /** The relay's WebSocket address for a base address (no token). */
 export function wsBase(base: string): string {
   return base.replace(/^http/i, 'ws');
@@ -159,6 +169,9 @@ export async function discover(
   let last: MyServerError | null = null;
   for (const base of tries) {
     try {
+      if (token && base.startsWith('http://') && !isPrivateHost(base)) {
+        throw new MyServerError('An access token is only sent over https. Use an https address (or a private network address).', 'invalid');
+      }
       const about = parseAbout(await getJson(fetchImpl, `${base}/.well-known/privcord-server`, token));
       if (!about) throw new MyServerError('That address answers, but it is not a PrivCord server.', 'not-privcord');
       if (about.requires_token === true && !token) {

@@ -52,6 +52,16 @@ object MyServer {
         }
     }
 
+    /** Plain http is for this machine and private networks only: a token must never cross the internet unencrypted. */
+    fun isPrivateHost(base: String): Boolean {
+        val host = base.replaceFirst(Regex("^https?://", RegexOption.IGNORE_CASE), "").replace(Regex(":\\d+$"), "").trim('[', ']').lowercase()
+        if (host == "localhost" || host.endsWith(".local") || host.endsWith(".localhost") || host == "::1") return true
+        val p = Regex("^(\\d+)\\.(\\d+)\\.\\d+\\.\\d+$").find(host)?.groupValues ?: return false
+        val a = p[1].toInt()
+        val b = p[2].toInt()
+        return a == 10 || a == 127 || (a == 192 && b == 168) || (a == 172 && b in 16..31) || (a == 100 && b in 64..127)
+    }
+
     fun wsBase(base: String) = base.replaceFirst(Regex("^http", RegexOption.IGNORE_CASE), "ws")
 
     /** A plain `turn:` address is also the server's STUN address (the same port answers both). */
@@ -88,6 +98,10 @@ object MyServer {
         var last: MyServerException? = null
         for (base in tries) {
             try {
+                // The app does not allow unencrypted traffic at all (usesCleartextTraffic is off), so only https is tried.
+                if (base.startsWith("http://")) {
+                    throw MyServerException("This app only connects to servers over https. Give the server a certificate (see its README) and use an https address.", MyServerException.Kind.INVALID)
+                }
                 val about = get(fetch, "$base/.well-known/privcord-server", token)
                 if (about.optString("name") != "privcord-server") {
                     throw MyServerException("That address answers, but it is not a PrivCord server.", MyServerException.Kind.NOT_PRIVCORD)
