@@ -21,6 +21,8 @@ for (const [slug, [title, desc]] of Object.entries(PAGES)) {
   let h = home
     // the page lives one folder down, so relative links climb out of it
     .replace(/(\s(?:href|src))="(?!https?:|#|\/|data:|__)([^"]+)"/g, '$1="../$2"')
+    // icons by full address: a relative one breaks when the page is opened as /features (no trailing slash) or in a preview
+    .replace(/(<link rel="(?:icon|apple-touch-icon)"[^>]*href=")\.\.\/(assets\/[^"]+)"/g, '$1__SITE_URL__/$2"')
     .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>`)
     .replace(/(<meta name="description" content=")[^"]*"/, `$1${desc}"`)
     .replace(/(<meta property="og:title" content=")[^"]*"/, `$1${title}"`)
