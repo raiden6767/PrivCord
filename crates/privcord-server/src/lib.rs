@@ -8,6 +8,7 @@ pub mod net;
 pub mod nostr;
 pub mod relay;
 pub mod store;
+pub mod tls;
 pub mod turn_role;
 
 use axum::serve::ListenerExt;
@@ -24,6 +25,8 @@ pub struct Running {
     done: tokio::task::JoinHandle<()>,
     relay: Option<Arc<Relay>>,
     turn_port: Option<u16>,
+    tls_addr: Option<SocketAddr>,
+    tls: Option<Arc<tls::Tls>>,
 }
 
 impl Running {
@@ -36,6 +39,16 @@ impl Running {
     }
 
     /// The UDP port the TURN role listens on, if it is running.
+    /// Where the HTTPS side listens, if it does.
+    pub fn tls_addr(&self) -> Option<SocketAddr> {
+        self.tls_addr
+    }
+
+    /// The certificate in use (tests use it to trust a self-signed one).
+    pub fn tls(&self) -> Option<&Arc<tls::Tls>> {
+        self.tls.as_ref()
+    }
+
     pub fn turn_port(&self) -> Option<u16> {
         self.turn_port
     }
@@ -54,6 +67,11 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     if !problems.is_empty() {
         return Err(problems.join("; "));
     }
+    let tls = if cfg.wants_tls() {
+        Some(tls::Tls::load(&cfg.tls, &cfg.server.data_dir, &cfg.turn.public_ip)?)
+    } else {
+        None
+    };
     let relay = if cfg.relay.enabled || cfg.nostr.enabled {
         let store = if cfg.relay.enabled && cfg.relay.store_and_forward {
             Some(store::Store::open(&cfg.server.data_dir)?)
@@ -104,10 +122,54 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     let turn_port = None;
     #[cfg(not(feature = "turn"))]
     let turn_info = None;
+    let https_listen = cfg.tls.https_listen.clone();
     let app = Arc::new(net::App::new(cfg, relay.clone(), turn_info));
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
-    let router = net::router(app).into_make_service_with_connect_info::<SocketAddr>();
+    let router = net::router(app.clone()).into_make_service_with_connect_info::<SocketAddr>();
     let mut for_server = stopped.clone();
+    // HTTPS: the same web side, over TLS, on its own port.
+    let (tls_addr, tls_server) = match (&tls, https_listen.is_empty()) {
+        (Some(t), false) => {
+            let tcp = tokio::net::TcpListener::bind(&https_listen)
+                .await
+                .map_err(|e| format!("could not listen for HTTPS on {https_listen}: {e}"))?;
+            let listener = tls::TlsListener::new(tcp, t.https.clone()).map_err(|e| e.to_string())?;
+            let addr = axum::serve::Listener::local_addr(&listener).map_err(|e| e.to_string())?;
+            // (The no-op tap is what lets axum read the peer address from this listener.)
+            let listener = listener.tap_io(|_| {});
+            let routes = net::router(app).into_make_service_with_connect_info::<SocketAddr>();
+            let mut stop_tls = stopped.clone();
+            let task = tokio::spawn(async move {
+                let _ = axum::serve(listener, routes)
+                    .with_graceful_shutdown(async move {
+                        let _ = stop_tls.wait_for(|s| *s).await;
+                    })
+                    .await;
+            });
+            (Some(addr), Some(task))
+        }
+        _ => (None, None),
+    };
+    // A renewed certificate file is picked up without a restart.
+    let cert_watch = tls.clone().map(|t| {
+        let mut stop_watch = stopped.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(30));
+            tick.tick().await;
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {
+                        match t.reload_if_changed() {
+                            Ok(true) => eprintln!("TLS certificate reloaded"),
+                            Ok(false) => {}
+                            Err(e) => eprintln!("TLS certificate not reloaded (the old one stays): {e}"),
+                        }
+                    }
+                    _ = stop_watch.wait_for(|s| *s) => break,
+                }
+            }
+        })
+    });
     let server = tokio::spawn(async move {
         // No Nagle: small replies must not wait for the other side's delayed ACK.
         let listener = listener.tap_io(|tcp| {
@@ -141,6 +203,12 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     });
     let done = tokio::spawn(async move {
         let _ = server.await;
+        if let Some(t) = tls_server {
+            let _ = t.await;
+        }
+        if let Some(w) = cert_watch {
+            let _ = w.await;
+        }
         #[cfg(feature = "turn")]
         if let Some(t) = turn_server {
             t.close().await;
@@ -159,6 +227,8 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         done,
         relay,
         turn_port,
+        tls_addr,
+        tls,
     })
 }
 

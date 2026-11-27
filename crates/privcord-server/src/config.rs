@@ -7,6 +7,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub tls: TlsConfig,
     pub nostr: NostrConfig,
     pub server: ServerConfig,
     pub relay: RelayConfig,
@@ -61,6 +62,11 @@ pub struct TurnConfig {
     pub enabled: bool,
     /// Where the TURN server listens (UDP).
     pub listen: String,
+    /// Also accept TURN over TCP here, for networks that block UDP (for example `0.0.0.0:3478`). Empty: off.
+    pub tcp_listen: String,
+    /// Also accept TURN over TLS here (needs `[tls]`), for networks that only let TLS through (for example `0.0.0.0:443`
+    /// or `0.0.0.0:5349`). Empty: off.
+    pub tls_listen: String,
     /// The address phones reach this machine at from the internet (the one in the TURN answers). Required when enabled.
     pub public_ip: String,
     pub realm: String,
@@ -113,6 +119,8 @@ impl Default for TurnConfig {
         Self {
             enabled: false,
             listen: "0.0.0.0:3478".into(),
+            tcp_listen: String::new(),
+            tls_listen: String::new(),
             public_ip: String::new(),
             realm: "privcord".into(),
             min_port: 49152,
@@ -130,6 +138,11 @@ impl Config {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("could not read {}: {e}", path.display()))?;
         toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// Whether anything here needs a certificate.
+    pub fn wants_tls(&self) -> bool {
+        !self.tls.https_listen.is_empty() || (self.turn.enabled && !self.turn.tls_listen.is_empty())
     }
 
     /// What would stop this from working, in words (empty: fine).
@@ -152,6 +165,17 @@ impl Config {
         {
             if k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit()) {
                 out.push(format!("nostr key \"{k}\" is not 64 hex characters"));
+            }
+        }
+        if self.wants_tls() && self.tls.cert_file.is_empty() && !self.tls.self_signed {
+            out.push("TLS is asked for (tls.https_listen or turn.tls_listen) but there is no certificate: set tls.cert_file and tls.key_file, or tls.self_signed = true to try things out".into());
+        }
+        if self.tls.cert_file.is_empty() != self.tls.key_file.is_empty() {
+            out.push("tls.cert_file and tls.key_file go together".into());
+        }
+        for (name, v) in [("tls.https_listen", &self.tls.https_listen), ("turn.tcp_listen", &self.turn.tcp_listen), ("turn.tls_listen", &self.turn.tls_listen)] {
+            if !v.is_empty() && v.parse::<std::net::SocketAddr>().is_err() {
+                out.push(format!("{name} \"{v}\" is not an address like 0.0.0.0:443"));
             }
         }
         if self.turn.enabled {
@@ -262,4 +286,19 @@ impl Default for NostrConfig {
             blocked_kinds: Vec::new(),
         }
     }
+}
+
+/// TLS: `wss://` and `https://` for the relay and the admin panel, and TURN over TLS. Certificates come from files (read
+/// again when they change) or, for trying things out, a self-signed one that apps will not trust.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TlsConfig {
+    pub cert_file: String,
+    pub key_file: String,
+    /// Make a certificate for testing. Apps and browsers will refuse it; use real files in production.
+    pub self_signed: bool,
+    /// The name people use to reach this server. In TURN-over-TLS addresses and in the self-signed certificate.
+    pub domain: String,
+    /// Serve the relay (and admin panel) over TLS here, for example `0.0.0.0:443`. The plain listener stays as it is.
+    pub https_listen: String,
 }
