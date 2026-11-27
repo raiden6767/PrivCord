@@ -255,7 +255,12 @@
       "raw": null,
       "expected": {
         "stun": [
-          "stun:stun.cloudflare.com:3478"
+          "stun:stun.cloudflare.com:3478",
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:global.stun.twilio.com:3478",
+          "stun:stun.nextcloud.com:443",
+          "stun:stun.telnyx.com:3478"
         ],
         "turn": [],
         "signaling": [
@@ -277,7 +282,12 @@
       "raw": "{nope",
       "expected": {
         "stun": [
-          "stun:stun.cloudflare.com:3478"
+          "stun:stun.cloudflare.com:3478",
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:global.stun.twilio.com:3478",
+          "stun:stun.nextcloud.com:443",
+          "stun:stun.telnyx.com:3478"
         ],
         "turn": [],
         "signaling": [
@@ -299,7 +309,12 @@
       "raw": "[]",
       "expected": {
         "stun": [
-          "stun:stun.cloudflare.com:3478"
+          "stun:stun.cloudflare.com:3478",
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:global.stun.twilio.com:3478",
+          "stun:stun.nextcloud.com:443",
+          "stun:stun.telnyx.com:3478"
         ],
         "turn": [],
         "signaling": [
@@ -364,7 +379,12 @@
       "raw": "{\"storeForward\":\"yes\",\"bluetooth\":0}",
       "expected": {
         "stun": [
-          "stun:stun.cloudflare.com:3478"
+          "stun:stun.cloudflare.com:3478",
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:global.stun.twilio.com:3478",
+          "stun:stun.nextcloud.com:443",
+          "stun:stun.telnyx.com:3478"
         ],
         "turn": [],
         "signaling": [
@@ -386,7 +406,12 @@
       "raw": "{\"turn\":[{\"urls\":[\"turns:t.example:5349\",\"turn:t2.example\"],\"username\":\"u\",\"credential\":\"p\"}],\"signaling\":[{\"kind\":\"nostr\",\"relays\":[]}]}",
       "expected": {
         "stun": [
-          "stun:stun.cloudflare.com:3478"
+          "stun:stun.cloudflare.com:3478",
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:global.stun.twilio.com:3478",
+          "stun:stun.nextcloud.com:443",
+          "stun:stun.telnyx.com:3478"
         ],
         "turn": [
           {
