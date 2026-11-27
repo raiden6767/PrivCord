@@ -49,7 +49,7 @@ async fn thousands_of_clients_all_get_their_messages() {
         .unwrap();
         listeners.push(tokio::spawn(async move {
             let mut got = 0usize;
-            let mut worst = Duration::ZERO;
+            let mut lat: Vec<u64> = Vec::new();
             while got < per {
                 let Ok(Some(Ok(Message::Text(t)))) =
                     tokio::time::timeout(Duration::from_secs(30), ws.next()).await
@@ -69,10 +69,10 @@ async fn thousands_of_clients_all_get_their_messages() {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_micros();
-                    worst = worst.max(Duration::from_micros(now.saturating_sub(sent) as u64));
+                    lat.push(now.saturating_sub(sent) as u64);
                 }
             }
-            (got, worst)
+            (got, lat)
         }));
     }
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -95,15 +95,23 @@ async fn thousands_of_clients_all_get_their_messages() {
     for s in senders {
         s.await.unwrap();
     }
-    let (mut total, mut worst) = (0usize, Duration::ZERO);
+    let (mut total, mut lat) = (0usize, Vec::<u64>::new());
     for l in listeners {
         let (g, w) = l.await.unwrap();
         total += g;
-        worst = worst.max(w);
+        lat.extend(w);
     }
     let took = start_at.elapsed();
+    lat.sort_unstable();
+    let at = |q: f64| {
+        Duration::from_micros(
+            lat.get(((lat.len() as f64 * q) as usize).min(lat.len().saturating_sub(1)))
+                .copied()
+                .unwrap_or(0),
+        )
+    };
     let want = pairs * per;
-    println!("{pairs} listeners + {pairs} senders, {want} messages of 2 KiB: {total} delivered in {took:?} ({:.0} msg/s), slowest delivery {worst:?}", want as f64 / took.as_secs_f64());
+    println!("{pairs} listeners + {pairs} senders, {want} messages of 2 KiB: {total} delivered in {took:?} ({:.0} msg/s), delivery p50 {:?} p99 {:?} max {:?}", want as f64 / took.as_secs_f64(), at(0.5), at(0.99), at(1.0));
     assert_eq!(total, want, "every message must arrive");
     if let Some(r) = r {
         r.stop().await;

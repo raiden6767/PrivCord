@@ -22,10 +22,10 @@ T
 kv() { awk -v k="$2" '$1==k":"{print $2}' /proc/$1/status; }
 run() {
   name=$1; shift
-  t0=$(date +%s%N); "$@" >/dev/null 2>&1 & PID=$!
+  t0=$(date +%s%N); ${SERVER_PIN:+taskset -c $SERVER_PIN} "$@" >/dev/null 2>&1 & PID=$!
   until curl -sf "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1; do sleep 0.005; done
   ms=$(( ($(date +%s%N) - t0) / 1000000 )); sleep 0.5; idle=$(kv $PID VmRSS)
-  out=$(LOAD_URL="ws://127.0.0.1:$PORT" LOAD_PAIRS=$PAIRS LOAD_MSGS=$MSGS "$LOAD" --ignored --nocapture 2>&1 | grep delivered || echo "FAILED")
+  out=$(LOAD_URL="ws://127.0.0.1:$PORT" LOAD_PAIRS=$PAIRS LOAD_MSGS=$MSGS ${LOAD_PIN:+taskset -c $LOAD_PIN} "$LOAD" --ignored --nocapture 2>&1 | grep delivered || echo "FAILED")
   peak=$(kv $PID VmHWM); cpu=$(awk '{printf "%.2f", ($14+$15)/100}' /proc/$PID/stat)
   printf '%-6s start %4d ms | idle %6d kB | peak %7d kB | cpu %5s s | %s\n' "$name" "$ms" "$idle" "$peak" "$cpu" "$out"
   kill $PID; wait $PID 2>/dev/null || true

@@ -62,20 +62,24 @@ capacity is bounded by your network bandwidth; use `max_kbps` to cap each relaye
 
 ### Against the Node relay
 
-`scripts/bench-relay.sh` runs the same load (1,000 listeners, 1,000 senders, 20,000 messages of 2 KiB, same limits)
-against the Node relay and this one. One run on a shared 2-vCPU container, the load generator on the same machine:
+`scripts/bench-relay.sh [pairs] [messages]` runs the same load (same limits, 2 KiB messages) against the Node relay and
+this one, and prints start-up time, memory, CPU time and throughput. One run on a shared 4-vCPU container, the load
+generator on the same machine:
 
 | | Node 22 | Rust |
 |---|---|---|
-| start until it answers | 86-106 ms | 8-9 ms |
+| start until it answers | 80-105 ms | 8-11 ms |
 | idle memory | 63 MB | 5 MB |
-| peak memory under load | 87-90 MB | 29-35 MB |
-| CPU time for the run | 1.25-1.3 s | 0.5-0.55 s |
-| throughput | about 14,500 msg/s | about 15,000 msg/s (the load generator is the limit) |
-| slowest delivery | 35-50 ms | 100-145 ms |
+| 200,000 messages (200 listeners, 200 senders): time | 4.75 s (42k msg/s) | 1.02 s (195k msg/s) |
+| the same run: CPU time used by the server | 5.0 s | 2.3 s |
+| 20,000 messages across 2,000 connections: peak memory | 90-109 MB | 30-43 MB |
+| one message at a time, median / p99 delivery (separate client) | 0.11 ms / 1.10 ms | 0.13 ms / 0.78 ms |
 
-Rust wins on start-up, memory and CPU. Throughput is a tie here because the test client is the bottleneck, and the Node
-relay's worst-case delivery is currently faster; that is a known gap, not hidden. Numbers vary by machine: run it on yours.
+Honest notes: with very fast senders the Rust relay queues events faster than the listeners drain them, so its peak memory
+there (146 MB) was higher than Node's (96 MB); a slow listener is cut off past a byte limit, as in the Node relay. The
+"slowest delivery" the load test prints is dominated by the Rust test client sharing the machine's cores, not by the
+server; the one-at-a-time figure above, from an independent Node client, is the fair latency comparison. Numbers vary by
+machine: run it on yours.
 
 ## Docker
 

@@ -201,7 +201,6 @@ async fn socket(
     let ip = client_ip(addr, &headers, app.cfg.server.trust_proxy);
     ws.max_message_size(MAX_BLOB + 1024)
         .read_buffer_size(4 * 1024)
-        .write_buffer_size(0)
         .max_write_buffer_size(256 * 1024)
         .max_frame_size(MAX_BLOB + 1024)
         .on_upgrade(move |socket| serve(socket, app, ip))
