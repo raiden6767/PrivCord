@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 67 | 10122 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 102 | 18786 |
-| Stays (platform adapter) | 81 | 14515 |
+| Stays (UI) | 102 | 18800 |
+| Stays (platform adapter) | 81 | 14516 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **255** | **46068** |
+| **All mapped files** | **255** | **46083** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -220,7 +220,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/data/Files.kt` | 270 | `MessageType`, `ReplyRef`, `makeReplyRef`, `FileMeta`, `DeclineReason`, `declinedFrame` +15 | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/MessageStore.kt` | 243 | `MessageStore` | Chat state models and the in-memory message store over Room | engine state (snapshot, events) and storage::SqliteStorage | Engine | Ported, tested | M8: the engine owns this state | engine and storage tests |
 | `apps/android/app/src/main/java/com/duochat/app/data/Models.kt` | 425 | `DeliveryState`, `TransportKind`, `needsDelivery`, `ChatMessage`, `OutboxRow`, `EnginePhase` +39 | Chat state models and the in-memory message store over Room | engine state (snapshot, events) and storage::SqliteStorage | Engine | Ported, tested | M8: the engine owns this state | engine and storage tests |
-| `apps/android/app/src/main/java/com/duochat/app/data/MyServer.kt` | 204 | `SavedServer`, `ServerTurn`, `ServerInfo`, `MyServerException`, `MyServer`, `MyServerState` | "Use my server": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login | UI/settings glue (stays); the server side is crates/privcord-server | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/data/MyServer.kt` | 205 | `SavedServer`, `ServerTurn`, `ServerInfo`, `MyServerException`, `MyServer`, `MyServerState` | "Use my server": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login | UI/settings glue (stays); the server side is crates/privcord-server | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/NetworkConfig.kt` | 202 | `TransportMode`, `TurnServer`, `SignalingConfig`, `NetworkConfig`, `TurnShare` | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Preferences.kt` | 173 | `AppSettings`, `SettingsRepository` | App settings storage | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/QuickWins.kt` | 187 | `minutesLabel`, `HostRow`, `CheckupItem`, `ChatStorage`, `objects`, `parseCheckup` +29 | Small pure helpers for the screens: pinned chats, hosts the app contacts, privacy checkup | UI state (stays) | UI | Stays (UI) | Stays | n/a |
@@ -282,7 +282,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/MediaSave.kt` | 52 | (none) | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/MemoryMedia.kt` | 30 | `BytesMediaDataSource`, `memoryMediaSource` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Motion.kt` | 182 | `Motion`, `routeDepth`, `screenTransition`, `arrive`, `pressScale`, `SwipeToReply` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/Onboarding.kt` | 351 | `Step`, `OnboardingScreen`, `ShowPhrase`, `ConfirmPhrase`, `RestorePhrase`, `Fact` +1 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/Onboarding.kt` | 365 | `Step`, `OnboardingScreen`, `ShowPhrase`, `ConfirmPhrase`, `RestorePhrase`, `Fact` +1 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/PrivacyCards.kt` | 232 | `PrivacyCheckupCard`, `NetworkHostsCard`, `formatSize`, `StorageByChatCard`, `SealedChip`, `DevicesStrip` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrDecode.kt` | 48 | `QrDecode` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrScanner.kt` | 376 | `rememberQrScanner`, `QrScannerScreen`, `ScanFrame`, `analyze`, `decodeCaptured`, `decodeImage` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
