@@ -27,6 +27,9 @@ privcord-domain = { path = "../../../crates/privcord-domain" }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# For mic_permission.rs: the versions Tauri itself uses, so nothing new is built.
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service"] }

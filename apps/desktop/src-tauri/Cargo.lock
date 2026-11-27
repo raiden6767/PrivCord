@@ -1309,6 +1309,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "uuid",
+ "webview2-com",
+ "windows-core",
 ]
 
 [[package]]

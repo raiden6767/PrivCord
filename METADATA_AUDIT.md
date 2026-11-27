@@ -73,6 +73,7 @@ This is an internal review, not an independent audit (see `AUDIT.md`).
 | **M16** | A recorded **voice note** sits in a plain temporary file until sent. | Someone with file access to the phone | **D** (`AUDIT.md`) | Write it encrypted or delete on a timer. |
 | **M17** | **Message size.** Current (v2) messages are padded to buckets; older (v1) ones are not, so their length shows. | Relay | **V** for v2 (`pad`), **I** for v1 | Retire v1 for new messages. |
 | **M18** | **Windows does not clear the clipboard** after copying an invite, the six words or a recovery phrase, so it stays there for any program to read (and in Windows clipboard history if that is on). | Other programs; clipboard history | **V** (no clear in desktop code) | Clear it after about 30 seconds if unchanged, as on Android. |
+| **M19** | **Windows: your local network address reached contacts after the first voice note.** Chromium hides it behind a random `.local` name, unless the page holds a *lasting* microphone permission, which WebView2 saves by default. Measured in Chromium: a one-time grant keeps it hidden, a saved grant exposes it, clearing the grant hides it again. | A contact you connect to | **V** (Chromium test), **I** (WebView2 saving the answer) | The app now answers the microphone request itself without saving it, and clears a saved one (`mic_permission.rs`). Compiles for Windows; **not tried on a real Windows machine**. Android's WebRTC library is untested. |
 
 ## Checked and clean
 
