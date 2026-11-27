@@ -595,6 +595,10 @@ impl GroupLog {
             return *hit;
         }
         let ok = signature_valid(e, key);
+        // A hostile member could add many variants of one event: the cache is a speed-up, not a record, so it stays small.
+        if self.sig_cache.len() >= 4096 {
+            self.sig_cache.clear();
+        }
         self.sig_cache.insert(k, ok);
         ok
     }

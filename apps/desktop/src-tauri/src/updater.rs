@@ -4,6 +4,14 @@
 
 use tauri_plugin_updater::UpdaterExt;
 
+/// When this build was made (build.rs).
+const BUILT_AT: &str = env!("PRIVCORD_BUILT_AT");
+
+/// An update whose signature names another version than the manifest, or is older than this build, is a rollback.
+fn is_rollback(u: &tauri_plugin_updater::Update) -> bool {
+    privcord_desktop_host::update_guard::is_rollback(&u.signature, &u.version, BUILT_AT.parse().unwrap_or(0))
+}
+
 #[derive(serde::Serialize)]
 pub struct UpdateFound {
     version: String,
@@ -14,7 +22,11 @@ pub struct UpdateFound {
 #[tauri::command]
 pub async fn update_check(app: tauri::AppHandle) -> Result<Option<UpdateFound>, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
-    let found = updater.check().await.map_err(|e| e.to_string())?;
+    let found = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .filter(|u| !is_rollback(u));
     Ok(found.map(|u| UpdateFound {
         version: u.version,
         notes: u.body,
@@ -28,6 +40,9 @@ pub async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
         return Err("PrivCord is already up to date.".into());
     };
+    if is_rollback(&update) {
+        return Err("That update is older than this version, so it was not installed.".into());
+    }
     update
         .download_and_install(|_, _| {}, || {})
         .await
