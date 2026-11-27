@@ -95,7 +95,7 @@ impl Proc {
         std::fs::write(
             &conf,
             format!(
-                "[server]\nlisten = \"127.0.0.1:0\"\ndata_dir = \"{}\"\n[relay]\nrate_limit = 1000000\n[nostr]\nenabled = true\ndurable = true\nevents_per_minute_per_ip = 0\n",
+                "[server]\nlisten = \"127.0.0.1:0\"\ndata_dir = '{}'\n[relay]\nrate_limit = 1000000\n[nostr]\nenabled = true\ndurable = true\nevents_per_minute_per_ip = 0\n",
                 dir.join("data").display()
             ),
         )
@@ -103,7 +103,7 @@ impl Proc {
         let mut child = Command::new(env!("CARGO_BIN_EXE_privcord-server"))
             .args(["--config", conf.to_str().unwrap(), "serve"])
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
         let mut line = String::new();
