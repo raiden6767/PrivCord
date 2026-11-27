@@ -14,6 +14,8 @@ held. What was found, and what was done:
 - Linking a new device by typing or scanning the first device's code: the new device now holds the grant until the person taps "They match" (desktop and Android). Before, the first grant to arrive was taken, so someone who photographed the QR could race the real device.
 - An old "keys" message replayed by a relay can no longer set a friend's inbox back: a message from the same install with an older inbox generation than we hold is ignored.
 - The Android recovery-phrase screen blocks screenshots, screen recording and the recent-apps preview whatever the setting says.
+- A later batch of one-time keys sent through a relay is 5 keys, not 10, so it fits in the anonymous envelope instead of going out with sender and recipient visible (the first batch to a friend is still plain: we do not yet have their key to wrap it with).
+- Files kept on a device are capped at 2 GiB in total: a contact's new file offers are declined past that (not covered by a test).
 - Right-to-left override and zero-width characters are removed from received file names.
 
 ## Open (not fixed yet)
@@ -25,8 +27,7 @@ held. What was found, and what was done:
 - Android's app lock covers the screen, not the data; the Keystore keys do not require an unlocked device; screen-capture
   protection is off by default.
 - The relay's `del` only needs a subscription to the mailbox, which anyone who has a contact card can make.
-- No total storage cap for files and messages from contacts; no size cap on blobs read from a relay.
-- The anonymous envelope falls back to a plain one when the inner blob is over about 34 KB (the first handover is).
+- No size cap on blobs read from a relay beyond the 64 KB decode limit and the socket's own frame limit.
 - The Windows updater's manifest version is not signed (rollback needs write access to the release); test builds use a public
   debug keystore.
 - The desktop webview can call any engine command; the page is the engine's front end and uses nearly all of them, so an allowlist would add little. There is no XSS sink today and the CSP blocks inline script.

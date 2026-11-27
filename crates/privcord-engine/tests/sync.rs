@@ -2857,10 +2857,20 @@ fn a_contact_who_ran_out_of_one_time_keys_is_sent_a_fresh_batch_when_we_come_bac
         "the batch is used up"
     );
     // Pat comes back, opens them, and sends a new batch.
+    let before_batch = counts(&relay);
     for _ in 0..6 {
         pat.online(&mut relay);
         fran.online(&mut relay);
     }
+    // The batch fits in the anonymous envelope: nothing big goes out with sender and recipient in the clear.
+    let plain_big = relay
+        .boxes
+        .iter()
+        .flat_map(|(m, v)| v[before_batch.get(m).copied().unwrap_or(0)..].iter())
+        .filter_map(|b| privcord_domain::blob::SealedBlob::decode(b))
+        .filter(|b| b.v != 3 && b.encode().len() > 20_000)
+        .count();
+    assert_eq!(plain_big, 0, "a top-up batch went out unwrapped");
     assert!((1..=12).all(|i| pat.texts().contains(&format!("m{i}"))));
     assert!(
         fran.core.test_onetime_left(&pat_uid) >= 5,
