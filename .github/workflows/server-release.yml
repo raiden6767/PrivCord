@@ -1,5 +1,7 @@
 # Builds privcord-server binaries on demand only (CI minutes are limited): run it from the Actions tab.
 name: Server binaries
+permissions:
+  contents: read
 on:
   workflow_dispatch:
 jobs:
