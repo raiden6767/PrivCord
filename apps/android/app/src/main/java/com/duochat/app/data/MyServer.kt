@@ -93,15 +93,16 @@ object MyServer {
         if (a == null) emptyList() else (0 until a.length()).mapNotNull { (a.opt(it) as? String)?.takeIf { s -> s.isNotEmpty() && s.length < 300 } }
 
     fun discover(input: String, token: String, fetch: Fetch, now: Long = System.currentTimeMillis()): Pair<SavedServer, ServerInfo> {
-        val tries = candidates(input)
+        // The app does not allow unencrypted traffic at all (usesCleartextTraffic is off), so only https is tried.
+        val all = candidates(input)
+        val tries = all.filter { it.startsWith("https://") }
+        if (all.isNotEmpty() && tries.isEmpty()) {
+            throw MyServerException("This app only connects to servers over https. Give the server a certificate (see its README) and use an https address.", MyServerException.Kind.INVALID)
+        }
         if (tries.isEmpty()) throw MyServerException("Type the server’s address, for example relay.example.com.", MyServerException.Kind.INVALID)
         var last: MyServerException? = null
         for (base in tries) {
             try {
-                // The app does not allow unencrypted traffic at all (usesCleartextTraffic is off), so only https is tried.
-                if (base.startsWith("http://")) {
-                    throw MyServerException("This app only connects to servers over https. Give the server a certificate (see its README) and use an https address.", MyServerException.Kind.INVALID)
-                }
                 val about = get(fetch, "$base/.well-known/privcord-server", token)
                 if (about.optString("name") != "privcord-server") {
                     throw MyServerException("That address answers, but it is not a PrivCord server.", MyServerException.Kind.NOT_PRIVCORD)
