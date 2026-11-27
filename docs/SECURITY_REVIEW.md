@@ -20,7 +20,6 @@ held. What was found, and what was done:
 - The Windows updater refuses an update whose signature names a different version than `latest.json` announces, or was made before this build: pairing an old signed installer with a higher version number no longer works. (Unit tested; the real updater path was not run on Windows.)
 - The group event signature cache is bounded.
 - A deleted or hidden message no longer keeps its text, file description or media reference in the merged sync state (nor any edit of it), in whatever order the entries arrive (unit tested). A deletion also asks for a snapshot (at most every 6 hours) so the entries that carried the text leave the log once every device of the account holds it; a device that is offline delays that. "Clear chat" is per device and is not synced, so that text stays in the shared history until the messages are deleted.
-- The self-hosted relay can hand out short-lived TURN credentials (`GET /turn`, coturn's `use-auth-secret` scheme; set `TURN_SECRET` and `TURN_URLS`). The apps do not ask for them yet: until they do, the TURN password built into public builds is still extractable.
 - Right-to-left override and zero-width characters are removed from received file names.
 
 ## Open (not fixed yet)
@@ -30,5 +29,6 @@ held. What was found, and what was done:
   holds the account key, so removing it is cosmetic.
 - Android's app lock covers the screen, not the data; the Keystore keys do not require an unlocked device (requiring it would stop messages arriving while the phone is locked); screen-capture protection is off by default (the recovery phrase screen is always protected).
 - No size cap on blobs read from a relay beyond the 64 KB decode limit and the socket's own frame limit.
+- The TURN password built into public builds can be extracted. A fix needs a server you host that issues short-lived credentials (coturn's REST scheme, HMAC-SHA1) and both apps fetching from it; a first version of the relay side was taken out because CodeQL flags SHA-1 and nothing in the apps used it yet.
 - The desktop webview can call any engine command; the page is the engine's front end and uses nearly all of them, so an allowlist would add little. There is no XSS sink today and the CSP blocks inline script.
 - No wire vectors yet for seal v2, anon v3, the post-quantum channel, device lists or the sync log.

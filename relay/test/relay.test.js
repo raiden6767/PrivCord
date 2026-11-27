@@ -282,24 +282,3 @@ test('a connection may listen to more mailboxes than before (one per contact and
     a.close();
   });
 });
-
-test('/turn gives short-lived coturn credentials only when configured, and slows down one address', async () => {
-  const get = (port) => fetch(`http://127.0.0.1:${port}/turn`);
-  await withRelay({}, async (relay) => {
-    assert.equal((await get(relay.port)).status, 404, 'off unless a secret and addresses are set');
-  });
-  await withRelay({ turnSecret: 's3cret', turnUrls: ['turn:turn.example.org:3478'], turnTtlSec: 600, turnPerMinute: 2 }, async (relay) => {
-    const r = await get(relay.port);
-    assert.equal(r.status, 200);
-    const body = await r.json();
-    assert.deepEqual(body.urls, ['turn:turn.example.org:3478']);
-    const [expires] = body.username.split(':');
-    const left = Number(expires) - Math.floor(Date.now() / 1000);
-    assert.ok(left > 0 && left <= 600, `expires in ${left}s`);
-    const { createHmac } = await import('node:crypto');
-    assert.equal(body.credential, createHmac('sha1', 's3cret').update(body.username).digest('base64'), 'coturn REST password');
-    assert.ok(!JSON.stringify(body).includes('s3cret'), 'the secret itself is never sent');
-    assert.equal((await get(relay.port)).status, 200);
-    assert.equal((await get(relay.port)).status, 429, 'a third request in a minute is refused');
-  });
-});
