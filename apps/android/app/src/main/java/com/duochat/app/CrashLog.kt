@@ -14,6 +14,27 @@ import java.io.File
 object CrashLog {
     private fun file(context: Context) = File(context.filesDir, "last-crash.txt")
 
+    private val urlPattern = Regex("""\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"'<>)\]]+""")
+    private val ipPattern = Regex("""\b\d{1,3}(?:\.\d{1,3}){3}\b""")
+    private val idPattern = Regex("""\b[0-9a-f]{32,}\b""")
+    private val hostPattern = Regex("""\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|app|dev|lol|me|xyz|info|chat|social|cloud)\b""", RegexOption.IGNORE_CASE)
+    private val classPattern = Regex("""\b(?:com|org|net|io|java|javax|kotlin|kotlinx|android|androidx|dalvik|libcore|uniffi)\.[A-Za-z0-9_.$]+""")
+
+    /**
+     * What a crash report may say: error messages can name the relay or server the app was talking to, an address, or a
+     * key or id. Those are replaced; class names and the stack stay, because that is what the report is for.
+     */
+    fun scrub(text: String): String {
+        // Class and package names look like host names (androidx.core, org.webrtc): keep them out of the host rule.
+        val keep = mutableListOf<String>()
+        val masked = classPattern.replace(text) { keep.add(it.value); "\u0000${keep.size - 1}\u0000" }
+        val cleaned = hostPattern.replace(
+            idPattern.replace(ipPattern.replace(urlPattern.replace(masked, "<url>"), "<address>"), "<id>"),
+            "<host>",
+        )
+        return Regex("\u0000(\\d+)\u0000").replace(cleaned) { keep[it.groupValues[1].toInt()] }
+    }
+
     /** A crash this soon after the app started is treated as a crash at start-up (one that could repeat on every launch). */
     private const val STARTUP_MS = 30_000L
 
@@ -37,7 +58,7 @@ object CrashLog {
                 "uptimeMs=$uptime${if (fatal) "" else ";survived"}\n" +
                     "PrivCord ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · " +
                     "${Build.MANUFACTURER} ${Build.MODEL} · $where\n\n" +
-                    error.stackTraceToString().take(24_000),
+                    scrub(error.stackTraceToString()).take(24_000),
             )
         }
     }
@@ -71,7 +92,7 @@ object CrashLog {
                 "uptimeMs=0\n" +
                     "PrivCord ${BuildConfig.VERSION_NAME} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · " +
                     "${Build.MANUFACTURER} ${Build.MODEL} · ${if (native) "native crash" else "crash"}\n\n" +
-                    "${info.description.orEmpty()}\n\n" + readable.take(20_000),
+                    "${scrub(info.description.orEmpty())}\n\n" + scrub(readable).take(20_000),
             )
         }
     }

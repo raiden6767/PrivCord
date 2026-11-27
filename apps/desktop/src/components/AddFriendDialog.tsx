@@ -56,6 +56,8 @@ export function AddFriendDialog({
       });
     return () => {
       cancelled = true;
+      // Closing the screen ends the invite: otherwise it keeps being posted to the relays for up to 15 minutes.
+      engine.closeInvite?.();
     };
   }, [open, engine]);
 

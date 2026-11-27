@@ -35,6 +35,8 @@ interface ChatEngineApi {
     fun muteSender(uid: String)
     fun setMeshEnabled(on: Boolean)
     suspend fun createInvite(): Result<ActiveInvite>
+    /** Stop publishing the six-word invite (the Add a friend screen was left). */
+    fun closeInvite()
     suspend fun acceptRequest(uid: String): Result<String>
     fun dismissRequest(uid: String)
     suspend fun markChecked(uid: String)

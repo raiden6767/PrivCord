@@ -1242,6 +1242,7 @@ class RustChatEngine(
     override fun muteSender(uid: String) { scope.launch { call { setMuted(uid, true) } } }
 
     override suspend fun createInvite(): Result<ActiveInvite> = call { createInvite() }.map { ActiveInvite(it.words, it.expiresAt) }
+    override fun closeInvite() { scope.launch { call { stopInvite() } } }
     override suspend fun acceptRequest(uid: String): Result<String> = call { acceptRequest(uid) }
     override fun dismissRequest(uid: String) { scope.launch { call { dismissRequest(uid) } } }
 

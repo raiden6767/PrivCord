@@ -37,7 +37,12 @@ This is an internal review, not an independent audit (see `AUDIT.md`).
 | M9 | By design. |
 | M10 | **Fixed**: a linked phone defaults to the name "My phone". |
 | M18 | **Fixed (Windows)**: invites, the six words and recovery phrases are cleared from the clipboard after 30 seconds if still there. Not checked on a real Windows machine; Windows clipboard history is not covered. |
-| M11-M17 | Not changed. |
+| M11 | **Fixed (Windows)**: a setting turns the unread count off in the window title, tray tooltip and taskbar badge. On by default. |
+| M14 | **Fixed (Android)**: crash reports have hosts, URLs, addresses and long ids replaced before they are saved. Class names and the stack stay. |
+| M16 | **Already handled**: the recording is in the app's private cache folder, deleted right after it is sent and swept at launch. It is not encrypted while it exists. |
+| Invite beacon (found in the capture) | **Partly fixed**: the six-word invite now stops when the Add a friend screen is closed (it used to run up to 15 minutes), and posts every 12 s instead of every 4 s after the first minute. The inviter's public ID is still in the clear in each post (changing that is an invite format change). |
+| Self-hosted relay | **Hardened**: only a listener of a mailbox may delete from it; one address may hold at most 100 of a mailbox's stored messages (so it cannot fill it); a connection may listen to 64 mailboxes (was 16); rate limit 600 per minute (was 120). |
+| M12, M13, M15, M17 | Not changed. |
 
 ## Findings
 

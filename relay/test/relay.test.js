@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
-import { startRelay, MAX_BLOB, MAX_PER_MAILBOX } from '../server.js';
+import { startRelay, MAX_BLOB, MAX_PER_MAILBOX, MAX_SUBS_PER_CONN } from '../server.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,8 +74,10 @@ test('msg is persisted and replayed after server restart; del removes it; since 
     await a.next((m) => m.op === 'ok');
     a.send({ op: 'put', mailbox: 'mb', id: 'm3', blob: 'THREE', ttl: 3600, kind: 'msg' });
     await a.next((m) => m.op === 'ok');
-    a.send({ op: 'del', mailbox: 'mb', id: 'm3' });
+    a.send({ op: 'sub', mailbox: 'mb' }); // only a listener of the mailbox may delete from it
     await a.next((m) => m.op === 'ok');
+    a.send({ op: 'del', mailbox: 'mb', id: 'm3' });
+    await a.next((m) => m.op === 'ok' && m.id === 'm3');
     a.close();
     await relay.close();
 
@@ -127,7 +129,7 @@ test('msg ttl expiry: not replayed after expiry, and dropped across restart', as
 });
 
 test('limits: blob size, ttl caps, bad frames, mailbox capacity', async () => {
-  await withRelay({ allowStoreForward: true, rateLimit: 10_000 }, async (relay) => {
+  await withRelay({ allowStoreForward: true, rateLimit: 10_000, maxPerMailboxPerIp: 100_000 }, async (relay) => {
     const a = await client(relay.port);
     const put = async (o) => { a.send({ op: 'put', mailbox: 'mb', kind: 'sig', ttl: 10, ...o }); return a.next((m) => m.op === 'ok' || m.op === 'err'); };
     assert.equal((await put({ id: 'big', blob: 'x'.repeat(MAX_BLOB + 1) })).reason, 'blob too large');
@@ -196,8 +198,10 @@ test('total stored bytes are capped', async () => {
     assert.equal((await put('b1')).op, 'ok');
     assert.equal((await put('b2')).op, 'ok');
     assert.equal((await put('b3')).reason, 'relay full');
+    a.send({ op: 'sub', mailbox: 'mb' }); // only a listener may delete
+    await a.next((m) => m.op === 'ok' && m.id === undefined);
     a.send({ op: 'del', mailbox: 'mb', id: 'b1' });
-    await a.next((m) => m.op === 'ok');
+    await a.next((m) => m.op === 'ok' && m.id === 'b1');
     assert.equal((await put('b4')).op, 'ok', 'del frees budget');
     a.close();
   });
@@ -236,5 +240,43 @@ test('trustProxy uses the proxy-appended (rightmost) X-Forwarded-For entry', asy
     const second = await open('2.2.2.2, 9.9.9.9');
     assert.equal(second.code, 1013);
     first.ws.close();
+  });
+});
+
+test('a stranger cannot delete what is waiting in a mailbox', async () => {
+  await withRelay({ allowStoreForward: true }, async (relay) => {
+    const owner = await client(relay.port), stranger = await client(relay.port);
+    owner.send({ op: 'put', mailbox: 'mine', id: 'real', blob: 'SEALED', ttl: 3600, kind: 'msg' });
+    await owner.next((m) => m.op === 'ok');
+    stranger.send({ op: 'del', mailbox: 'mine', id: 'real' });
+    assert.equal((await stranger.next()).reason, 'not subscribed to this mailbox');
+    owner.send({ op: 'sub', mailbox: 'mine' });
+    assert.equal((await owner.next((m) => m.op === 'event')).blob, 'SEALED', 'still there');
+    owner.close(); stranger.close();
+  });
+});
+
+test('one address cannot fill a mailbox so that others are refused', async () => {
+  await withRelay({ allowStoreForward: true, maxPerMailboxPerIp: 3 }, async (relay) => {
+    const a = await client(relay.port);
+    const put = async (id, mailbox = 'target') => { a.send({ op: 'put', mailbox, id, blob: 'x', kind: 'msg', ttl: 60 }); return a.next((m) => m.op === 'ok' || m.op === 'err'); };
+    for (let i = 0; i < 3; i++) assert.equal((await put(`q${i}`)).op, 'ok');
+    assert.equal((await put('q-over')).reason, 'mailbox quota for this address');
+    assert.equal((await put('other', 'another-mailbox')).op, 'ok', 'other mailboxes are not affected');
+    // The address is never written to the log.
+    a.close();
+  });
+});
+
+test('a connection may listen to more mailboxes than before (one per contact and group), up to a bound', async () => {
+  await withRelay({ rateLimit: 10_000 }, async (relay) => {
+    const a = await client(relay.port);
+    for (let i = 0; i < MAX_SUBS_PER_CONN; i++) {
+      a.send({ op: 'sub', mailbox: `box${i}` });
+      assert.equal((await a.next()).op, 'ok');
+    }
+    a.send({ op: 'sub', mailbox: 'one-too-many' });
+    assert.equal((await a.next()).reason, 'too many subscriptions');
+    a.close();
   });
 });
