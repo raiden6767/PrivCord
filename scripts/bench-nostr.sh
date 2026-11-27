@@ -32,6 +32,9 @@ enabled = true
 events_per_minute_per_ip = 0
 T
 run privcord target/release/privcord-server -c "$TMP/p.toml" serve
+# The same, confirming each event only after it is safely on disk (what SQLite-based relays do).
+sed "s|data_dir = .*|data_dir = \"$TMP/pd\"|; s|^events_per_minute_per_ip = 0|events_per_minute_per_ip = 0\ndurable = true|" "$TMP/p.toml" > "$TMP/pd.toml"
+run privcord-durable target/release/privcord-server -c "$TMP/pd.toml" serve
 if [ -n "${NOSTR_RS_RELAY:-}" ]; then
   mkdir -p "$TMP/n"
   cat > "$TMP/n.toml" <<T
