@@ -62,7 +62,10 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         };
         let mut r = Relay::new(cfg.relay.clone(), store, net::now_ms());
         if cfg.nostr.enabled {
-            r = r.with_nostr(nostr::Nostr::new(cfg.nostr.clone(), &cfg.server.data_dir)?);
+            r = r.with_nostr(Arc::new(nostr::Nostr::new(
+                cfg.nostr.clone(),
+                &cfg.server.data_dir,
+            )?));
         }
         Some(Arc::new(r))
     } else {
@@ -116,6 +119,12 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             })
             .await;
     });
+    // With `durable`, events are confirmed after a batched disk sync; this task does the batching.
+    let committer = relay
+        .as_ref()
+        .and_then(|r| r.nostr().cloned())
+        .filter(|n| n.cfg.durable && n.cfg.persist)
+        .map(|n| tokio::spawn(n.run_committer(stopped.clone())));
     let sweeper = relay.clone().map(|r| {
         tokio::spawn(async move {
             let mut sweep = tokio::time::interval(Duration::from_millis(500));
@@ -138,6 +147,10 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         }
         if let Some(s) = sweeper {
             let _ = s.await;
+        }
+        if let Some(c) = committer {
+            // Confirms what was still waiting for the disk.
+            let _ = c.await;
         }
     });
     Ok(Running {

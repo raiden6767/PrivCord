@@ -43,32 +43,57 @@ talking Nostr; one that sends an object is talking PrivCord). The PrivCord apps 
 Whoever publishes to a Nostr relay publishes readable content: unlike PrivCord's sealed messages, you can read what is stored
 here. That is your responsibility as the operator.
 
+### Durable mode
+
+By default an event is confirmed as soon as it is in memory and handed to the operating system, and the log is synced to disk
+twice a second: a crash of the program loses nothing, a power cut can lose up to half a second. Set `durable = true` and an
+event is confirmed (and shown to subscribers) only after it has been synced to disk. Events that arrive together share one
+sync ("group commit"), so most of the speed stays: on this machine stored events ran at 28-35k a second against 38-41k
+without it. A slow disk will cost more; the benchmark script measures both on yours.
+
 ### Compared with nostr-rs-relay
 
-`scripts/bench-nostr.sh` (with `NOSTR_RS_RELAY=/path/to/nostr-rs-relay`) runs the same load against both. One run on a
-shared 4-vCPU container, load generator on the same machine, default settings for both (rate limits off on this server):
+`scripts/bench-nostr.sh` (with `NOSTR_RS_RELAY=/path/to/nostr-rs-relay`) runs the same load against it, this server, and this
+server in durable mode. One run on a shared 4-vCPU container, load generator on the same machine, default settings for
+nostr-rs-relay and rate limits off here:
 
-| | nostr-rs-relay 0.8.12 | privcord-server |
-|---|---|---|
-| start until it answers | 22 ms | 9-13 ms |
-| idle memory | 25 MB | 5 MB |
-| 20,000 live events to 200 rooms (200 listeners): time | 2.6 s (7.7k deliveries/s) | 0.55 s (36k deliveries/s) |
-| 20,000 events stored from 20 connections | 13.4 s (1.5k events/s) | 0.5 s (40k events/s) |
-| 2,000 reads of 50 events each, one after another | 105 s (19/s) | 0.8 s (2.5k/s) |
-| one event at a time, median / 99th percentile | 0.35 ms / 0.7-1.8 ms | 0.37 ms / 0.8-1.8 ms |
-| peak memory / CPU time for the whole run | 98 MB / 38-40 s | 46 MB / 4.4 s |
+| | nostr-rs-relay 0.8.12 | privcord-server | privcord-server, durable |
+|---|---|---|---|
+| start until it answers | 22-800 ms | 7-33 ms | 8-9 ms |
+| idle memory | 24 MB | 5 MB | 5 MB |
+| 20,000 live events to 200 rooms | 8.7k deliveries/s | 37-42k/s | 18-39k/s (noisy) |
+| 20,000 events stored from 20 connections | 0.5-1.5k/s | 38-41k/s | 28-35k/s |
+| 2,000 reads of 50 events, one after another | 19/s | 2.0-2.8k/s | 2.1k/s |
+| one event at a time, median / 99th percentile | 0.37 ms / 1.8 ms | 0.39 ms / 1.2 ms | 0.39 ms / 1.7 ms |
+| peak memory / CPU time for the whole run | 78-98 MB / 39 s | 46 MB / 4.5 s | 46 MB / 4.6 s |
 
 Read it carefully:
-- **Durability is not identical.** nostr-rs-relay stores in SQLite, which is a database with queries and indexes of its own;
-  this server keeps events in memory with a log that is synced to disk twice a second, so a power cut can lose up to half a
-  second of events (a crash of the program loses none). Memory use grows with the number of stored events (cap them with
-  `max_events` and `retention_days`).
-- **The read figure is mostly a socket setting.** `nostr-rs-relay` leaves Nagle's algorithm on (checked with `strace`: it
-  sets `TCP_NODELAY` to 0), so a burst of 50 small replies waits on the client's delayed ACK, about 50 ms a query. This server
-  turns it off. Different clients and networks change this figure.
+- nostr-rs-relay stores in SQLite, a full database; this server keeps events in memory with a log on disk. Memory use grows
+  with the number of stored events (cap them with `max_events` and `retention_days`), and a restart reads the log back.
+- **The read figure is mostly a socket setting.** nostr-rs-relay leaves Nagle's algorithm on (checked with `strace`: it sets
+  `TCP_NODELAY` to 0), so a burst of 50 small replies waits on the client's delayed ACK. This server turns it off.
 - Latency for single events is a tie; the gains are in throughput, memory and CPU.
-- strfry, the most used relay, was not measured here (building it needs system packages I did not install). The script runs
-  it too if you give it `STRFRY=/path/to/strfry`.
+- Run-to-run variation on this shared machine is large (the same durable run scored 38k and 18k live deliveries); the
+  figures show the order of magnitude, not exact ratios.
+- strfry, the most used relay, was not measured here. The script runs it too if you give it `STRFRY=/path/to/strfry`.
+
+### What was learned from nostr-rs-relay
+
+I read its source (event handling, storage, limits, configuration) and adopted what fits PrivCord:
+
+| Adopted | |
+|---|---|
+| Confirm after the write is safe | `durable = true` (group commit) |
+| A deletion that arrives before its event still wins | and for addresses (`a` tags): older versions that arrive later are refused |
+| Direct messages only to their sender and recipient | `auth_dms = true` (NIP-42; the challenge is sent when a client connects) |
+| Cap on how fast one connection opens subscriptions | `reqs_per_minute_per_conn` |
+| Cap on events per second for the whole relay | `events_per_second_global` (protects the disk) |
+| Prometheus counters | `[server] metrics = true`, at `/metrics` (needs the token if tokens are set) |
+| Client address from a chosen header | `[server] real_ip_header = "cf-connecting-ip"` behind Cloudflare, with `trust_proxy` |
+| Small compatibility details | subscription ids up to 256 characters, kind 41 replaceable (NIP-28), admin key in the information document, memory-only mode (`persist = false`) |
+
+Left out on purpose: NIP-05 write verification (needs outbound web requests from the server), pay-to-relay, an external
+admission service, and logging each client's address and browser (this server keeps no such log).
 
 ## Behind a router, a home connection, or a cloud NAT
 

@@ -78,9 +78,9 @@ fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     a.iter().zip(b.iter()).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
-pub fn client_ip(addr: SocketAddr, headers: &HeaderMap, trust_proxy: bool) -> String {
+pub fn client_ip(addr: SocketAddr, headers: &HeaderMap, trust_proxy: bool, header: &str) -> String {
     if trust_proxy {
-        if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(xff) = headers.get(header).and_then(|v| v.to_str().ok()) {
             // The rightmost entry is the one our proxy appended; earlier ones are whatever the visitor claimed.
             if let Some(last) = xff
                 .rsplit(',')
@@ -106,6 +106,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/healthz", get(healthz))
         .route("/.well-known/privcord-server", get(about))
         .route("/turn", get(turn_credentials))
+        .route("/metrics", get(metrics))
         .fallback(socket)
         .with_state(app)
 }
@@ -120,6 +121,45 @@ async fn healthz(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value>
             .as_ref()
             .map_or_else(|| json!({ "ok": true }), |r| r.health()),
     )
+}
+
+/// Prometheus-style counters, when the administrator turned them on.
+async fn metrics(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    if !app.cfg.server.metrics {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if !app.allowed(&headers, &q) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    fn flatten(prefix: &str, v: &Value, out: &mut String) {
+        match v {
+            Value::Object(o) => {
+                for (k, x) in o {
+                    flatten(&format!("{prefix}_{k}"), x, out);
+                }
+            }
+            Value::Number(n) => {
+                out.push_str(&format!("{prefix} {n}\n"));
+            }
+            _ => {}
+        }
+    }
+    let mut text = String::new();
+    if let Some(r) = &app.relay {
+        flatten("privcord", &r.health(), &mut text);
+    }
+    (
+        [
+            ("content-type", "text/plain; version=0.0.4"),
+            ("cache-control", "no-store"),
+        ],
+        text,
+    )
+        .into_response()
 }
 
 async fn about(State(app): State<Arc<App>>) -> Json<Value> {
@@ -159,7 +199,12 @@ async fn turn_credentials(
     if !app.allowed(&headers, &q) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let ip = client_ip(addr, &headers, app.cfg.server.trust_proxy);
+    let ip = client_ip(
+        addr,
+        &headers,
+        app.cfg.server.trust_proxy,
+        &app.cfg.server.real_ip_header,
+    );
     let now = now_ms().max(0) as u64 / 1000;
     {
         // A few asks a minute from one address: credentials are cheap, but not free.
@@ -217,7 +262,12 @@ async fn socket(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     // The address is used in memory for limits only; it is never logged or stored.
-    let ip = client_ip(addr, &headers, app.cfg.server.trust_proxy);
+    let ip = client_ip(
+        addr,
+        &headers,
+        app.cfg.server.trust_proxy,
+        &app.cfg.server.real_ip_header,
+    );
     let biggest = if app.cfg.nostr.enabled {
         app.cfg.nostr.max_message_bytes
     } else {
@@ -286,6 +336,7 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
         }
     });
     let mut session = Session::default();
+    relay.connected(&conn, &mut session);
     let mut alive = true;
     let mut beat = tokio::time::interval(HEARTBEAT);
     beat.tick().await;

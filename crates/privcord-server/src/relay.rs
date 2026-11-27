@@ -95,7 +95,7 @@ pub struct Relay {
     conn_counts: Mutex<HashMap<String, usize>>,
     store: Option<Mutex<Store>>,
     out_total: Arc<AtomicUsize>,
-    nostr: Option<crate::nostr::Nostr>,
+    nostr: Option<Arc<crate::nostr::Nostr>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -190,13 +190,20 @@ impl Relay {
     /// A connection ended: forget its subscriptions.
     /// Adds the Nostr protocol to this relay.
     #[must_use]
-    pub fn with_nostr(mut self, n: crate::nostr::Nostr) -> Self {
+    pub fn with_nostr(mut self, n: Arc<crate::nostr::Nostr>) -> Self {
         self.nostr = Some(n);
         self
     }
 
-    pub fn nostr(&self) -> Option<&crate::nostr::Nostr> {
+    pub fn nostr(&self) -> Option<&Arc<crate::nostr::Nostr>> {
         self.nostr.as_ref()
+    }
+
+    /// Called once when a connection opens.
+    pub fn connected(&self, conn: &Conn, session: &mut Session) {
+        if let Some(n) = &self.nostr {
+            n.challenge(conn, &mut session.nostr);
+        }
     }
 
     pub fn leave(&self, ip: &str, conn: &Conn, session: &mut Session) {

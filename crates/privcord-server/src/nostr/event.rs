@@ -180,7 +180,7 @@ impl Event {
         (20_000..30_000).contains(&self.kind)
     }
     pub fn is_replaceable(&self) -> bool {
-        self.kind == 0 || self.kind == 3 || (10_000..20_000).contains(&self.kind)
+        self.kind == 0 || self.kind == 3 || self.kind == 41 || (10_000..20_000).contains(&self.kind)
     }
     pub fn is_addressable(&self) -> bool {
         (30_000..40_000).contains(&self.kind)

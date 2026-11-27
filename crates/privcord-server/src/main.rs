@@ -42,7 +42,9 @@ const TEMPLATE: &str = r#"# PrivCord server settings. Whoever runs this server i
 [server]
 listen = "0.0.0.0:8787"        # the relay's web address (put a TLS proxy such as Caddy in front for wss://)
 data_dir = "./data"
-trust_proxy = false             # true only behind a proxy you control that sets X-Forwarded-For
+trust_proxy = false             # true only behind a proxy you control that sets the header below
+# real_ip_header = "x-forwarded-for"   # e.g. "cf-connecting-ip" behind Cloudflare
+# metrics = false               # Prometheus counters at /metrics (needs a token if tokens are set)
 access_tokens = []              # empty: anyone can use it; otherwise clients must send one of these
 admin_contact = ""              # shown on the discovery page
 
@@ -57,6 +59,12 @@ name = "My PrivCord server"
 description = "A relay run by its administrator."
 retention_days = 30
 max_events = 1000000
+# durable = false               # confirm an event only after it is safely on disk (batched, so still fast)
+# persist = true                # false: keep events in memory only
+# auth_dms = false              # NIP-42: direct messages only to their sender and recipient
+# events_per_second_global = 0  # cap on events per second for the whole relay (0: none)
+# reqs_per_minute_per_conn = 0  # cap on subscriptions one connection may open per minute (0: none)
+# admin_pubkey = ""             # your Nostr key (hex), shown in the information document
 # allowed_pubkeys = []          # hex keys; if any are listed, only they may publish
 # blocked_pubkeys = []
 # allowed_kinds = []
