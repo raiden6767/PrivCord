@@ -23,6 +23,11 @@ export class RelayClient implements SignalingTransport {
   private retryTimer: Timer | undefined;
   private stopped = true;
   private lastSeen = 0;
+  private beat: Timer | undefined;
+  private lastBeat = 0;
+  private readonly wake = () => {
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') this.reconnectNow();
+  };
   private pending = new Map<string, { resolve: () => void; reject: (e: Error) => void; timer: Timer }>();
 
   constructor(
@@ -36,6 +41,37 @@ export class RelayClient implements SignalingTransport {
     this.mailbox = mailbox;
     this.onBlob = onBlob;
     this.stopped = false;
+    this.connect();
+    // After sleep, a network change or coming back to the window, the old socket may look open and carry nothing: start over.
+    this.lastBeat = Date.now();
+    globalThis.clearInterval(this.beat);
+    this.beat = globalThis.setInterval(() => {
+      const now = Date.now();
+      const slept = now - this.lastBeat > 50_000;
+      this.lastBeat = now;
+      if (slept) this.reconnectNow();
+    }, 20_000);
+    globalThis.addEventListener?.('online', this.wake);
+    globalThis.addEventListener?.('focus', this.wake);
+    globalThis.document?.addEventListener?.('visibilitychange', this.wake);
+  }
+
+  /** Throw the socket away and connect again now. */
+  reconnectNow(): void {
+    if (this.stopped) return;
+    globalThis.clearTimeout(this.retryTimer);
+    const old = this.socket;
+    this.socket = null;
+    this.attempt = 0;
+    if (old) {
+      old.onclose = null;
+      try {
+        old.close();
+      } catch {
+        /* already gone */
+      }
+      this.failPending(new Error('Relay connection replaced.'));
+    }
     this.connect();
   }
 
@@ -133,6 +169,10 @@ export class RelayClient implements SignalingTransport {
 
   stop(): void {
     this.stopped = true;
+    globalThis.clearInterval(this.beat);
+    globalThis.removeEventListener?.('online', this.wake);
+    globalThis.removeEventListener?.('focus', this.wake);
+    globalThis.document?.removeEventListener?.('visibilitychange', this.wake);
     globalThis.clearTimeout(this.retryTimer);
     this.failPending(new Error('Stopped.'));
     const socket = this.socket;
