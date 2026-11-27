@@ -7,7 +7,8 @@
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
-    clippy::cast_precision_loss
+    clippy::cast_precision_loss,
+    clippy::panic
 )]
 
 use futures_util::{SinkExt, StreamExt};
