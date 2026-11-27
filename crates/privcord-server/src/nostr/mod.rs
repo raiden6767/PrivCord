@@ -162,7 +162,7 @@ impl Nostr {
             "name": c.name,
             "description": c.description,
             "contact": contact,
-            "supported_nips": [1, 9, 11, 13, 40, 42, 45],
+            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45],
             "software": "https://github.com/raiden6767/privcord",
             "version": env!("CARGO_PKG_VERSION"),
             "limitation": {
@@ -524,6 +524,7 @@ impl Nostr {
             return;
         };
         store.sweep(now, 0, 0);
+        store.sync();
         let last = self.last_slow_sweep.load(Ordering::Relaxed);
         if now.unsigned_abs() >= last + 60 {
             self.last_slow_sweep

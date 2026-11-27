@@ -136,6 +136,7 @@ jobs:
       - name: Upload (the site and the apps' update checks use these exact names)
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
           n=${{ github.run_number }}
@@ -158,3 +159,13 @@ jobs:
           fi
           # The old, versioned file name is replaced by the fixed one above.
           gh release delete-asset Windows PrivCord_0.1.0_x64-setup.exe --yes --repo "$GITHUB_REPOSITORY" || true
+          # Say on each release page which build it holds, so it is plain whether it is the latest.
+          title=$(printf '%s' "${COMMIT_MESSAGE:-manual run}" | head -n 1)
+          when=$(date -u '+%Y-%m-%d %H:%M UTC')
+          for tag in Android Windows; do
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --title "$([ "$tag" = Android ] && echo 'Android APK' || echo 'Windows exe') (build $n)" \
+              --notes "Build $n, from commit ${GITHUB_SHA:0:7}, published $when.
+          $title
+
+          Unsigned test build: see docs/DEPLOYMENT.md. Full history: https://github.com/$GITHUB_REPOSITORY/commits/main"
+          done

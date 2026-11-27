@@ -252,6 +252,13 @@ impl Store {
         self.insert_inner(e, true)
     }
 
+    /// Asks the disk to keep what has been written so far (a power cut loses at most what came after the last call).
+    pub fn sync(&self) {
+        if let Some(f) = &self.log {
+            let _ = lock(f).sync_data();
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.inner
             .read()

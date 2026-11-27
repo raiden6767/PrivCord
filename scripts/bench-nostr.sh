@@ -26,6 +26,7 @@ listen = "127.0.0.1:$PORT"
 data_dir = "$TMP/p"
 [relay]
 enabled = false
+max_conns_per_ip = 100000
 [nostr]
 enabled = true
 events_per_minute_per_ip = 0

@@ -156,14 +156,16 @@ async fn nostr_load() {
             }
         }));
     }
-    for s in senders {
-        s.await.unwrap();
-    }
+    // Timed until every listener has everything: some relays do not answer live events with OK, so waiting for the
+    // publishers' OKs would measure their timeout instead.
     let mut total = 0;
     for l in listeners {
         total += l.await.unwrap();
     }
     let took = t0.elapsed();
+    for s in senders {
+        s.await.unwrap();
+    }
     println!("fan-out: {rooms} listeners + {rooms} publishers, {} live events: {total} delivered in {took:?} ({:.0} deliveries/s)", rooms * per, total as f64 / took.as_secs_f64());
 
     // ---- store ----
