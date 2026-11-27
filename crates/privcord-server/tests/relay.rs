@@ -278,6 +278,7 @@ async fn healthz_gives_counters_only_and_less_behind_a_proxy() {
             "delivered",
             "mailboxes",
             "ok",
+            "open_connections",
             "put",
             "queued",
             "rejected"
