@@ -60,7 +60,7 @@ test('live sig delivery between two clients, not persisted', async () => {
   });
 });
 
-test('msg is persisted and replayed after server restart; del removes it; since is respected', async () => {
+test('msg is persisted and replayed after server restart; del changes nothing; since is respected', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'relay-'));
   try {
     let relay = await startRelay({ port: 0, host: '127.0.0.1', dataDir: dir, allowStoreForward: true });
@@ -74,9 +74,9 @@ test('msg is persisted and replayed after server restart; del removes it; since 
     await a.next((m) => m.op === 'ok');
     a.send({ op: 'put', mailbox: 'mb', id: 'm3', blob: 'THREE', ttl: 3600, kind: 'msg' });
     await a.next((m) => m.op === 'ok');
-    a.send({ op: 'sub', mailbox: 'mb' }); // only a listener of the mailbox may delete from it
+    a.send({ op: 'sub', mailbox: 'mb' });
     await a.next((m) => m.op === 'ok');
-    a.send({ op: 'del', mailbox: 'mb', id: 'm3' });
+    a.send({ op: 'del', mailbox: 'mb', id: 'm3' }); // answered, but nothing is deleted
     await a.next((m) => m.op === 'ok' && m.id === 'm3');
     a.close();
     await relay.close();
@@ -84,14 +84,14 @@ test('msg is persisted and replayed after server restart; del removes it; since 
     relay = await startRelay({ port: 0, host: '127.0.0.1', dataDir: dir, allowStoreForward: true });
     const b = await client(relay.port);
     b.send({ op: 'sub', mailbox: 'mb' });
-    const got = [await b.next((m) => m.op === 'event'), await b.next((m) => m.op === 'event')].map((m) => m.blob).sort();
-    assert.deepEqual(got, ['ONE', 'TWO']);
+    const got = [await b.next((m) => m.op === 'event'), await b.next((m) => m.op === 'event'), await b.next((m) => m.op === 'event')].map((m) => m.blob).sort();
+    assert.deepEqual(got, ['ONE', 'THREE', 'TWO']);
     await b.next((m) => m.op === 'ok');
-    assert.ok(await b.quiet(), 'deleted m3 must not replay');
 
     const c = await client(relay.port);
     c.send({ op: 'sub', mailbox: 'mb', since: mid });
-    assert.equal((await c.next((m) => m.op === 'event')).blob, 'TWO');
+    const since = [await c.next((m) => m.op === 'event'), await c.next((m) => m.op === 'event')].map((m) => m.blob).sort();
+    assert.deepEqual(since, ['THREE', 'TWO'], 'only what came after `since`');
     await c.next((m) => m.op === 'ok');
     assert.ok(await c.quiet());
     b.close(); c.close();
@@ -198,11 +198,11 @@ test('total stored bytes are capped', async () => {
     assert.equal((await put('b1')).op, 'ok');
     assert.equal((await put('b2')).op, 'ok');
     assert.equal((await put('b3')).reason, 'relay full');
-    a.send({ op: 'sub', mailbox: 'mb' }); // only a listener may delete
+    a.send({ op: 'sub', mailbox: 'mb' });
     await a.next((m) => m.op === 'ok' && m.id === undefined);
     a.send({ op: 'del', mailbox: 'mb', id: 'b1' });
     await a.next((m) => m.op === 'ok' && m.id === 'b1');
-    assert.equal((await put('b4')).op, 'ok', 'del frees budget');
+    assert.equal((await put('b4')).reason, 'relay full', 'del frees nothing: messages leave by expiry');
     a.close();
   });
 });
@@ -248,8 +248,10 @@ test('a stranger cannot delete what is waiting in a mailbox', async () => {
     const owner = await client(relay.port), stranger = await client(relay.port);
     owner.send({ op: 'put', mailbox: 'mine', id: 'real', blob: 'SEALED', ttl: 3600, kind: 'msg' });
     await owner.next((m) => m.op === 'ok');
+    stranger.send({ op: 'sub', mailbox: 'mine' }); // anyone can work the mailbox name out and listen
+    await stranger.next((m) => m.op === 'event');
     stranger.send({ op: 'del', mailbox: 'mine', id: 'real' });
-    assert.equal((await stranger.next()).reason, 'not subscribed to this mailbox');
+    await stranger.next((m) => m.op === 'ok' && m.id === 'real');
     owner.send({ op: 'sub', mailbox: 'mine' });
     assert.equal((await owner.next((m) => m.op === 'event')).blob, 'SEALED', 'still there');
     owner.close(); stranger.close();

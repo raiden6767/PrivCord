@@ -222,15 +222,8 @@ export function startRelay({
       }
       case 'del': {
         if (!str(m.mailbox) || !str(m.id)) return fail('bad del');
-        // Only a listener of the mailbox (its owner, who got the message) may delete from it.
-        if (!ws.mailboxes.has(m.mailbox)) return fail('not subscribed to this mailbox');
-        const q = queues.get(m.mailbox);
-        const it = q?.get(m.id);
-        if (it && q.delete(m.id)) {
-          bytes -= it.blob.length;
-          if (q.size === 0) queues.delete(m.mailbox);
-          persist({ op: 'del', mailbox: m.mailbox, id: m.id });
-        }
+        // Deleting is not supported: anyone who can work out a mailbox name (from a contact card) could otherwise wipe what
+        // is waiting there, and the current apps never ask. Messages leave by expiry. Answered "ok" so older clients carry on.
         return send(ws, { op: 'ok', id: m.id });
       }
       default:

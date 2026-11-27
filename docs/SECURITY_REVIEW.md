@@ -16,17 +16,17 @@ held. What was found, and what was done:
 - The Android recovery-phrase screen blocks screenshots, screen recording and the recent-apps preview whatever the setting says.
 - A later batch of one-time keys sent through a relay is 5 keys, not 10, so it fits in the anonymous envelope instead of going out with sender and recipient visible (the first batch to a friend is still plain: we do not yet have their key to wrap it with).
 - Files kept on a device are capped at 2 GiB in total: a contact's new file offers are declined past that (not covered by a test).
+- The relay no longer deletes on request (anyone who could work out a mailbox name from a contact card could wipe what was waiting there). The current apps never asked for deletes; stored messages leave by expiry, and `del` is answered "ok" and ignored so older clients carry on.
 - Right-to-left override and zero-width characters are removed from received file names.
 
 ## Open (not fixed yet)
-- Six words and cards mark a contact "Verified" without the safety-number check; friend requests from strangers show a name
+- Six words and cards add a contact as directly trusted; the screens say "Verified" only once the safety numbers have been compared, but the invite still lets whoever knows the words race the real friend; friend requests from strangers show a name
   the sender chose.
 - A removed device keeps working for a friend who has not yet seen the newer device list; a phone restored from the phrase
   holds the account key, so removing it is cosmetic.
 - Message deletion and "clear chat" leave the text in the sync log inside the database until every device has a snapshot (an account with more than one device; the log entries are signed and hash-chained, so they cannot be edited in place).
 - Android's app lock covers the screen, not the data; the Keystore keys do not require an unlocked device; screen-capture
   protection is off by default.
-- The relay's `del` only needs a subscription to the mailbox, which anyone who has a contact card can make.
 - No size cap on blobs read from a relay beyond the 64 KB decode limit and the socket's own frame limit.
 - The Windows updater's manifest version is not signed (rollback needs write access to the release); test builds use a public
   debug keystore.
