@@ -18,6 +18,8 @@ use serde_json::{json, Value};
 const KV_BASE: &str = "sync.base";
 /// Entries held in the log before the next snapshot is made.
 const SNAPSHOT_EVERY: usize = 2_000;
+/// A deleted message's text stays in the log until a snapshot lets it go, so a deletion asks for one: at most this often.
+const DELETION_SNAPSHOT_MS: i64 = 6 * 3_600_000;
 /// Gaps entries wait on, and since when: `{ "device/series/from-to": first seen }`.
 const KV_GAPS: &str = "sync.gaps";
 /// A gap still open after this long is given up (a relay keeps a post for 7 days; after that it cannot come).
@@ -116,11 +118,18 @@ impl Core {
             .as_ref()
             .and_then(|l| l.active().map(|d| d.id.clone()).min());
         let settled = latest.is_none() || replica.base().map(Snapshot::id) == latest;
+        let now = self.now();
+        let deletion_due = replica.has_deletions()
+            && now - s.last_snapshot >= DELETION_SNAPSHOT_MS
+            && replica.entry_count() > 0;
         if maker.as_deref() == Some(me.as_str())
             && settled
-            && replica.entry_count() >= SNAPSHOT_EVERY
+            && (replica.entry_count() >= SNAPSHOT_EVERY || deletion_due)
+            && self.make_snapshot()
         {
-            self.make_snapshot();
+            if let Some(s) = self.sync.as_mut() {
+                s.last_snapshot = now;
+            }
         }
         self.tick_gaps();
     }

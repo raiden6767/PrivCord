@@ -223,6 +223,8 @@ pub(super) struct SyncState {
     last_ask: i64,
     /// The summary last told to each of our devices over a direct link (said again only when it changes).
     link_told: BTreeMap<String, String>,
+    /// When this install last made a snapshot (a deletion asks for one, at most every few hours).
+    pub(super) last_snapshot: i64,
 }
 
 struct NoFiles;
@@ -434,6 +436,7 @@ impl Core {
             inbox: None,
             last_ask: i64::MIN / 2,
             link_told: BTreeMap::new(),
+            last_snapshot: 0,
         });
         Ok(())
     }
@@ -524,6 +527,15 @@ impl Core {
         self.sync
             .as_ref()
             .map(|s| s.others.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// The merged sync state as text, for tests that look for what it must not contain.
+    #[doc(hidden)]
+    pub fn test_sync_state_dump(&self) -> String {
+        self.sync
+            .as_ref()
+            .and_then(|s| serde_json::to_string(s.replica.state()).ok())
             .unwrap_or_default()
     }
 

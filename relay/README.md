@@ -77,3 +77,16 @@ observe who talks to which mailbox and when.
 ```bash
 npm test   # node:test, no extra dependencies
 ```
+
+## Short-lived TURN credentials (optional)
+
+A TURN password built into an app is public. If you run your own coturn with `use-auth-secret` and `static-auth-secret=<secret>`,
+this relay can hand out passwords that stop working after an hour:
+
+```
+TURN_SECRET=<the same secret> TURN_URLS=turn:turn.example.org:3478,turns:turn.example.org:5349 node index.js
+```
+
+`GET /turn` then answers `{ urls, username, credential, ttl }` (`TURN_TTL_SEC`, default 3600), and each address may ask 20 times
+a minute. It is off unless both are set. Also give coturn quotas (`user-quota`, `total-quota`, `max-bps`) so one user cannot
+use all the bandwidth.

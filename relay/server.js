@@ -3,6 +3,7 @@
 import { createServer } from 'node:http';
 import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHmac } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 
 export const MAX_BLOB = 64 * 1024;
@@ -37,6 +38,12 @@ export function startRelay({
   heartbeatMs = 30_000,
   compactMs = 10 * 60_000,
   maxBuffered = MAX_BUFFERED,
+  // Short-lived TURN credentials (coturn's `use-auth-secret`): with the shared secret and the TURN addresses set, `GET /turn`
+  // answers with a username and password that stop working after `turnTtlSec`. Apps then need no password built in.
+  turnSecret = '',
+  turnUrls = [],
+  turnTtlSec = 3600,
+  turnPerMinute = 20, // requests per address per minute
 } = {}) {
   /** @type {Map<string, Map<string, {id:string, blob:string, ts:number, exp:number, ip?:string}>>} persisted msg items (ip: memory only) */
   const queues = new Map();
@@ -231,12 +238,33 @@ export function startRelay({
     }
   }
 
+  const turnHits = new Map();
   const http = createServer((req, res) => {
     if (req.url === '/healthz') {
       res.writeHead(200, { 'content-type': 'application/json' });
       // Requests that came through the proxy carry X-Forwarded-For: give them a minimal answer.
       if (req.headers['x-forwarded-for']) return res.end(JSON.stringify({ ok: true }));
       return res.end(JSON.stringify({ ok: true, queued: queued(), mailboxes: subs.size, ...stats }));
+    }
+    if (req.url === '/turn' && turnSecret && turnUrls.length > 0) {
+      const ip = clientIp(req);
+      const now = Date.now();
+      const hits = (turnHits.get(ip) ?? []).filter((t) => now - t < 60_000);
+      if (hits.length >= turnPerMinute) {
+        res.writeHead(429, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'slow down' }));
+      }
+      hits.push(now);
+      turnHits.set(ip, hits);
+      // coturn's REST scheme: the user name is the moment it stops working, the password an HMAC of it.
+      const username = `${Math.floor(now / 1000) + turnTtlSec}:privcord`;
+      const credential = createHmac('sha1', turnSecret).update(username).digest('base64');
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'access-control-allow-origin': '*', // the desktop page asks from its own origin; these expire within the hour
+        'cache-control': 'no-store',
+      });
+      return res.end(JSON.stringify({ urls: turnUrls, username, credential, ttl: turnTtlSec }));
     }
     res.writeHead(404).end();
   });
