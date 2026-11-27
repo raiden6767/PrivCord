@@ -468,6 +468,7 @@ async fn a_certificate_is_obtained_served_kept_across_a_restart_and_renewed() {
         issued,
         "a visitor is shown the issued certificate"
     );
+    #[cfg_attr(not(unix), allow(unused_variables))]
     let (cert_file, key_file) = tls.acme_files();
     assert!(privcord_server::acme::days_left(&cert_file).unwrap() >= 89);
     // The key never travelled: it is private to this server's files.
