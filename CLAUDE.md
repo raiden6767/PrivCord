@@ -13,7 +13,12 @@ checks that failed in CI several times this project for want of a local run. `do
 bug fixed so far and what guards each; read it before adding a service, a message shape or an engine/screen value.
 
 ## CI minutes are limited
-GitHub Actions minutes are not unlimited, so only run CI when it is needed.
+The budget is **2,000 GitHub Actions minutes a month** (Windows runners count double). Only run CI when it is needed.
+- Every merge to `main` starts CI and the Test builds (Windows and Android installers) again. Merge in as few pushes as
+  possible: batch related changes into one PR, and cancel runs a later merge makes redundant (the cancel tool of the
+  GitHub MCP server works; `gh` is blocked here).
+- Dependabot PRs cost a full CI run each when opened and again when merged: prefer grouped updates, merge several in one go,
+  close the ones that fail (they come back as a new version).
 - Test locally first (type-check, unit tests, builds, Playwright) and push once, not in small pieces: every push to a pull
   request restarts its CI.
 - A change that touches only `site/` or root-level `.md` files does not run the app's CI (see `paths-ignore` in
