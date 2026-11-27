@@ -28,7 +28,12 @@ impl std::fmt::Debug for Resolver {
 
 impl ResolvesServerCert for Resolver {
     fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        Some(self.current.read().unwrap_or_else(PoisonError::into_inner).clone())
+        Some(
+            self.current
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+        )
     }
 }
 
@@ -77,16 +82,20 @@ impl Tls {
             let dir = data_dir.join("tls");
             let (c, k) = (dir.join("selfsigned.crt"), dir.join("selfsigned.key"));
             if !c.exists() || !k.exists() {
-                std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+                std::fs::create_dir_all(&dir)
+                    .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
                 let mut names = vec!["localhost".to_owned(), "127.0.0.1".to_owned()];
                 for n in [cfg.domain.as_str(), public_ip] {
                     if !n.is_empty() && !names.iter().any(|x| x == n) {
                         names.push(n.to_owned());
                     }
                 }
-                let made = rcgen::generate_simple_self_signed(names).map_err(|e| format!("could not make a certificate: {e}"))?;
-                std::fs::write(&c, made.cert.pem()).map_err(|e| format!("could not write {}: {e}", c.display()))?;
-                std::fs::write(&k, made.key_pair.serialize_pem()).map_err(|e| format!("could not write {}: {e}", k.display()))?;
+                let made = rcgen::generate_simple_self_signed(names)
+                    .map_err(|e| format!("could not make a certificate: {e}"))?;
+                std::fs::write(&c, made.cert.pem())
+                    .map_err(|e| format!("could not write {}: {e}", c.display()))?;
+                std::fs::write(&k, made.key_pair.serialize_pem())
+                    .map_err(|e| format!("could not write {}: {e}", k.display()))?;
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
@@ -95,7 +104,11 @@ impl Tls {
             }
             (c, k, true)
         } else {
-            (PathBuf::from(&cfg.cert_file), PathBuf::from(&cfg.key_file), false)
+            (
+                PathBuf::from(&cfg.cert_file),
+                PathBuf::from(&cfg.key_file),
+                false,
+            )
         };
         let current = read_pair(&cert_file, &key_file)?;
         let resolver = Arc::new(Resolver {
@@ -105,11 +118,13 @@ impl Tls {
             key_file,
         });
         let build = |alpn: Vec<Vec<u8>>| -> Result<TlsAcceptor, String> {
-            let mut c = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-                .with_safe_default_protocol_versions()
-                .map_err(|e| format!("TLS setup: {e}"))?
-                .with_no_client_auth()
-                .with_cert_resolver(resolver.clone());
+            let mut c = rustls::ServerConfig::builder_with_provider(Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .map_err(|e| format!("TLS setup: {e}"))?
+            .with_no_client_auth()
+            .with_cert_resolver(resolver.clone());
             c.alpn_protocols = alpn;
             Ok(TlsAcceptor::from(Arc::new(c)))
         };
@@ -124,12 +139,20 @@ impl Tls {
     /// Reads the certificate files again if they changed. A bad new file leaves the old certificate in place.
     pub fn reload_if_changed(&self) -> Result<bool, String> {
         let now = modified(&self.resolver.cert_file).zip(modified(&self.resolver.key_file));
-        let mut stamp = self.resolver.stamp.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut stamp = self
+            .resolver
+            .stamp
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if now == *stamp {
             return Ok(false);
         }
         let fresh = read_pair(&self.resolver.cert_file, &self.resolver.key_file)?;
-        *self.resolver.current.write().unwrap_or_else(PoisonError::into_inner) = fresh;
+        *self
+            .resolver
+            .current
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = fresh;
         *stamp = now;
         Ok(true)
     }
@@ -150,7 +173,10 @@ impl Tls {
 /// A listener for `axum::serve` that completes the TLS handshake before handing a connection over. Handshakes run in their
 /// own tasks, with a time limit and a cap on how many may be under way, so a slow or hostile client cannot hold up the rest.
 pub struct TlsListener {
-    rx: tokio::sync::mpsc::Receiver<(tokio_rustls::server::TlsStream<tokio::net::TcpStream>, std::net::SocketAddr)>,
+    rx: tokio::sync::mpsc::Receiver<(
+        tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+        std::net::SocketAddr,
+    )>,
     addr: std::net::SocketAddr,
 }
 
@@ -178,7 +204,11 @@ impl TlsListener {
                 };
                 let (acceptor, tx) = (acceptor.clone(), tx.clone());
                 tokio::spawn(async move {
-                    let done = tokio::time::timeout(std::time::Duration::from_secs(10), acceptor.accept(tcp)).await;
+                    let done = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        acceptor.accept(tcp),
+                    )
+                    .await;
                     drop(permit);
                     if let Ok(Ok(stream)) = done {
                         let _ = tx.send((stream, peer)).await;
@@ -215,11 +245,13 @@ mod tests {
     fn client_for(der: Vec<u8>) -> tokio_rustls::TlsConnector {
         let mut roots = rustls::RootCertStore::empty();
         roots.add(CertificateDer::from(der)).unwrap();
-        let c = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let c = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
         tokio_rustls::TlsConnector::from(Arc::new(c))
     }
 
@@ -242,7 +274,10 @@ mod tests {
     #[tokio::test]
     async fn a_self_signed_certificate_is_made_kept_and_served() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = TlsConfig { self_signed: true, ..TlsConfig::default() };
+        let cfg = TlsConfig {
+            self_signed: true,
+            ..TlsConfig::default()
+        };
         let tls = Tls::load(&cfg, dir.path(), "").unwrap();
         assert!(tls.self_signed);
         assert_eq!(exchange(&tls, &client_for(tls.leaf_der())).await, "hello");
@@ -257,19 +292,28 @@ mod tests {
             let _ = acceptor.accept(b).await;
         });
         let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
-        assert!(client_for(stranger.leaf_der()).connect(name, a).await.is_err());
+        assert!(client_for(stranger.leaf_der())
+            .connect(name, a)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn a_renewed_certificate_is_picked_up_and_a_broken_one_is_ignored() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = TlsConfig { self_signed: true, ..TlsConfig::default() };
+        let cfg = TlsConfig {
+            self_signed: true,
+            ..TlsConfig::default()
+        };
         let tls = Tls::load(&cfg, dir.path(), "").unwrap();
         let old = tls.leaf_der();
         assert!(!tls.reload_if_changed().unwrap(), "nothing changed yet");
         // renew: write a new pair over the files
         let made = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
-        let (c, k) = (dir.path().join("tls/selfsigned.crt"), dir.path().join("tls/selfsigned.key"));
+        let (c, k) = (
+            dir.path().join("tls/selfsigned.crt"),
+            dir.path().join("tls/selfsigned.key"),
+        );
         std::thread::sleep(std::time::Duration::from_millis(1100)); // file times can be coarse
         std::fs::write(&c, made.cert.pem()).unwrap();
         std::fs::write(&k, made.key_pair.serialize_pem()).unwrap();
@@ -287,9 +331,15 @@ mod tests {
     #[test]
     fn missing_files_are_explained() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = TlsConfig { cert_file: "/nonexistent/c.pem".into(), key_file: "/nonexistent/k.pem".into(), ..TlsConfig::default() };
+        let cfg = TlsConfig {
+            cert_file: "/nonexistent/c.pem".into(),
+            key_file: "/nonexistent/k.pem".into(),
+            ..TlsConfig::default()
+        };
         let e = Tls::load(&cfg, dir.path(), "").unwrap_err();
         assert!(e.contains("could not read"), "{e}");
-        assert!(Tls::load(&TlsConfig::default(), dir.path(), "").unwrap_err().contains("tls.cert_file"));
+        assert!(Tls::load(&TlsConfig::default(), dir.path(), "")
+            .unwrap_err()
+            .contains("tls.cert_file"));
     }
 }

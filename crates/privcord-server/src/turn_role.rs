@@ -172,6 +172,9 @@ pub mod server {
     /// One relayed connection: refuses to send to addresses it should not, and keeps to a speed limit.
     struct Guard {
         inner: Arc<dyn Conn + Send + Sync>,
+        /// This server's address as phones see it. Traffic between two of our own allocations is delivered locally, because
+        /// many routers (and some clouds) cannot loop a packet back to their own public address.
+        public_ip: std::net::IpAddr,
         allow_private: bool,
         bucket: Option<Mutex<Bucket>>,
     }
@@ -183,6 +186,15 @@ pub mod server {
     }
 
     impl Guard {
+        /// A packet that came from this machine itself is, to everybody else, from the public address.
+        fn as_seen_from_outside(&self, from: SocketAddr) -> SocketAddr {
+            if from.ip().is_loopback() {
+                SocketAddr::new(self.public_ip, from.port())
+            } else {
+                from
+            }
+        }
+
         fn allows(&self, target: SocketAddr, len: usize) -> bool {
             if !self.allow_private && is_blocked(target.ip()) {
                 return false;
@@ -213,7 +225,8 @@ pub mod server {
             self.inner.recv(buf).await
         }
         async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
-            self.inner.recv_from(buf).await
+            let (n, from) = self.inner.recv_from(buf).await?;
+            Ok((n, self.as_seen_from_outside(from)))
         }
         async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
             self.inner.send(buf).await
@@ -223,6 +236,13 @@ pub mod server {
                 // Dropped, as a congested network would: the sender is told it went.
                 return Ok(buf.len());
             }
+            // To our own public address: deliver it here instead (the receiving side maps it back, see `recv_from`).
+            let target = match (target.ip() == self.public_ip, self.public_ip) {
+                (true, std::net::IpAddr::V4(_)) => {
+                    SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), target.port())
+                }
+                _ => target,
+            };
             self.inner.send_to(buf, target).await
         }
         fn local_addr(&self) -> webrtc_util::Result<SocketAddr> {
@@ -269,6 +289,7 @@ pub mod server {
             Ok((
                 Arc::new(Guard {
                     inner: conn,
+                    public_ip: self.inner.relay_address,
                     allow_private: self.allow_private,
                     bucket,
                 }),
@@ -362,14 +383,21 @@ pub mod server {
         let (mut tcp_addr, mut tls_addr) = (None, None);
         if !cfg.tcp_listen.is_empty() {
             let (mux, task, local) = stream_listener(&cfg.tcp_listen, None).await?;
-            conn_configs.push(ConnConfig { conn: mux, relay_addr_generator: generator() });
+            conn_configs.push(ConnConfig {
+                conn: mux,
+                relay_addr_generator: generator(),
+            });
             listeners.push(task);
             tcp_addr = Some(local);
         }
         if !cfg.tls_listen.is_empty() {
             let tls = tls.ok_or("turn.tls_listen needs a certificate ([tls])")?;
-            let (mux, task, local) = stream_listener(&cfg.tls_listen, Some(tls.turn.clone())).await?;
-            conn_configs.push(ConnConfig { conn: mux, relay_addr_generator: generator() });
+            let (mux, task, local) =
+                stream_listener(&cfg.tls_listen, Some(tls.turn.clone())).await?;
+            conn_configs.push(ConnConfig {
+                conn: mux,
+                relay_addr_generator: generator(),
+            });
             listeners.push(task);
             tls_addr = Some(local);
         }
@@ -382,7 +410,14 @@ pub mod server {
         })
         .await
         .map_err(|e| format!("could not start TURN: {e}"))?;
-        Ok(TurnServer { server, addr, tcp_addr, tls_addr, stop, listeners })
+        Ok(TurnServer {
+            server,
+            addr,
+            tcp_addr,
+            tls_addr,
+            stop,
+            listeners,
+        })
     }
 }
 

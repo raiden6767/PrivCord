@@ -1934,6 +1934,7 @@ dependencies = [
  "getrandom 0.4.3",
  "hmac",
  "k256",
+ "log",
  "rcgen",
  "rustls",
  "serde",

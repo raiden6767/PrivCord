@@ -17,7 +17,12 @@ pub struct StreamConn<S> {
 impl<S: AsyncRead + AsyncWrite + Send + 'static> StreamConn<S> {
     pub fn new(stream: S, local: SocketAddr, remote: SocketAddr) -> Self {
         let (r, w) = tokio::io::split(stream);
-        Self { r: tokio::sync::Mutex::new(r), w: tokio::sync::Mutex::new(w), local, remote }
+        Self {
+            r: tokio::sync::Mutex::new(r),
+            w: tokio::sync::Mutex::new(w),
+            local,
+            remote,
+        }
     }
 
     async fn write_frame(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
@@ -25,7 +30,12 @@ impl<S: AsyncRead + AsyncWrite + Send + 'static> StreamConn<S> {
         if buf.first().is_some_and(|b| b >> 6 == 1) {
             frame.resize(frame.len().div_ceil(4) * 4, 0);
         }
-        self.w.lock().await.write_all(&frame).await.map_err(|e| UtilError::Other(e.to_string()))?;
+        self.w
+            .lock()
+            .await
+            .write_all(&frame)
+            .await
+            .map_err(|e| UtilError::Other(e.to_string()))?;
         Ok(buf.len())
     }
 }
@@ -38,7 +48,9 @@ impl<S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> Conn for StreamC
     async fn recv(&self, buf: &mut [u8]) -> webrtc_util::Result<usize> {
         let mut r = self.r.lock().await;
         let mut head = [0u8; 4];
-        r.read_exact(&mut head).await.map_err(|e| UtilError::Other(e.to_string()))?;
+        r.read_exact(&mut head)
+            .await
+            .map_err(|e| UtilError::Other(e.to_string()))?;
         let len = usize::from(u16::from_be_bytes([head[2], head[3]]));
         let (total, padded) = match head[0] >> 6 {
             0 => (20 + len, 20 + len),
@@ -48,7 +60,9 @@ impl<S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static> Conn for StreamC
         let mut msg = head.to_vec();
         msg.resize(padded, 0);
         let (_, rest) = msg.split_at_mut(4);
-        r.read_exact(rest).await.map_err(|e| UtilError::Other(e.to_string()))?;
+        r.read_exact(rest)
+            .await
+            .map_err(|e| UtilError::Other(e.to_string()))?;
         msg.truncate(total);
         buf[..total].copy_from_slice(&msg);
         Ok(total)

@@ -76,7 +76,11 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         return Err(problems.join("; "));
     }
     let tls = if cfg.wants_tls() {
-        Some(tls::Tls::load(&cfg.tls, &cfg.server.data_dir, &cfg.turn.public_ip)?)
+        Some(tls::Tls::load(
+            &cfg.tls,
+            &cfg.server.data_dir,
+            &cfg.turn.public_ip,
+        )?)
     } else {
         None
     };
@@ -105,14 +109,19 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             .public_ip
             .parse()
             .map_err(|_| "bad turn.public_ip".to_owned())?;
-        let server = turn_role::server::start(&cfg.turn, secret.clone(), ip, tls.as_deref()).await?;
+        let server =
+            turn_role::server::start(&cfg.turn, secret.clone(), ip, tls.as_deref()).await?;
         // What phones are told: UDP first, then the ways through a network that blocks it.
         let mut urls = vec![format!("turn:{ip}:{}", server.addr.port())];
         if let Some(a) = server.tcp_addr {
             urls.push(format!("turn:{ip}:{}?transport=tcp", a.port()));
         }
         if let Some(a) = server.tls_addr {
-            let host = if cfg.tls.domain.is_empty() { ip.to_string() } else { cfg.tls.domain.clone() };
+            let host = if cfg.tls.domain.is_empty() {
+                ip.to_string()
+            } else {
+                cfg.tls.domain.clone()
+            };
             urls.push(format!("turns:{host}:{}?transport=tcp", a.port()));
         }
         Some((server, secret, urls))
@@ -135,7 +144,9 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     #[cfg(feature = "turn")]
     let turn_port = turn_server.as_ref().map(|t| t.addr.port());
     #[cfg(feature = "turn")]
-    let turn_ports = turn_server.as_ref().map(|t| (t.tcp_addr.map(|a| a.port()), t.tls_addr.map(|a| a.port())));
+    let turn_ports = turn_server
+        .as_ref()
+        .map(|t| (t.tcp_addr.map(|a| a.port()), t.tls_addr.map(|a| a.port())));
     #[cfg(not(feature = "turn"))]
     let turn_ports: Option<(Option<u16>, Option<u16>)> = None;
     #[cfg(not(feature = "turn"))]
@@ -153,7 +164,8 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             let tcp = tokio::net::TcpListener::bind(&https_listen)
                 .await
                 .map_err(|e| format!("could not listen for HTTPS on {https_listen}: {e}"))?;
-            let listener = tls::TlsListener::new(tcp, t.https.clone()).map_err(|e| e.to_string())?;
+            let listener =
+                tls::TlsListener::new(tcp, t.https.clone()).map_err(|e| e.to_string())?;
             let addr = axum::serve::Listener::local_addr(&listener).map_err(|e| e.to_string())?;
             // (The no-op tap is what lets axum read the peer address from this listener.)
             let listener = listener.tap_io(|_| {});

@@ -71,16 +71,58 @@ max_events = 1000000
 # min_pow = 0                   # NIP-13 difficulty (bits) required to publish
 # auth_required = false         # NIP-42: clients must prove who they are first
 
+[tls]                           # needed for wss://, the admin panel over https, and TURN over TLS
+# cert_file = "/etc/letsencrypt/live/example.org/fullchain.pem"   # read again when it changes (renewals need no restart)
+# key_file = "/etc/letsencrypt/live/example.org/privkey.pem"
+# self_signed = false           # true: make a certificate for trying things out (apps will not trust it)
+# domain = "turn.example.org"   # the name people use; shown in turns: addresses
+# https_listen = "0.0.0.0:8443" # serve the relay (and admin) over TLS here, next to the plain listener
+
 [turn]
 enabled = TURN_ENABLED
 listen = "0.0.0.0:3478"         # UDP
+# tcp_listen = "0.0.0.0:3478"   # also over TCP, for networks that block UDP
+# tls_listen = "0.0.0.0:443"    # also over TLS, for networks that only let TLS through (needs [tls])
 public_ip = "auto"              # "auto" asks a public STUN server; or write the address
 min_port = 49152                # open this UDP range in your firewall / forward it on your router
 max_port = 49400
 max_kbps = 0                    # per relayed connection, 0 = no limit
 "#;
 
+/// A minimal logger to stderr. Quiet by default (warnings and errors only); `PRIVCORD_LOG=info|debug|trace` turns it up. At
+/// debug level the TURN library logs client addresses, so leave it off in normal use.
+struct StderrLog(log::LevelFilter);
+
+impl log::Log for StderrLog {
+    fn enabled(&self, m: &log::Metadata<'_>) -> bool {
+        m.level() <= self.0
+    }
+    fn log(&self, r: &log::Record<'_>) {
+        if self.enabled(r.metadata()) {
+            eprintln!(
+                "{} {:5} {}: {}",
+                privcord_server::net::now_ms() / 1000,
+                r.level(),
+                r.target(),
+                r.args()
+            );
+        }
+    }
+    fn flush(&self) {}
+}
+
+fn init_logging() {
+    let level = std::env::var("PRIVCORD_LOG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(log::LevelFilter::Warn);
+    if log::set_logger(Box::leak(Box::new(StderrLog(level)))).is_ok() {
+        log::set_max_level(level);
+    }
+}
+
 fn main() -> std::process::ExitCode {
+    init_logging();
     let cli = Cli::parse();
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
@@ -180,6 +222,9 @@ async fn doctor(path: &std::path::Path) -> Result<(), String> {
         );
         let n = u32::from(cfg.turn.max_port.saturating_sub(cfg.turn.min_port)) + 1;
         println!("note: forward UDP {} and UDP {}-{} to this machine ({n} simultaneous relayed connections).", cfg.turn.listen, cfg.turn.min_port, cfg.turn.max_port);
+        if !cfg.turn.tcp_listen.is_empty() || !cfg.turn.tls_listen.is_empty() {
+            println!("note: also forward the TCP port(s) you set for TURN over TCP / TLS; relayed traffic still leaves over UDP.");
+        }
         println!("note: from inside your own network, test with a phone on mobile data, not Wi-Fi (many routers cannot loop back to their own public address).");
     }
     if bad == 0 {

@@ -85,7 +85,9 @@ impl StreamMux {
 #[async_trait]
 impl Conn for StreamMux {
     async fn connect(&self, _addr: SocketAddr) -> webrtc_util::Result<()> {
-        Err(UtilError::Other("a TURN stream listener does not connect out".into()))
+        Err(UtilError::Other(
+            "a TURN stream listener does not connect out".into(),
+        ))
     }
 
     async fn recv(&self, buf: &mut [u8]) -> webrtc_util::Result<usize> {
@@ -105,13 +107,17 @@ impl Conn for StreamMux {
     }
 
     async fn send(&self, _buf: &[u8]) -> webrtc_util::Result<usize> {
-        Err(UtilError::Other("a TURN stream listener has no single peer".into()))
+        Err(UtilError::Other(
+            "a TURN stream listener has no single peer".into(),
+        ))
     }
 
     async fn send_to(&self, buf: &[u8], target: SocketAddr) -> webrtc_util::Result<usize> {
         let tx = self.writers().get(&target).cloned();
         let Some(tx) = tx else {
-            return Err(UtilError::Other("that client is no longer connected".into()));
+            return Err(UtilError::Other(
+                "that client is no longer connected".into(),
+            ));
         };
         let mut frame = buf.to_vec();
         // ChannelData (first bits 01) is padded to a multiple of four on a stream; STUN messages already are.
@@ -162,7 +168,10 @@ async fn read_frames<R: AsyncRead + Unpin>(mut r: R, peer: SocketAddr, mux: &Str
         let mut msg = head.to_vec();
         msg.resize(padded, 0);
         let (_, rest) = msg.split_at_mut(4);
-        if tokio::time::timeout(Duration::from_secs(30), r.read_exact(rest)).await.map_or(true, |x| x.is_err()) {
+        if tokio::time::timeout(Duration::from_secs(30), r.read_exact(rest))
+            .await
+            .map_or(true, |x| x.is_err())
+        {
             return;
         }
         msg.truncate(total);
@@ -172,7 +181,11 @@ async fn read_frames<R: AsyncRead + Unpin>(mut r: R, peer: SocketAddr, mux: &Str
     }
 }
 
-async fn serve_stream<S: AsyncRead + AsyncWrite + Send + 'static>(mux: Arc<StreamMux>, stream: S, peer: SocketAddr) {
+async fn serve_stream<S: AsyncRead + AsyncWrite + Send + 'static>(
+    mux: Arc<StreamMux>,
+    stream: S,
+    peer: SocketAddr,
+) {
     let (r, mut w) = tokio::io::split(stream);
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(256);
     mux.writers().insert(peer, tx);
@@ -219,7 +232,10 @@ pub fn spawn_listener(
             tokio::spawn(async move {
                 match tls {
                     Some(acceptor) => {
-                        if let Ok(Ok(s)) = tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
+                        if let Ok(Ok(s)) =
+                            tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp))
+                                .await
+                        {
                             serve_stream(mux.clone(), s, peer).await;
                         }
                     }

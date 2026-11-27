@@ -173,7 +173,11 @@ impl Config {
         if self.tls.cert_file.is_empty() != self.tls.key_file.is_empty() {
             out.push("tls.cert_file and tls.key_file go together".into());
         }
-        for (name, v) in [("tls.https_listen", &self.tls.https_listen), ("turn.tcp_listen", &self.turn.tcp_listen), ("turn.tls_listen", &self.turn.tls_listen)] {
+        for (name, v) in [
+            ("tls.https_listen", &self.tls.https_listen),
+            ("turn.tcp_listen", &self.turn.tcp_listen),
+            ("turn.tls_listen", &self.turn.tls_listen),
+        ] {
             if !v.is_empty() && v.parse::<std::net::SocketAddr>().is_err() {
                 out.push(format!("{name} \"{v}\" is not an address like 0.0.0.0:443"));
             }
