@@ -52,7 +52,7 @@ object EngineHost {
         val settings = com.duochat.app.data.SettingsRepository(app)
         val s = settings.settings.value
         val newScope = newScope()
-        val created: ChatEngineApi = com.duochat.app.rustcore.RustChatEngine(
+        val rust = com.duochat.app.rustcore.RustChatEngine(
             app = app,
             scope = newScope,
             conversationId = com.duochat.app.AppConfig.conversationId,
@@ -63,6 +63,8 @@ object EngineHost {
             onNotify = { notice -> com.duochat.app.notifications.DuoNotifications.showNotice(app, notice, settings.settings.value) },
             initialGroupOnly = s.groupOnly,
         )
+        // Every action a person takes is written to the diagnostic log on its way in.
+        val created: ChatEngineApi = LoggedEngine(rust)
         engine = created
         if (s.mesh) created.setMeshEnabled(true)
         startJob = newScope.launch { created.start() }
@@ -101,6 +103,17 @@ object EngineHost {
                 private var lost = false
 
                 override fun onAvailable(network: Network) {
+                    runCatching {
+                        val caps = app.getSystemService(ConnectivityManager::class.java).getNetworkCapabilities(network)
+                        val kind = when {
+                            caps == null -> "unknown"
+                            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile data"
+                            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                            else -> "other"
+                        }
+                        Diag.log("net", "network available", "kind=$kind validated=${caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)}")
+                    }
                     online = true
                     BackgroundPolicy.refresh()
                     val changed = lost || (current != null && current != network)
@@ -113,6 +126,7 @@ object EngineHost {
 
                 override fun onLost(network: Network) {
                     if (network != current) return
+                    Diag.log("net", "network lost", "")
                     online = false
                     BackgroundPolicy.refresh()
                     // Coming back, on this network or another, counts as a change: everything is reset then.

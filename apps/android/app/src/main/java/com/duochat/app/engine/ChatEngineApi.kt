@@ -122,6 +122,15 @@ interface ChatEngineApi {
     fun cancelManual()
     fun refreshBluetooth()
     suspend fun connectBluetooth(uid: String, manual: Boolean = true): Result<Unit>
+
+    /** One entry for the diagnostic log. Never waits. */
+    fun diagLog(category: String, event: String, detail: String)
+    /** The diagnostic log as a Markdown file (what the app says about itself goes at the top). */
+    suspend fun diagExport(about: String): String
+    suspend fun diagClear()
+    suspend fun setDiagEnabled(on: Boolean)
+    /** `{"enabled": bool, "entries": n}`. */
+    suspend fun diagStatusJson(): String
 }
 
 /** Something the user should hear about while the app is in the background. */

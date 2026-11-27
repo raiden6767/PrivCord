@@ -72,6 +72,13 @@ export interface ChatEngineApi {
   storageByChat?(): Promise<Array<{ id: string; messages: number; files: number; bytes: number; fileBytes: number; fileIds: string[] }>>;
   /** A counts-only report of this install (the engine builds it from `app`); pretty JSON text. */
   diagnostics?(app: unknown): Promise<string>;
+  /** One entry for the diagnostic log (kept on this computer only). Never waits. */
+  diagLog?(category: string, event: string, detail: string): void;
+  /** The diagnostic log as a Markdown file; `about` is what the app says about itself, one line each. */
+  diagExport?(about: string): Promise<string>;
+  diagClear?(): Promise<void>;
+  setDiagEnabled?(on: boolean): Promise<void>;
+  diagStatus?(): Promise<{ enabled: boolean; entries: number }>;
   /** The engine's own checks, each with a verdict. */
   selfTest?(): Promise<Array<{ name: string; ok: boolean; detail: string }>>;
   /** Hide the app from screenshots and recording (a preference that follows the account). */

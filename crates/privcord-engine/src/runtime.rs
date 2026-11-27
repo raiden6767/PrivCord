@@ -82,6 +82,12 @@ enum Command {
         mailbox: String,
         blob: String,
     },
+    /// One entry for the diagnostic log from a screen or the platform. Fire and forget.
+    Diag {
+        cat: String,
+        event: String,
+        detail: String,
+    },
     Channel {
         op: ChannelOp,
         reply: Reply<String>,
@@ -181,6 +187,12 @@ pub enum Op {
     /// What each chat takes on this device, as JSON.
     StorageByChat,
     SetSecureScreen(bool),
+    /// The diagnostic log, as a Markdown file (given what the app says about itself, one line each).
+    DiagExport(String),
+    DiagClear,
+    SetDiagEnabled(bool),
+    /// `{ "enabled": bool, "entries": n }`.
+    DiagStatus,
     /// A report with counts only (no content), given what the app says about itself, as JSON.
     Diagnostics(String),
     /// A quick check that the engine works, as JSON.
@@ -438,6 +450,22 @@ fn pump(core: &mut Core, cmd: Command) -> bool {
                     if core.should_notify(&id) { "1" } else { "0" }.into(),
                 )),
                 Op::SetSecureScreen(on) => core.set_secure_screen(on).map(|()| Answer::Done),
+                Op::DiagExport(about) => Ok(Answer::Text(core.diag_export(&about))),
+                Op::DiagClear => {
+                    core.diag_clear();
+                    Ok(Answer::Done)
+                }
+                Op::SetDiagEnabled(on) => {
+                    core.set_diag_enabled(on);
+                    Ok(Answer::Done)
+                }
+                Op::DiagStatus => {
+                    let enabled = core.diag_enabled();
+                    let entries = core.diag_len();
+                    Ok(Answer::Text(
+                        serde_json::json!({ "enabled": enabled, "entries": entries }).to_string(),
+                    ))
+                }
                 Op::Diagnostics(app) => Ok(Answer::Text(core.diagnostics(&app))),
                 Op::SelfTest => Ok(Answer::Text(
                     serde_json::to_string(&core.self_test()).unwrap_or_default(),
@@ -531,6 +559,7 @@ fn pump(core: &mut Core, cmd: Command) -> bool {
             }),
         ),
         Command::SignalBlob { mailbox, blob } => core.signal_blob(&mailbox, &blob),
+        Command::Diag { cat, event, detail } => core.diag_log(&cat, &event, &detail),
         Command::Channel { op, reply } => drop(
             reply.send(match op {
                 ChannelOp::Join(n) => core.join_channel(&n),
@@ -746,6 +775,10 @@ impl EngineHandle {
     /// A blob arrived from the signaling service on a mailbox we listen on. Fire and forget.
     pub fn signal_blob(&self, mailbox: String, blob: String) -> Result<(), ErrorCode> {
         self.push(Command::SignalBlob { mailbox, blob })
+    }
+    /// An entry for the diagnostic log from a screen or the platform. Fire and forget (a screen must never wait on it).
+    pub fn diag(&self, cat: String, event: String, detail: String) -> Result<(), ErrorCode> {
+        self.push(Command::Diag { cat, event, detail })
     }
     pub async fn channel(&self, op: ChannelOp) -> Result<String, ErrorCode> {
         self.ask(|reply| Command::Channel { op, reply }).await

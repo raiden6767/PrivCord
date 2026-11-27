@@ -1110,6 +1110,16 @@ internal open class UniffiVTableCallbackInterfaceTransportCallbacks(
 
 
 
+
+
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1192,6 +1202,14 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_privcord_ffi_fn_method_privcordengine_delete_message(`ptr`: Pointer,`messageId`: RustBuffer.ByValue,`everyone`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_privcord_ffi_fn_method_privcordengine_diag_clear(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_privcord_ffi_fn_method_privcordengine_diag_export(`ptr`: Pointer,`about`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_privcord_ffi_fn_method_privcordengine_diag_log(`ptr`: Pointer,`category`: RustBuffer.ByValue,`event`: RustBuffer.ByValue,`detail`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_privcord_ffi_fn_method_privcordengine_diag_status_json(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_privcord_ffi_fn_method_privcordengine_diagnostics_json(`ptr`: Pointer,`appJson`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_privcord_ffi_fn_method_privcordengine_dismiss_legacy_group(`ptr`: Pointer,`oldId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1301,6 +1319,8 @@ internal interface UniffiLib : Library {
     fun uniffi_privcord_ffi_fn_method_privcordengine_set_bulk_allowed(`ptr`: Pointer,`allowed`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_privcord_ffi_fn_method_privcordengine_set_checked(`ptr`: Pointer,`uid`: RustBuffer.ByValue,`checked`: Byte,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_privcord_ffi_fn_method_privcordengine_set_diag_enabled(`ptr`: Pointer,`enabled`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_privcord_ffi_fn_method_privcordengine_set_display_name(`ptr`: Pointer,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1550,6 +1570,14 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_delete_message(
     ): Short
+    fun uniffi_privcord_ffi_checksum_method_privcordengine_diag_clear(
+    ): Short
+    fun uniffi_privcord_ffi_checksum_method_privcordengine_diag_export(
+    ): Short
+    fun uniffi_privcord_ffi_checksum_method_privcordengine_diag_log(
+    ): Short
+    fun uniffi_privcord_ffi_checksum_method_privcordengine_diag_status_json(
+    ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_diagnostics_json(
     ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_dismiss_legacy_group(
@@ -1659,6 +1687,8 @@ internal interface UniffiLib : Library {
     fun uniffi_privcord_ffi_checksum_method_privcordengine_set_bulk_allowed(
     ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_set_checked(
+    ): Short
+    fun uniffi_privcord_ffi_checksum_method_privcordengine_set_diag_enabled(
     ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_set_display_name(
     ): Short
@@ -1813,6 +1843,18 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_delete_message() != 55350.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_diag_clear() != 21615.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_diag_export() != 23315.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_diag_log() != 30295.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_diag_status_json() != 27044.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_diagnostics_json() != 2985.toShort()) {
@@ -1978,6 +2020,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_set_checked() != 19308.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_set_diag_enabled() != 35876.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_set_display_name() != 298.toShort()) {
@@ -3456,6 +3501,26 @@ public interface PrivcordEngineInterface {
     fun `deleteMessage`(`messageId`: kotlin.String, `everyone`: kotlin.Boolean)
     
     /**
+     * Empties the diagnostic log.
+     */
+    fun `diagClear`()
+    
+    /**
+     * The diagnostic log as a Markdown file. `about` is what the app says about itself, one line each.
+     */
+    fun `diagExport`(`about`: kotlin.String): kotlin.String
+    
+    /**
+     * One entry for the diagnostic log from a screen or the platform. Never waits and never fails a caller.
+     */
+    fun `diagLog`(`category`: kotlin.String, `event`: kotlin.String, `detail`: kotlin.String)
+    
+    /**
+     * `{"enabled": bool, "entries": n}` for the diagnostic log.
+     */
+    fun `diagStatusJson`(): kotlin.String
+    
+    /**
      * A report to send when something is wrong: counts and settings only, never message text, names or keys.
      * `app_json` is what the app says about itself (version, platform...).
      */
@@ -3700,6 +3765,11 @@ public interface PrivcordEngineInterface {
      * Record that you compared the safety number with this person (or took it back).
      */
     fun `setChecked`(`uid`: kotlin.String, `checked`: kotlin.Boolean)
+    
+    /**
+     * Turns the diagnostic log on or off (off also empties it).
+     */
+    fun `setDiagEnabled`(`enabled`: kotlin.Boolean)
     
     /**
      * The name put on invite cards.
@@ -4105,6 +4175,67 @@ open class PrivcordEngine: Disposable, AutoCloseable, PrivcordEngineInterface {
 }
     }
     
+    
+
+    
+    /**
+     * Empties the diagnostic log.
+     */
+    @Throws(FfiException::class)override fun `diagClear`()
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_diag_clear(
+        it, _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * The diagnostic log as a Markdown file. `about` is what the app says about itself, one line each.
+     */
+    @Throws(FfiException::class)override fun `diagExport`(`about`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_diag_export(
+        it, FfiConverterString.lower(`about`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * One entry for the diagnostic log from a screen or the platform. Never waits and never fails a caller.
+     */override fun `diagLog`(`category`: kotlin.String, `event`: kotlin.String, `detail`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_diag_log(
+        it, FfiConverterString.lower(`category`),FfiConverterString.lower(`event`),FfiConverterString.lower(`detail`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * `{"enabled": bool, "entries": n}` for the diagnostic log.
+     */
+    @Throws(FfiException::class)override fun `diagStatusJson`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_diag_status_json(
+        it, _status)
+}
+    }
+    )
+    }
     
 
     
@@ -4922,6 +5053,21 @@ open class PrivcordEngine: Disposable, AutoCloseable, PrivcordEngineInterface {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_set_checked(
         it, FfiConverterString.lower(`uid`),FfiConverterBoolean.lower(`checked`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Turns the diagnostic log on or off (off also empties it).
+     */
+    @Throws(FfiException::class)override fun `setDiagEnabled`(`enabled`: kotlin.Boolean)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_set_diag_enabled(
+        it, FfiConverterBoolean.lower(`enabled`),_status)
 }
     }
     

@@ -9,6 +9,7 @@ import { LocalStore } from '../lib/localDb';
 import { createTextCipher } from '../lib/encryption';
 import { notifyIncoming } from '../lib/notifications';
 import { config } from '../config';
+import { attachDiag, installDiagHooks, withDiag } from '../lib/diag';
 
 export interface UseChatEngine {
   state: ChatState | null;
@@ -31,6 +32,7 @@ export function useChatEngine(): UseChatEngine {
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
+    installDiagHooks();
     let cancelled = false;
     let created: ChatEngineApi | undefined;
     let unsubscribe: (() => void) | undefined;
@@ -48,7 +50,8 @@ export function useChatEngine(): UseChatEngine {
           hosted.stop();
           return;
         }
-        setEngine(hosted);
+        setEngine(withDiag(hosted));
+        attachDiag(hosted);
         unsubscribe = hosted.subscribe(setState);
         await hosted.start();
         setNeedsIdentity(!hosted.getState().uid);
@@ -65,7 +68,8 @@ export function useChatEngine(): UseChatEngine {
           hosted.stop();
           return;
         }
-        setEngine(hosted);
+        setEngine(withDiag(hosted));
+        attachDiag(hosted);
         unsubscribe = hosted.subscribe(setState);
         await hosted.start();
         // The shell's relay sockets get the settings once the engine runs (and, after a start at sign-in, the hidden

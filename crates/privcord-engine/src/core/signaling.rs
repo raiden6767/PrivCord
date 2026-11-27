@@ -177,7 +177,18 @@ impl Core {
         // (`tick_group_mesh`), never as a side effect of the service being down.
         let small =
             matches!(kind, PutKind::Sig) || payload.get("t").and_then(Value::as_str) == Some("ack");
-        if sent || (small && self.forward_via(peer, &blob)) {
+        let ok = sent || (small && self.forward_via(peer, &blob));
+        let t = payload
+            .get("t")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_owned();
+        self.diag(
+            "relay",
+            if ok { "posted" } else { "post failed" },
+            &format!("t={t} to={peer} box={mailbox} kind={kind:?} relay={sent}"),
+        );
+        if ok {
             Ok(())
         } else {
             Err(ErrorCode::NoRoute)
@@ -212,6 +223,15 @@ impl Core {
     /// Tell a contact how to reach us (`ready`), or hand over a connection offer or answer. The platform makes the
     /// session description; the engine seals it and finds a way to deliver it.
     pub fn send_signal(&mut self, peer: &UserId, message: &SignalMessage) -> Result<(), ErrorCode> {
+        let kind: String = format!("{message:?}")
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric())
+            .collect();
+        self.diag(
+            "link",
+            "connection setup sent",
+            &format!("peer={peer} kind={kind}"),
+        );
         self.require_live()?;
         let now = self.now();
         let payload = match message {
@@ -334,6 +354,8 @@ impl Core {
             .or_insert_with(super::Peer::offline)
             .as_me = Some(own.clone());
         let text = |k: &str| payload.get(k).and_then(Value::as_str);
+        let kind = text("t").unwrap_or("?").to_owned();
+        self.diag("relay", "received", &format!("t={kind} from={from}"));
         match text("t") {
             Some("ready") => {
                 // They are online and waiting: if we dial, do it now.
@@ -622,10 +644,13 @@ impl Core {
             return;
         };
         for m in self.own_mailboxes() {
-            if !self.sealed.subscribed.contains(&m)
-                && self.ports.transport.signal_subscribe(&m).is_ok()
-            {
-                self.sealed.subscribed.push(m);
+            if !self.sealed.subscribed.contains(&m) {
+                if self.ports.transport.signal_subscribe(&m).is_ok() {
+                    self.diag("relay", "listening", &format!("box={m}"));
+                    self.sealed.subscribed.push(m);
+                } else {
+                    self.diag("relay", "could not listen", &format!("box={m}"));
+                }
             }
         }
         if !matches!(self.ports.storage.kv(super::invites::KV_STORE_FORWARD), Ok(Some(v)) if v == b"1")
@@ -675,6 +700,20 @@ impl Core {
                     .put_sealed(&addr, &payload, PutKind::Msg, RELAY_TTL_SEC)
                     .is_ok();
             }
+            self.diag(
+                "relay",
+                if put {
+                    "message handed to the relay"
+                } else {
+                    "message not handed to the relay"
+                },
+                &format!(
+                    "msg={} to={} try={}",
+                    entry.message_id,
+                    entry.recipient,
+                    tries + 1
+                ),
+            );
             if !put {
                 // Not handed over at all: as if never tried.
                 match kept {

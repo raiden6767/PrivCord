@@ -104,6 +104,10 @@ fun SettingsDialog(
     onConfirmDeviceLink: (Boolean) -> Unit = {},
     onCancelDeviceLink: () -> Unit = {},
     onDeviceRemoval: (com.duochat.app.data.DeviceRemoval, (Result<Unit>) -> Unit) -> Unit = { _, done -> done(Result.failure(IllegalStateException("Not available."))) },
+    diagStatus: suspend () -> String = { "{}" },
+    diagExport: suspend (String) -> String = { "" },
+    onDiagClear: suspend () -> Unit = {},
+    onSetDiagEnabled: suspend (Boolean) -> Unit = {},
 ) {
     var linking by remember { mutableStateOf(false) }
     var displayName by remember { mutableStateOf(settings.displayName) }
@@ -903,6 +907,10 @@ SectionTitle("Updates")
                 UpdateCheckRow(settings.network)
                 Spacer(Modifier.height(20.dp))
 
+SectionTitle("Diagnostic log")
+                DiagLogSection(status = diagStatus, export = diagExport, clear = onDiagClear, setEnabled = onSetDiagEnabled)
+                Spacer(Modifier.height(20.dp))
+
 SectionTitle("About PrivCord")
                 Text(
                     "Private messaging for friends and groups, with no accounts and no server.",
@@ -988,7 +996,7 @@ private fun DetailRow(label: String, value: String, monospace: Boolean = false) 
 }
 
 @Composable
-private fun ToggleRow(
+internal fun ToggleRow(
     title: String,
     description: String,
     checked: Boolean,

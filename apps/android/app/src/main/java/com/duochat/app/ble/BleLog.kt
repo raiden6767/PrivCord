@@ -16,6 +16,7 @@ object BleLog {
 
     fun add(text: String) {
         android.util.Log.i("DuoChatBle", text)
+        com.duochat.app.engine.Diag.log("ble", text)
         synchronized(lines) {
             lines.addLast(clock.format(Date()) + "  " + text)
             while (lines.size > KEEP) lines.removeFirst()

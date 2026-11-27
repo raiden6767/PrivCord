@@ -6,6 +6,7 @@ import { activeMutes, engineSignaling, markWhatsNewSeen, quietNow } from '../lib
 import { loadNetworkConfig, torModeActive } from '../lib/network';
 import { config, isTauri } from '../config';
 import { Modal } from './Modal';
+import { aboutThisApp, diag, setDiagOn } from '../lib/diag';
 import { AlertIcon, CheckIcon, LockIcon, XIcon } from './Icons';
 import type { SettingsSection } from './SettingsDialog';
 
@@ -191,6 +192,93 @@ export function WhatsNewBanner({ engine }: { engine: ChatEngineApi | null }) {
 }
 
 /** Settings > About: diagnostics file and the self-test. Both hidden when the engine cannot do them. */
+/** Downloads text as a file (nothing is uploaded: the browser saves it where the person says). */
+function saveFile(name: string, data: BlobPart, type: string): void {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** Settings > Diagnostic log: what the app did, kept on this computer, saved as a Markdown file (or compressed) on request. */
+export function DiagLogCard({ engine }: { engine: ChatEngineApi | null }) {
+  const [status, setStatus] = useState<{ enabled: boolean; entries: number } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const refresh = () => void engine?.diagStatus?.().then(setStatus, () => undefined);
+  useEffect(refresh, [engine]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!engine?.diagExport) return null;
+  const stamp = () => new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+  const canGzip = typeof CompressionStream !== 'undefined';
+
+  async function save(compressed: boolean) {
+    setNote(null);
+    diag('ui', compressed ? 'save the diagnostic log (compressed)' : 'save the diagnostic log');
+    try {
+      const text = await engine!.diagExport!(aboutThisApp(config.appVersion));
+      if (compressed) {
+        const stream = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
+        saveFile(`privcord-log-${stamp()}.md.gz`, await new Response(stream).blob(), 'application/gzip');
+      } else {
+        saveFile(`privcord-log-${stamp()}.md`, text, 'text/markdown');
+      }
+      setNote('Log saved.');
+    } catch (e) {
+      setNote(`Could not save the log: ${String((e as Error)?.message ?? e)}`);
+    }
+  }
+
+  return (
+    <div className="card-box">
+      <div className="card-title">
+        <strong>Diagnostic log</strong>
+      </div>
+      <p className="muted small">
+        Writes down what the app did (connections, messages going out, buttons pressed, errors) so a problem can be found. No
+        message text, names, keys or addresses go in it, and nothing is uploaded: it stays on this computer until you save it.
+      </p>
+      <label className="toggle-row">
+        <span>Keep a diagnostic log</span>
+        <input
+          type="checkbox"
+          role="switch"
+          checked={status?.enabled ?? true}
+          onChange={(e) => {
+            const value = e.target.checked;
+            setDiagOn(value);
+            void engine.setDiagEnabled?.(value).then(refresh, () => undefined);
+          }}
+        />
+      </label>
+      <p className="muted small">{status ? (status.enabled ? `${status.entries} entries kept.` : 'Off. Turning it off emptied it.') : ''}</p>
+      {status?.enabled === false ? null : (
+        <div className="button-row">
+          <button type="button" className="button secondary small" onClick={() => void save(false)}>
+            Save the log (.md)
+          </button>
+          {canGzip ? (
+            <button type="button" className="button secondary small" onClick={() => void save(true)}>
+              Save it compressed (.md.gz)
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="button secondary small"
+            onClick={() => void engine.diagClear?.().then(() => { refresh(); setNote('Log emptied.'); }, () => undefined)}
+          >
+            Empty the log
+          </button>
+        </div>
+      )}
+      {note ? <p className="small" role="status">{note}</p> : null}
+      <p className="muted small">To report a problem, save the log and send the file along with what went wrong and roughly when.</p>
+    </div>
+  );
+}
+
 export function SupportTools({ engine }: { engine: ChatEngineApi | null }) {
   const [tests, setTests] = useState<Array<{ name: string; ok: boolean; detail: string }> | null>(null);
   const [busy, setBusy] = useState(false);

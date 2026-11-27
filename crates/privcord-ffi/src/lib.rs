@@ -1483,6 +1483,39 @@ impl PrivcordEngine {
         }
     }
 
+    /// One entry for the diagnostic log from a screen or the platform. Never waits and never fails a caller.
+    pub fn diag_log(&self, category: String, event: String, detail: String) {
+        let _ = self.handle.diag(category, event, detail);
+    }
+
+    /// The diagnostic log as a Markdown file. `about` is what the app says about itself, one line each.
+    pub fn diag_export(&self, about: String) -> Result<String, FfiError> {
+        match pollster::block_on(self.handle.op(Op::DiagExport(about)))? {
+            Answer::Text(t) => Ok(t),
+            _ => Err(FfiError::InvalidArgument),
+        }
+    }
+
+    /// Empties the diagnostic log.
+    pub fn diag_clear(&self) -> Result<(), FfiError> {
+        pollster::block_on(self.handle.op(Op::DiagClear))?;
+        Ok(())
+    }
+
+    /// Turns the diagnostic log on or off (off also empties it).
+    pub fn set_diag_enabled(&self, enabled: bool) -> Result<(), FfiError> {
+        pollster::block_on(self.handle.op(Op::SetDiagEnabled(enabled)))?;
+        Ok(())
+    }
+
+    /// `{"enabled": bool, "entries": n}` for the diagnostic log.
+    pub fn diag_status_json(&self) -> Result<String, FfiError> {
+        match pollster::block_on(self.handle.op(Op::DiagStatus))? {
+            Answer::Text(t) => Ok(t),
+            _ => Err(FfiError::InvalidArgument),
+        }
+    }
+
     /// A quick check that the engine works on this device, as JSON: `[{name, ok, detail}]`.
     pub fn self_test_json(&self) -> Result<String, FfiError> {
         match pollster::block_on(self.handle.op(Op::SelfTest))? {
