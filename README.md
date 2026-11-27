@@ -287,6 +287,8 @@ out after 8 s; a link silent for 14 s is dropped and redialed.
 
 ## For developers
 
+Want to help? Read [CONTRIBUTING.md](CONTRIBUTING.md) first: how to set up, `scripts/precheck.sh` (run it before every push), and the pull request workflow.
+
 Requires Node.js 20+ for the TypeScript parts and a recent stable Rust (1.82+) for the engine.
 
 ```bash
