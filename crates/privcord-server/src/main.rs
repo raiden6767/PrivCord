@@ -198,6 +198,12 @@ fn admin_token(path: &std::path::Path, name: &str, role: &str) -> Result<(), Str
             ))
         }
     };
+    // A long-lived secret must not go into a pipe, a journal or a log file: only to a terminal.
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return Err(
+            "refusing to print an admin token into a pipe or a log: run this in a terminal".into(),
+        );
+    }
     let token =
         privcord_server::admin::AdminState::add_admin_offline(&cfg.server.data_dir, name, role)?;
     println!("admin token for {name} ({role:?}), shown once, keep it safe:\n{token}");
@@ -208,7 +214,6 @@ async fn serve(path: &std::path::Path) -> Result<(), String> {
     let cfg = load(path)?;
     let (relay, turn) = (cfg.relay.enabled, cfg.turn.enabled);
     let admin_tls = cfg.admin.tls;
-    let data_dir = cfg.server.data_dir.clone();
     let running = privcord_server::start(cfg).await?;
     println!(
         "privcord-server {} listening on {} (relay: {relay}, turn: {turn}). Ctrl-C to stop.",
@@ -220,14 +225,9 @@ async fn serve(path: &std::path::Path) -> Result<(), String> {
             "admin panel: {}://{a}/admin",
             if admin_tls { "https" } else { "http" }
         );
-        if let Some(t) = running.admin_first_token() {
-            // Not printed: a terminal's output ends up in a service journal or a log file. A file only this user can read.
-            let file = data_dir.join("first-admin-token.txt");
-            privcord_server::fsutil::write_private_atomic(&file, format!("{t}\n").as_bytes())?;
-            println!(
-                "the owner's admin token is in {} (readable by this user only). Copy it, then delete the file.",
-                file.display()
-            );
+        if let Some(code) = running.admin_setup_code() {
+            // Not a token: it works once and stops after 15 minutes, so a terminal log that keeps it is worth nothing later.
+            println!("first time here? open the page and enter this setup code (works once, for 15 minutes): {code}");
         }
     }
     tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;

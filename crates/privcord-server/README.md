@@ -105,9 +105,11 @@ enabled = true
 listen = "127.0.0.1:8788"
 ```
 
-Start the server and it prints `admin panel: http://127.0.0.1:8788/admin` and the path of `first-admin-token.txt` in `data_dir`, which
-holds **the owner's admin token** (the file is readable by the server's user only, and the token is never printed, so it stays out of
-journals and logs). Copy it and delete the file: only a hash is kept. Open the page, paste the token, and you can:
+Start the server and it prints `admin panel: http://127.0.0.1:8788/admin` and a **setup code** that works once, for 15 minutes.
+No admin token exists yet, so nothing long-lived is ever printed or written to a file (a terminal's output ends up in a service
+journal or a log file; a code that has already been used or has expired is worth nothing there). Open the page, enter the code,
+and the **owner token is shown once, in your browser**: copy it. Only its hash is kept. If the 15 minutes pass, restart the
+server for a new code. Then sign in with the token and you can:
 
 | | |
 |---|---|
@@ -117,7 +119,8 @@ journals and logs). Copy it and delete the file: only a hash is kept. Open the p
 | **Nostr rules** | allowed and blocked authors and kinds, applied at once and saved; remove an event for good |
 | **TURN** | the addresses phones are given and what to open in the firewall |
 
-`privcord-server admin-token --name Sam --role moderator` makes another token from the command line (a running server notices).
+`privcord-server admin-token --name Sam --role moderator` makes another token from the command line (a running server notices). It
+prints only to a terminal and refuses to write a token into a pipe or a log.
 
 **Where to reach it from.** The panel has its own listener, on localhost by default, and is never served on the relay's port.
 To reach it from elsewhere you do not need anything built in:
@@ -125,10 +128,11 @@ To reach it from elsewhere you do not need anything built in:
 - put `listen` on a private-network address, for example your Tailscale or WireGuard address (`listen = "100.x.y.z:8788"`): only
   devices on that network can reach it, and the traffic is already encrypted; or
 - set `tls = true` (needs `[tls]`) to serve it over HTTPS, if you must expose it.
-`doctor` warns if the panel is on a non-local address over plain HTTP. Those are the only two places a token travels.
+The server **refuses to start** with the panel on a non-local address over plain HTTP, unless you set `allow_plain_http = true`
+(for a VPN you trust). With TLS it also sends HSTS.
 
 **What protects it.** Tokens are 256 random bits, kept only as SHA-256 hashes (in `admin.json`, readable by the server's user only);
-ten wrong tokens from an address lock that address out for a minute; the page loads nothing from anywhere else (strict
+ten wrong tokens or setup codes from an address lock that address out for a minute (a setup code is also 99 bits); the page loads nothing from anywhere else (strict
 content-security-policy, no inline script) and builds everything with `textContent`, never HTML from server data; the API uses a
 bearer token, not cookies, so there is nothing for another website to ride on. The page was checked with an automated
 accessibility scan (axe, WCAG 2.2 AA, light and dark, no violations) and by keyboard.

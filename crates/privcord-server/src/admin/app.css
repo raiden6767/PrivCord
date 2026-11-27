@@ -164,3 +164,8 @@ html:not([data-advanced="on"]) .adv { display: none !important; }
 .sk.title { width: 40%; height: 28px; } .sk.w90 { width: 90%; } .sk.w75 { width: 75%; } .sk.w85 { width: 85%; }
 .gap-t { margin-top: 14px; }
 fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; }
+
+/* first-run setup code form, under the sign-in form */
+.setup { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.setup h3 { margin-top: 0; }
+[hidden] { display: none !important; }

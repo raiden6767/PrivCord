@@ -33,11 +33,26 @@ fn config(dir: &std::path::Path) -> Config {
 async fn boot() -> (Running, tempfile::TempDir, String) {
     let dir = tempfile::tempdir().unwrap();
     let r = start(config(dir.path())).await.unwrap();
-    let token = r
-        .admin_first_token()
-        .expect("the first owner token")
-        .to_owned();
+    let token = claim(&r).await;
     (r, dir, token)
+}
+
+/// Uses the one-time setup code, as the panel's first-run form does, and returns the owner's token.
+async fn claim(r: &Running) -> String {
+    let code = r.admin_setup_code().expect("a setup code").to_owned();
+    let (status, _, body) = http(
+        r.admin_addr().unwrap(),
+        "POST",
+        "/admin/api/setup",
+        None,
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    serde_json::from_str::<Value>(&body).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 /// One HTTP request: (status, headers in lower case, body text).
@@ -157,6 +172,7 @@ async fn the_page_is_served_with_strict_headers_and_the_api_needs_a_token() {
         head.contains("cache-control: no-store")
             && head.contains("x-frame-options: deny")
             && head.contains("nosniff")
+            && head.contains("strict-transport-security: max-age=31536000")
     );
     let (code, head, theme) = http(a, "GET", "/admin/theme.js", None, None).await;
     assert!(code == 200 && head.contains("text/javascript") && theme.contains("color-scheme"));
@@ -455,7 +471,7 @@ async fn each_role_can_do_what_it_should_and_no_more() {
 async fn nostr_rules_set_in_the_panel_apply_at_once_survive_a_restart_and_are_checked() {
     let dir = tempfile::tempdir().unwrap();
     let r = start(config(dir.path())).await.unwrap();
-    let token = r.admin_first_token().unwrap().to_owned();
+    let token = claim(&r).await;
     let k = key();
     assert!(publish(&r, &nostr_event(&k, "before")).await.0);
     let me = hex(&k.verifying_key().to_bytes());
@@ -479,9 +495,9 @@ async fn nostr_rules_set_in_the_panel_apply_at_once_survive_a_restart_and_are_ch
     }
     assert!(!publish(&r, &nostr_event(&k, "still blocked")).await.0);
     r.stop().await;
-    // after a restart the saved rules and the admin are still there (and no new first token is made)
+    // after a restart the saved rules and the admin are still there (and no new setup code is made)
     let r2 = start(config(dir.path())).await.unwrap();
-    assert!(r2.admin_first_token().is_none());
+    assert!(r2.admin_setup_code().is_none());
     assert_eq!(api(&r2, "GET", "/me", &token, None).await.0, 200);
     assert!(
         !publish(&r2, &nostr_event(&k, "after restart")).await.0,
@@ -599,7 +615,7 @@ async fn settings_are_checked_apply_at_once_and_survive_a_restart() {
     c.relay.store_and_forward = true;
     c.relay.max_conns_per_ip = 20;
     let r = start(c.clone()).await.unwrap();
-    let token = r.admin_first_token().unwrap().to_owned();
+    let token = claim(&r).await;
     let (code, s) = api(&r, "GET", "/settings", &token, None).await;
     assert_eq!(
         (
@@ -679,7 +695,7 @@ async fn clearing_needs_a_yes_a_role_that_may_and_empties_what_was_asked() {
     let mut c = config(dir.path());
     c.relay.store_and_forward = true;
     let r = start(c).await.unwrap();
-    let owner = r.admin_first_token().unwrap().to_owned();
+    let owner = claim(&r).await;
     let (_, v) = api(
         &r,
         "POST",
@@ -810,4 +826,110 @@ async fn the_overview_counts_devices_connected_right_now() {
     let (_, o) = api(&r, "GET", "/overview", &token, None).await;
     assert_eq!(o["counters"]["open_connections"].as_u64(), Some(2));
     r.stop().await;
+}
+
+#[tokio::test]
+async fn the_setup_code_works_once_wrong_ones_are_refused_and_nothing_secret_is_stored() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = start(config(dir.path())).await.unwrap();
+    let a = r.admin_addr().unwrap();
+    let code = r.admin_setup_code().unwrap().to_owned();
+    assert_eq!(code.len(), 24, "{code}"); // 20 letters in five groups
+                                          // before setup: the page can ask whether setup is open, and no token exists
+    let (_, _, open) = http(a, "GET", "/admin/api/setup", None, None).await;
+    assert!(open.contains("\"open\":true"), "{open}");
+    assert_eq!(http(a, "GET", "/admin/api/me", None, None).await.0, 401);
+    // a wrong code is refused
+    let wrong = http(
+        a,
+        "POST",
+        "/admin/api/setup",
+        None,
+        Some(json!({ "code": "aaaa-aaaa-aaaa-aaaa-aaaa" })),
+    )
+    .await;
+    assert_eq!(wrong.0, 401);
+    // the right one works (case and dashes do not matter), once
+    let spaced = code.to_uppercase().replace('-', " ");
+    let (status, _, body) = http(
+        a,
+        "POST",
+        "/admin/api/setup",
+        None,
+        Some(json!({ "code": spaced })),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let token = serde_json::from_str::<Value>(&body).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(token.starts_with("pca_"));
+    let again = http(
+        a,
+        "POST",
+        "/admin/api/setup",
+        None,
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(again.0, 409, "a used code is closed");
+    let (_, _, open) = http(a, "GET", "/admin/api/setup", None, None).await;
+    assert!(open.contains("\"open\":false"), "{open}");
+    assert_eq!(api(&r, "GET", "/me", &token, None).await.1["role"], "owner");
+    // neither the code nor the token is written down: only the token's hash
+    let saved = std::fs::read_to_string(dir.path().join("admin.json")).unwrap();
+    assert!(
+        !saved.contains(&token) && !saved.contains(&code.replace('-', "")),
+        "{saved}"
+    );
+}
+
+#[tokio::test]
+async fn too_many_wrong_setup_codes_lock_that_address_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = start(config(dir.path())).await.unwrap();
+    let a = r.admin_addr().unwrap();
+    for _ in 0..10 {
+        let (s, ..) = http(
+            a,
+            "POST",
+            "/admin/api/setup",
+            None,
+            Some(json!({ "code": "nope" })),
+        )
+        .await;
+        assert_eq!(s, 401);
+    }
+    let code = r.admin_setup_code().unwrap().to_owned();
+    let (s, ..) = http(
+        a,
+        "POST",
+        "/admin/api/setup",
+        None,
+        Some(json!({ "code": code })),
+    )
+    .await;
+    assert_eq!(s, 429, "even the right code waits");
+}
+
+#[test]
+fn the_panel_is_refused_over_plain_http_on_another_address_unless_allowed() {
+    let mut c = Config::default();
+    c.admin.enabled = true;
+    c.admin.listen = "0.0.0.0:8788".into();
+    let said = |c: &Config| {
+        c.problems()
+            .iter()
+            .any(|p| p.contains("admin tokens would cross the network"))
+    };
+    assert!(said(&c), "plain HTTP on a public address is refused");
+    c.admin.listen = "127.0.0.1:8788".into();
+    assert!(!said(&c), "this machine is fine");
+    c.admin.listen = "10.0.0.5:8788".into();
+    c.admin.allow_plain_http = true;
+    assert!(!said(&c), "a trusted network can be allowed by hand");
+    c.admin.allow_plain_http = false;
+    c.admin.tls = true;
+    assert!(!said(&c), "TLS is fine anywhere");
 }

@@ -25,13 +25,22 @@
 <main class="col">
   <section id="login" class="login" aria-labelledby="loginTitle">
     <h2 id="loginTitle">Sign in</h2>
-    <p class="lead">Paste your admin token. It was shown once when the server first started, or you can make one with <code>privcord-server admin-token</code>.</p>
+    <p class="lead">Paste your admin token. Make more with <code>privcord-server admin-token</code> in a terminal on the server.</p>
     <form id="loginForm" autocomplete="off">
       <label for="token">Admin token</label>
       <input id="token" name="token" type="password" spellcheck="false" autocapitalize="off" autocomplete="off" required>
       <p id="loginError" class="msg bad" role="alert" hidden></p>
       <button type="submit" class="btn primary">Sign in</button>
     </form>
+    <form id="setupForm" class="setup" autocomplete="off" hidden>
+      <h3>First time here?</h3>
+      <p class="muted">Enter the setup code the server printed when it started. It works once, for 15 minutes. If it has run out, restart the server for a new one.</p>
+      <label for="code">Setup code</label>
+      <input id="code" name="code" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="abcd-efgh-jkmn-pqrs-tuvw" required>
+      <p id="setupError" class="msg bad" role="alert" hidden></p>
+      <button type="submit" class="btn primary">Make the owner token</button>
+    </form>
+    <div id="setupDone" hidden aria-live="polite"></div>
   </section>
 
   <div id="app" hidden>

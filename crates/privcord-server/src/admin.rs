@@ -116,6 +116,42 @@ fn new_secret(prefix: &str) -> (String, String) {
     (secret, hash)
 }
 
+/// How long a setup code works, and what it is made of: 20 letters and digits without look-alikes (about 99 bits).
+const SETUP_CODE_SECS: i64 = 15 * 60;
+const SETUP_ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+
+/// A one-time setup code like `abcd-efgh-jkmn-pqrs-tuvw` and its hash.
+fn new_setup_code() -> (String, String) {
+    // 248 = 8 x 31: bytes at or above it are skipped so every letter is equally likely.
+    let limit = 248u8;
+    let mut letters: Vec<char> = Vec::with_capacity(20);
+    while letters.len() < 20 {
+        let mut raw = [0u8; 32];
+        let _ = getrandom::fill(&mut raw);
+        for b in raw {
+            if b < limit && letters.len() < 20 {
+                if let Some(c) = SETUP_ALPHABET.get(usize::from(b) % SETUP_ALPHABET.len()) {
+                    letters.push(char::from(*c));
+                }
+            }
+        }
+    }
+    let code = letters
+        .chunks(4)
+        .map(|c| c.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("-");
+    let hash = sha_hex(&normalize_code(&code));
+    (code, hash)
+}
+
+fn normalize_code(s: &str) -> String {
+    s.chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
 fn new_id() -> String {
     let mut b = [0u8; 6];
     let _ = getrandom::fill(&mut b);
@@ -131,6 +167,8 @@ pub struct AdminState {
     inner: Mutex<(Stored, Option<SystemTime>)>,
     app: Arc<App>,
     fails: Mutex<HashMap<IpAddr, (u32, i64)>>,
+    /// The hash of the setup code that lets the first owner in, and when it stops working. Memory only: never written to disk.
+    setup: Mutex<Option<(String, i64)>>,
     tls_self_signed: bool,
 }
 
@@ -149,8 +187,8 @@ fn mtime(p: &std::path::Path) -> Option<SystemTime> {
 }
 
 impl AdminState {
-    /// Opens (or starts) the admin accounts in `dir`. When there is no admin yet one owner is made, and its token returned:
-    /// that is the only time it can be seen.
+    /// Opens (or starts) the admin accounts in `dir`. When there is no admin yet, a one-time setup code is returned (see
+    /// `claim`); no token exists until it is used.
     pub fn open(
         dir: &std::path::Path,
         app: Arc<App>,
@@ -167,25 +205,17 @@ impl AdminState {
             path,
             app,
             fails: Mutex::new(HashMap::new()),
+            setup: Mutex::new(None),
             tls_self_signed,
         });
-        let first = {
-            let mut g = lock(&state.inner);
-            if g.0.admins.is_empty() {
-                let (secret, hash) = new_secret("pca_");
-                g.0.admins.push(Admin {
-                    id: new_id(),
-                    name: "owner".into(),
-                    role: Role::Owner,
-                    hash,
-                    created: now_ms() / 1000,
-                    last_used: 0,
-                });
-                state.save(&mut g)?;
-                Some(secret)
-            } else {
-                None
-            }
+        // No admin yet: nobody is made and no token exists. A setup code that works once, for 15 minutes, lets the person
+        // who runs the server claim ownership from the panel (the token is then shown once, in their browser).
+        let first = if lock(&state.inner).0.admins.is_empty() {
+            let (code, hash) = new_setup_code();
+            *lock(&state.setup) = Some((hash, now_ms() / 1000 + SETUP_CODE_SECS));
+            Some(code)
+        } else {
+            None
         };
         state.apply();
         Ok((state, first))
@@ -213,6 +243,74 @@ impl AdminState {
             last_used: 0,
         });
         write_atomic(&path, &stored)?;
+        Ok(secret)
+    }
+
+    /// Whether a setup code is waiting to be used (no admin yet and the code has not expired).
+    fn setup_open(&self) -> bool {
+        self.reload_if_changed();
+        let now = now_ms() / 1000;
+        let open = lock(&self.inner).0.admins.is_empty()
+            && lock(&self.setup)
+                .as_ref()
+                .is_some_and(|(_, until)| *until > now);
+        if !open {
+            *lock(&self.setup) = None;
+        }
+        open
+    }
+
+    /// The setup code makes the first owner and returns the token, once. Wrong codes count like wrong tokens.
+    #[allow(clippy::result_large_err)]
+    fn claim(&self, ip: IpAddr, code: &str) -> Result<String, Response> {
+        let now = now_ms() / 1000;
+        {
+            let mut f = lock(&self.fails);
+            f.retain(|_, (_, until)| *until > now);
+            if f.get(&ip).is_some_and(|(n, _)| *n >= 10) {
+                return Err(text(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "too many wrong codes; wait a minute",
+                ));
+            }
+        }
+        if !self.setup_open() {
+            return Err(text(
+                StatusCode::CONFLICT,
+                "setup is closed: sign in with an admin token, or restart the server for a new setup code",
+            ));
+        }
+        let hash = sha_hex(&normalize_code(code));
+        let right = lock(&self.setup)
+            .as_ref()
+            .is_some_and(|(h, _)| ct_eq_hex(h, &hash));
+        if !right {
+            let mut f = lock(&self.fails);
+            f.entry(ip).or_insert((0, now + 60)).0 += 1;
+            return Err(text(
+                StatusCode::UNAUTHORIZED,
+                "that setup code is not right",
+            ));
+        }
+        let (secret, token_hash) = new_secret("pca_");
+        let mut g = lock(&self.inner);
+        if !g.0.admins.is_empty() {
+            return Err(text(StatusCode::CONFLICT, "setup is closed"));
+        }
+        g.0.admins.push(Admin {
+            id: new_id(),
+            name: "owner".into(),
+            role: Role::Owner,
+            hash: token_hash,
+            created: now,
+            last_used: 0,
+        });
+        if let Err(e) = self.save(&mut g) {
+            g.0.admins.clear();
+            return Err(text(StatusCode::INTERNAL_SERVER_ERROR, &e));
+        }
+        drop(g);
+        *lock(&self.setup) = None; // one use
         Ok(secret)
     }
 
@@ -397,6 +495,22 @@ macro_rules! admin_or_return {
 
 fn public_admin(a: &Admin) -> Value {
     json!({ "id": a.id, "name": a.name, "role": a.role, "created": a.created, "last_used": a.last_used })
+}
+
+async fn setup_status(State(a): State<AdminApp>) -> Response {
+    Json(json!({ "open": a.state.setup_open() })).into_response()
+}
+
+async fn setup_claim(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<Value>,
+) -> Response {
+    let code = body.get("code").and_then(Value::as_str).unwrap_or("");
+    match a.state.claim(addr.ip(), code) {
+        Ok(token) => Json(json!({ "token": token })).into_response(),
+        Err(r) => r,
+    }
 }
 
 async fn me(
@@ -925,6 +1039,7 @@ async fn secure_headers(req: axum::extract::Request, next: axum::middleware::Nex
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "no-referrer"),
         ("x-frame-options", "DENY"),
+        ("strict-transport-security", "max-age=31536000"),
         (
             "content-security-policy",
             "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' data:; \
@@ -975,6 +1090,7 @@ pub fn router(state: Arc<AdminState>) -> Router {
             "/admin/fonts/figtree.ttf",
             get(|| async { ([(header::CONTENT_TYPE, "font/ttf")], FONT_TEXT).into_response() }),
         )
+        .route("/admin/api/setup", get(setup_status).post(setup_claim))
         .route("/admin/api/me", get(me))
         .route("/admin/api/overview", get(overview))
         .route("/admin/api/settings", get(get_settings).put(put_settings))

@@ -169,6 +169,22 @@ impl Config {
                 self.server.listen
             ));
         }
+        if self.admin.enabled
+            && !self.admin.tls
+            && !self.admin.allow_plain_http
+            && self
+                .admin
+                .listen
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|a| !a.ip().is_loopback())
+        {
+            out.push(format!(
+                "admin.listen \"{}\" is not this machine and admin.tls is off: admin tokens would cross the network unencrypted. \
+                 Set admin.tls = true (with [tls]), listen on 127.0.0.1 and use an SSH tunnel, or set admin.allow_plain_http = true \
+                 if the network is a VPN you trust",
+                self.admin.listen
+            ));
+        }
         if self.nostr.enabled
             && (self.nostr.auth_required || self.nostr.auth_dms)
             && self.nostr.relay_url.trim().is_empty()
@@ -351,6 +367,9 @@ pub struct AdminConfig {
     /// Serve it over TLS (needs `[tls]`). Without it, keep `listen` on localhost or a private network: admin tokens travel
     /// in the clear over plain HTTP.
     pub tls: bool,
+    /// Allow the panel over plain HTTP on an address other than this machine (a VPN or a private network you trust).
+    /// Off: the server refuses to start that way, because admin tokens would cross the network unencrypted.
+    pub allow_plain_http: bool,
 }
 
 impl Default for AdminConfig {
@@ -359,6 +378,7 @@ impl Default for AdminConfig {
             enabled: false,
             listen: "127.0.0.1:8788".into(),
             tls: false,
+            allow_plain_http: false,
         }
     }
 }

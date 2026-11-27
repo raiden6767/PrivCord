@@ -135,7 +135,7 @@
     if (session) session.removeItem('pc-admin-token');
     $('app').hidden = true; $('who').hidden = true; $('login').hidden = false;
     const err = $('loginError'); err.hidden = !message; err.textContent = message || '';
-    $('token').value = ''; $('token').focus();
+    $('token').value = ''; $('token').focus(); offerSetup();
   }
   $('signout').addEventListener('click', () => signOut(''));
   $('loginForm').addEventListener('submit', async (e) => {
@@ -340,6 +340,28 @@
           canChange ? el('div', { class: 'field' }, el('button', { class: 'btn primary', type: 'submit' }, 'Save limits'), msg) : null)));
   }
 
+  // ---------- first run: the setup code makes the owner, and the token is shown once, here ----------
+  async function offerSetup() {
+    try {
+      const r = await fetch('/admin/api/setup', { cache: 'no-store' });
+      $('setupForm').hidden = !(r.ok && (await r.json()).open);
+    } catch { /* the form stays hidden */ }
+  }
+  $('setupForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const err = $('setupError'); err.hidden = true;
+    try {
+      const res = await fetch('/admin/api/setup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: $('code').value }), cache: 'no-store' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error((data && data.error) || `Something went wrong (${res.status}).`);
+      $('setupForm').hidden = true; $('loginForm').hidden = true;
+      const go = el('button', { type: 'button', class: 'btn primary' }, 'Sign in with it');
+      go.addEventListener('click', () => { $('loginForm').hidden = false; $('token').value = data.token; $('loginForm').requestSubmit(); });
+      put($('setupDone'), el('div', { class: 'secret' }, el('p', { class: 'label' }, 'This is the owner token. Copy it now: it is shown only once and cannot be recovered.'), copyRow(data.token, 'owner token', true)), el('div', { class: 'gap-t' }, go));
+      $('setupDone').hidden = false; go.focus();
+    } catch (x) { err.textContent = x.message; err.hidden = false; $('code').focus(); }
+  });
+
   // ---------- start ----------
   async function start() {
     me = await api('/me'); overviewCache = await api('/overview');
@@ -350,5 +372,5 @@
     buildTabs(); show(current);
   }
   window.addEventListener('hashchange', () => { const id = location.hash.slice(1); if (me && id !== current && tabsOf().some((b) => b.id === 'tab-' + id)) show(id); });
-  if (token) start().catch(() => signOut('')); else $('token').focus();
+  if (token) start().catch(() => signOut('')); else { $('token').focus(); offerSetup(); }
 })();

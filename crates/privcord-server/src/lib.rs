@@ -66,8 +66,8 @@ impl Running {
         self.admin_addr
     }
 
-    /// The token of the owner made on the very first start (only then): it cannot be shown again.
-    pub fn admin_first_token(&self) -> Option<&str> {
+    /// The one-time setup code of a server that has no admin yet (only then): it works once, for 15 minutes.
+    pub fn admin_setup_code(&self) -> Option<&str> {
         self.admin_token.as_deref()
     }
 
