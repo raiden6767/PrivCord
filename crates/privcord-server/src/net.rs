@@ -443,18 +443,27 @@ async fn management(
             json!({ "error": "turn the admin panel on ([admin] enabled = true): it keeps what the management API changes" }),
         );
     };
-    let Ok(call) = serde_json::from_slice::<Value>(&body) else {
-        return reply(
-            StatusCode::OK,
-            json!({ "error": "the body must be JSON: {\"method\": ..., \"params\": [...]}" }),
-        );
+    // A small, typed request: a method name and a list of parameters, nothing else is read.
+    #[derive(serde::Deserialize)]
+    struct Call {
+        method: String,
+        #[serde(default)]
+        params: Vec<Value>,
+    }
+    let call = match std::str::from_utf8(&body)
+        .ok()
+        .filter(|t| t.len() <= 64 * 1024)
+        .and_then(|t| serde_json::from_str::<Call>(t).ok())
+    {
+        Some(c) if c.method.len() <= 64 && c.params.len() <= 64 => c,
+        _ => {
+            return reply(
+                StatusCode::OK,
+                json!({ "error": "the body must be JSON: {\"method\": ..., \"params\": [...]}" }),
+            )
+        }
     };
-    let method = call.get("method").and_then(Value::as_str).unwrap_or("");
-    let params: Vec<Value> = call
-        .get("params")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let (method, params) = (call.method.as_str(), call.params);
     match admin.nip86(method, &params) {
         Ok(result) => reply(StatusCode::OK, json!({ "result": result })),
         Err(e) => reply(StatusCode::OK, json!({ "error": e })),
