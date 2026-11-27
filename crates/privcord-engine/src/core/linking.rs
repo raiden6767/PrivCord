@@ -58,6 +58,9 @@ pub(super) struct ScanJoin {
     tries: u8,
     /// A grant that arrived before the digits matched.
     held_grant: Option<String>,
+    /// The person types the digits (the scan direction). When false (the code was typed or scanned here), this device shows
+    /// the digits and the person confirms they match the first device's: either way the grant waits for that.
+    typed: bool,
 }
 
 pub(super) enum LinkState {
@@ -201,7 +204,17 @@ impl Core {
             device,
             code_shown: false,
             until: now + LINK_TTL_MS,
-            scan: None,
+            // The grant waits until the person confirms the digits match: whoever saw the code could otherwise answer first
+            // and send a grant that joins this device to their account.
+            scan: Some(ScanJoin {
+                request,
+                posted_at: now,
+                expected: None,
+                matched: false,
+                tries: 0,
+                held_grant: None,
+                typed: false,
+            }),
         });
         Ok(())
     }
@@ -242,6 +255,7 @@ impl Core {
                 matched: false,
                 tries: 0,
                 held_grant: None,
+                typed: true,
             }),
         });
         Ok(code)
@@ -489,7 +503,7 @@ impl Core {
                             put = Some((mailbox.clone(), STEP_REVEAL, reveal));
                             event = Some(match scan.as_mut() {
                                 // Scan direction: the digits are not shown here, the person types the first device's.
-                                Some(sc) => {
+                                Some(sc) if sc.typed => {
                                     sc.expected = Some(code);
                                     EngineEvent::DeviceLink {
                                         stage: "enter-code".into(),
@@ -497,11 +511,17 @@ impl Core {
                                         name: None,
                                     }
                                 }
-                                None => EngineEvent::DeviceLink {
-                                    stage: "code".into(),
-                                    code: Some(code),
-                                    name: None,
-                                },
+                                // Shown here: the person compares them with the first device and confirms by submitting them.
+                                other => {
+                                    if let Some(sc) = other {
+                                        sc.expected = Some(code.clone());
+                                    }
+                                    EngineEvent::DeviceLink {
+                                        stage: "code".into(),
+                                        code: Some(code),
+                                        name: None,
+                                    }
+                                }
                             });
                             Some(LinkState::Joining {
                                 joiner,

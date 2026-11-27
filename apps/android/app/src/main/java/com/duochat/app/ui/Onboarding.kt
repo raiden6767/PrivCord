@@ -158,6 +158,14 @@ fun OnboardingScreen(
 @Composable
 private fun ShowPhrase(phrase: String, onBack: () -> Unit, onNext: () -> Unit) {
     var saved by remember { mutableStateOf(false) }
+    // The words never show in a screenshot, a screen recording or the recent-apps preview, whatever the setting says.
+    val window = (androidx.compose.ui.platform.LocalContext.current as? android.app.Activity)?.window
+    androidx.compose.runtime.DisposableEffect(window) {
+        val flag = android.view.WindowManager.LayoutParams.FLAG_SECURE
+        val had = window != null && (window.attributes.flags and flag) != 0
+        window?.addFlags(flag)
+        onDispose { if (!had) window?.clearFlags(flag) }
+    }
     Text("Write these 12 words down, in order", style = MaterialTheme.typography.headlineMedium)
     Spacer(Modifier.height(8.dp))
     Text(

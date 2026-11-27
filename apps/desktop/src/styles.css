@@ -3057,6 +3057,30 @@ input[type='checkbox'] {
   padding: 8px 0;
   color: var(--text-soft);
   font-weight: 600;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+/* Details for people who want them: closed by default so the page stays calm, opened as a card. */
+.settings-section > .advanced {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 14px;
+}
+
+.settings-section > .advanced[open] {
+  padding-bottom: 14px;
+}
+
+.settings-section > .advanced[open] > *:not(summary) {
+  margin-top: 12px;
+}
+
+.advanced > summary:focus-visible {
+  outline: 2px solid var(--accent, #5eead4);
+  outline-offset: 2px;
+  border-radius: 8px;
 }
 
 .connection-summary {

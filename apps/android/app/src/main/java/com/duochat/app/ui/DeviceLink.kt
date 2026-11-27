@@ -380,6 +380,11 @@ fun LinkJoinContent(
                 }
             }
         }
+        joined && link?.stage == "matched" -> {
+            Text("Digits match. Waiting for your other device to finish…")
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = { joined = false; onCancel() }) { Text("Cancel") }
+        }
         joined && link != null && link.stage != "code" -> {
             Text(endText(link, host = false))
             Spacer(Modifier.height(16.dp))
@@ -388,15 +393,24 @@ fun LinkJoinContent(
             }
         }
         joined && link?.stage == "code" && link.code != null -> {
-            Text("Check that your other device shows the same digits, then confirm there.")
+            Text("Look at your other device. Does it show the same digits?")
             Digits(link.code)
+            Button(
+                onClick = { onSubmitLinkCode(link.code) { r -> r.onFailure { error = it.message } } },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            ) { Text("They match") }
+            Spacer(Modifier.height(8.dp))
             Text(
-                "If they differ, cancel: someone else may have your code.",
+                "Only tap this after you have looked at your other device. If the digits differ, someone else may have your code.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
             Spacer(Modifier.height(12.dp))
-            TextButton(onClick = { joined = false; onCancel() }) { Text("Cancel") }
+            TextButton(onClick = { joined = false; onCancel() }) { Text("They don't match, cancel") }
         }
         joined -> {
             Text("Waiting for your other device…")

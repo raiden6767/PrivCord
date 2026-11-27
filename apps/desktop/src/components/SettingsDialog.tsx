@@ -534,12 +534,15 @@ export function SettingsDialog({
               </div>
             </div>
             <p className="muted small">
-              Messages go straight from device to device. A device keeps at most {MAX_LIVE_LINKS} live connections, which
-              is plenty for groups of a few dozen.
+              Friends reconnect by themselves whenever you are both online. Nothing here needs changing for that to work.
             </p>
-            <NetworkTransparency engine={engine} updateChecks={isTauri() && settings.updateChecks} />
             <details className="advanced">
-              <summary>Advanced</summary>
+              <summary>Connection details and options (for people who want control)</summary>
+              <p className="muted small">
+                Messages go straight from device to device. A device keeps at most {MAX_LIVE_LINKS} live connections, which
+                is plenty for groups of a few dozen.
+              </p>
+              <NetworkTransparency engine={engine} updateChecks={isTauri() && settings.updateChecks} />
               <NetworkSettings engine={engine} state={state} />
             </details>
           </section>
@@ -566,6 +569,8 @@ export function SettingsDialog({
                 engine?.setGroupOnly(value);
               }}
             />
+            <details className="advanced">
+              <summary>More privacy tools</summary>
             <Toggle
               label="Panic wipe"
               description={`Press Ctrl+Shift+Backspace ${PANIC_PRESSES} times within ${PANIC_WINDOW_MS / 1000} seconds and everything on this device is erased immediately, with no confirmation. Your 12 recovery words are the only way back, so keep them somewhere safe first.`}
@@ -609,6 +614,7 @@ export function SettingsDialog({
                 Clear chats…
               </button>
             </div>
+            </details>
             <div className="emergency-block">
               <div>
                 <strong>Erase everything</strong>
@@ -652,8 +658,23 @@ export function SettingsDialog({
               </div>
             ) : null}
             <WhatsNew engine={engine} />
-            <SupportTools engine={engine} />
             <StorageByChat state={state} engine={engine} />
+            <p>
+              <strong>PrivCord</strong> · {isTauri() ? `version ${appVersion}` : 'development build'}
+            </p>
+            <p className="muted small">
+              Private chats and groups with no accounts and no cloud. Messages are end-to-end encrypted and go
+              straight between devices.
+            </p>
+            <p className="muted small">
+              Made by {config.about.author} · {config.about.licenseName} ·{' '}
+              <a href={config.about.authorLink} target="_blank" rel="noreferrer">
+                {config.about.authorLinkLabel}
+              </a>
+            </p>
+            <details className="advanced">
+              <summary>Technical details</summary>
+              <SupportTools engine={engine} />
             {state.usage ? (
               <div className="card-box">
                 <strong>On this device</strong>
@@ -682,19 +703,6 @@ export function SettingsDialog({
                 <p className="muted small">Everything stays on this device, encrypted. Deleting a chat frees its files.</p>
               </div>
             ) : null}
-            <p>
-              <strong>PrivCord</strong> · {isTauri() ? `version ${appVersion}` : 'development build'}
-            </p>
-            <p className="muted small">
-              Private chats and groups with no accounts and no cloud. Messages are end-to-end encrypted and go
-              straight between devices.
-            </p>
-            <p className="muted small">
-              Made by {config.about.author} · {config.about.licenseName} ·{' '}
-              <a href={config.about.authorLink} target="_blank" rel="noreferrer">
-                {config.about.authorLinkLabel}
-              </a>
-            </p>
             <dl className="detail-grid">
               <div>
                 <dt>Your ID</dt>
@@ -705,6 +713,7 @@ export function SettingsDialog({
                 <dd>{state.storageBackend === 'sqlite' ? 'Encrypted on this device' : 'Browser (development, not encrypted)'}</dd>
               </div>
             </dl>
+            </details>
           </section>
         ) : null}
       </div>

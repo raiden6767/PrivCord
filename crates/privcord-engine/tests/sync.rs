@@ -473,6 +473,19 @@ fn a_device_linked_by_code_gets_the_history_but_never_the_account_key() {
         laptop.online(&mut relay);
         phone.online(&mut relay);
     }
+    // Whoever sends the grant, the laptop waits for the person to say the digits match: a grant must not join it to an
+    // account before that.
+    let (_, early) = link_codes(&mut laptop_events);
+    assert!(
+        !early.contains(&"done".to_owned()),
+        "joined without a confirm: {early:?}"
+    );
+    assert!(laptop.core.device_list().is_none());
+    assert_eq!(laptop.core.submit_link_code(&laptop_code[0]), Ok(true));
+    for _ in 0..4 {
+        laptop.online(&mut relay);
+        phone.online(&mut relay);
+    }
     let (_, stages) = link_codes(&mut laptop_events);
     assert!(stages.contains(&"done".to_owned()), "{stages:?}");
 
@@ -595,12 +608,15 @@ fn friends_hear_of_a_linked_device_once_and_keep_the_newest_list() {
     assert_eq!(posted_before, 0);
 
     let mut laptop = Device::new("laptop", &clock);
+    let mut laptop_events = laptop.core.subscribe();
     let code = phone.core.start_device_link().unwrap();
     laptop.core.join_device_link(&code, "Laptop").unwrap();
     for _ in 0..3 {
         laptop.online(&mut relay);
         phone.online(&mut relay);
     }
+    let (shown, _) = link_codes(&mut laptop_events);
+    assert_eq!(laptop.core.submit_link_code(&shown[0]), Ok(true));
     phone.core.confirm_device_link(true).unwrap();
     for _ in 0..4 {
         laptop.online(&mut relay);
@@ -977,12 +993,15 @@ fn link_device(
     seed: &str,
 ) -> Device {
     let mut laptop = Device::new(seed, clock);
+    let mut laptop_events = laptop.core.subscribe();
     let code = phone.core.start_device_link().unwrap();
     laptop.core.join_device_link(&code, seed).unwrap();
     for _ in 0..3 {
         laptop.online(relay);
         phone.online(relay);
     }
+    let (shown, _) = link_codes(&mut laptop_events);
+    assert_eq!(laptop.core.submit_link_code(&shown[0]), Ok(true));
     phone.core.confirm_device_link(true).unwrap();
     for _ in 0..4 {
         laptop.online(relay);
@@ -2838,10 +2857,20 @@ fn a_contact_who_ran_out_of_one_time_keys_is_sent_a_fresh_batch_when_we_come_bac
         "the batch is used up"
     );
     // Pat comes back, opens them, and sends a new batch.
+    let before_batch = counts(&relay);
     for _ in 0..6 {
         pat.online(&mut relay);
         fran.online(&mut relay);
     }
+    // The batch fits in the anonymous envelope: nothing big goes out with sender and recipient in the clear.
+    let plain_big = relay
+        .boxes
+        .iter()
+        .flat_map(|(m, v)| v[before_batch.get(m).copied().unwrap_or(0)..].iter())
+        .filter_map(|b| privcord_domain::blob::SealedBlob::decode(b))
+        .filter(|b| b.v != 3 && b.encode().len() > 20_000)
+        .count();
+    assert_eq!(plain_big, 0, "a top-up batch went out unwrapped");
     assert!((1..=12).all(|i| pat.texts().contains(&format!("m{i}"))));
     assert!(
         fran.core.test_onetime_left(&pat_uid) >= 5,

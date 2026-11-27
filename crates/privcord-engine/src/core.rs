@@ -90,6 +90,8 @@ pub use invites::InvitePreview;
 /// A frame larger than this is dropped before it is parsed (SEC-04, SEC-09).
 pub const MAX_FRAME_BYTES: usize = 128 * 1024;
 /// Time for the post-quantum handshake once a link is authenticated.
+/// The most that files received and sent keep on one device (2 GiB); more are declined until some are deleted.
+const MAX_STORED_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const PQ_SETUP_MS: i64 = 10_000;
 /// How long to wait for a delivery receipt before sending a message again.
 pub const RETRY_AFTER_MS: i64 = 20_000;
@@ -2576,6 +2578,16 @@ impl Core {
         self.send_secure(peer, &declined_frame(id, reason));
     }
 
+    /// The bytes of every file kept on this device.
+    fn stored_file_bytes(&self) -> u64 {
+        self.messages
+            .iter()
+            .filter(|(_, m)| m.kind == MessageKind::File)
+            .filter_map(|(id, _)| self.ports.storage.file_info(id).ok().flatten())
+            .map(|i| i.size)
+            .sum()
+    }
+
     fn on_file_offer(&mut self, peer: &UserId, frame: &Value) {
         let who = &Self::person_of(peer);
         let Some(offer) = FileOffer::from_frame(frame) else {
@@ -2616,6 +2628,13 @@ impl Core {
         // The same file offered again while it is arriving (the sender's retry timer ran out) is not a new start: say where
         // we are and carry on. Otherwise start from what an earlier try left (nothing if there is none).
         let continuing = self.peers.get(peer).is_some_and(|p| p.files.holds(&offer));
+        // A contact cannot fill the disk: past a total of files kept on this device, new offers are declined.
+        if !continuing
+            && self.stored_file_bytes().saturating_add(size as u64) > MAX_STORED_FILE_BYTES
+        {
+            self.decline(peer, &id, DeclineReason::TooLarge);
+            return;
+        }
         let outcome = if continuing {
             BeginOutcome::Ok
         } else {

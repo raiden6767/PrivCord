@@ -1031,6 +1031,7 @@ await scenario(20, 'delete for everyone, reactions, search, backup and restore, 
   // Ann wipes her chats, then restores them
   await A.page.click('button[aria-label="Settings"]');
   await A.page.click('.tab:has-text("Security")');
+  await A.page.click('summary:has-text("More privacy tools")');
   await A.page.click('button:has-text("Clear all chats")').catch(() => undefined);
   const clearBtn = A.page.locator('button:has-text("Clear all chats"), button:has-text("Clear chats")');
   if (await A.page.locator('.modal:has-text("Clear")').count()) await A.page.keyboard.press('Escape');
@@ -1063,6 +1064,7 @@ await scenario(21, 'panic wipe: off by default; once on, three quick Ctrl+Shift+
   check((await page.locator('.sidebar').count()) === 1, 'with the setting off nothing happens');
   await page.click('button[aria-label="Settings"]');
   await page.click('.tab:has-text("Security")');
+  await page.click('summary:has-text("More privacy tools")');
   await page.click('.toggle-row:has-text("Panic wipe") [role="switch"]');
   await page.keyboard.press('Escape');
   await press3();

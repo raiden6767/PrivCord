@@ -159,6 +159,7 @@ export async function onboard(page) {
 export async function uidOf(page) {
   await page.click('button[aria-label="Settings"]');
   await page.click('.tab:has-text("About")');
+  await page.click('summary:has-text("Technical details")'); // the id sits in the closed technical group
   const uid = await page.locator('.settings-content dd.selectable').first().innerText();
   await page.keyboard.press('Escape');
   return uid.trim();

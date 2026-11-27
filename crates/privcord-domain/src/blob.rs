@@ -94,6 +94,10 @@ impl SealedBlob {
     }
 
     pub fn decode(text: &str) -> Option<Self> {
+        // Nothing we seal is longer, so a longer one is from a hostile relay: do not even decode it.
+        if text.len() > MAX_SEALED_BLOB_BYTES {
+            return None;
+        }
         let bytes = crate::codec::decode(text)?;
         let value: Value = serde_json::from_slice(&bytes).ok()?;
         Self::from_value(&value)

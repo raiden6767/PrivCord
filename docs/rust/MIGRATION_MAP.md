@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 66 | 9875 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 100 | 18120 |
-| Stays (platform adapter) | 72 | 13286 |
+| Stays (UI) | 100 | 18169 |
+| Stays (platform adapter) | 72 | 13307 |
 | Replaced by a library | 4 | 333 |
-| **All mapped files** | **243** | **43926** |
+| **All mapped files** | **243** | **43996** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -70,7 +70,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/ChannelsDialog.tsx` | 112 | `ChannelsDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/ChatLayout.tsx` | 784 | `ChatLayout` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/Composer.tsx` | 345 | `Composer` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
-| `apps/desktop/src/components/DeviceLinkDialog.tsx` | 250 | `DeviceLinkDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/DeviceLinkDialog.tsx` | 262 | `DeviceLinkDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/DeviceRow.tsx` | 127 | `DeviceRow` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/DigitBoxes.tsx` | 65 | `DigitBoxes` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/DropSendDialog.tsx` | 76 | `DropSendDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
@@ -91,7 +91,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/QuickSend.tsx` | 172 | `QuickSend` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/RecoveryDialogs.tsx` | 402 | `RecoveryDialogProps`, `RecoveryDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/RequestDialog.tsx` | 57 | `RequestDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
-| `apps/desktop/src/components/SettingsDialog.tsx` | 725 | `SettingsSection`, `SettingsDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/SettingsDialog.tsx` | 734 | `SettingsSection`, `SettingsDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/StorageByChat.tsx` | 69 | `StorageByChat` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/UpdateControl.tsx` | 128 | `UpdateCheck`, `UpdateBanner` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/dialogFocus.test.tsx` | 46 | (none) | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
@@ -180,8 +180,8 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 |---|---:|---|---|---|---|---|---|---|
 | `apps/desktop/src-tauri/src/autobackup.rs` | 166 | `status_path`, `passphrase`, `now_ms`, `run`, `start`, `view` +6 | Weekly automatic backups: keeps the passphrase in the credential store, runs the check | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src-tauri/src/ble.rs` | 168 | `BleEvent`, `BleLink`, `max_chunk`, `write`, `disconnect`, `payload_size` +3 | Native BLE central | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/desktop/src-tauri/src/engine_host.rs` | 577 | `hex`, `unhex`, `KeyringSecure`, `load_identity`, `save_identity`, `delete_identity` +36 | Hosts the Rust engine in the shell: keyring secret store, events to the page | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; M7 seam (page not rewired yet) | n/a |
-| `apps/desktop/src-tauri/src/lib.rs` | 326 | `page_entry`, `secret_get`, `secret_set`, `secret_delete`, `BleState`, `unhex` +10 | Tauri shell: commands, keyring, notifications | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; hosts the engine from M7 | n/a |
+| `apps/desktop/src-tauri/src/engine_host.rs` | 596 | `hex`, `unhex`, `KeyringSecure`, `load_identity`, `save_identity`, `delete_identity` +36 | Hosts the Rust engine in the shell: keyring secret store, events to the page | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; M7 seam (page not rewired yet) | n/a |
+| `apps/desktop/src-tauri/src/lib.rs` | 328 | `page_entry`, `secret_get`, `secret_set`, `secret_delete`, `BleState`, `unhex` +10 | Tauri shell: commands, keyring, notifications | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; hosts the engine from M7 | n/a |
 | `apps/desktop/src-tauri/src/main.rs` | 5 | `main` | Tauri shell: commands, keyring, notifications | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; hosts the engine from M7 | n/a |
 | `apps/desktop/src-tauri/src/mic_permission.rs` | 66 | `install` | Windows: answers the microphone request without saving it, so connections keep the local address hidden | Desktop adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src-tauri/src/tray.rs` | 158 | `flag`, `set_flag`, `has_flag`, `close_to_tray`, `show_main`, `toggle_quick` +6 | Tray icon, close to tray, start at login, one instance | Desktop adapter | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -261,7 +261,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/ChannelsDialog.kt` | 90 | `ChannelsDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/ChatScreen.kt` | 1764 | `ChatScreen`, `Banner`, `MessageList`, `DaySeparator`, `MessageBubble`, `FileContent` +15 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Clipboard.kt` | 34 | `copySensitive` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/DeviceLink.kt` | 488 | `DevicesSection`, `RemoveDeviceDialog`, `LinkHostDialog`, `LinkJoinContent`, `Digits`, `endText` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/DeviceLink.kt` | 502 | `DevicesSection`, `RemoveDeviceDialog`, `LinkHostDialog`, `LinkJoinContent`, `Digits`, `endText` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/GroupScreens.kt` | 423 | `NewGroupScreen`, `FriendCheckRow`, `GroupDetailsScreen`, `FriendDetailsDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/HomeScreen.kt` | 559 | `Filter`, `HomeScreen`, `Header`, `Notice`, `OldGroup`, `SearchField` +6 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/KillSwitchDialogs.kt` | 240 | `statusColor`, `StepList`, `NukeDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
@@ -270,12 +270,12 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/MediaSave.kt` | 52 | (none) | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/MemoryMedia.kt` | 30 | `BytesMediaDataSource`, `memoryMediaSource` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Motion.kt` | 182 | `Motion`, `routeDepth`, `screenTransition`, `arrive`, `pressScale`, `SwipeToReply` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/Onboarding.kt` | 343 | `Step`, `OnboardingScreen`, `ShowPhrase`, `ConfirmPhrase`, `RestorePhrase`, `Fact` +1 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/Onboarding.kt` | 351 | `Step`, `OnboardingScreen`, `ShowPhrase`, `ConfirmPhrase`, `RestorePhrase`, `Fact` +1 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/PrivacyCards.kt` | 232 | `PrivacyCheckupCard`, `NetworkHostsCard`, `formatSize`, `StorageByChatCard`, `SealedChip`, `DevicesStrip` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrDecode.kt` | 48 | `QrDecode` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrScanner.kt` | 364 | `rememberQrScanner`, `QrScannerScreen`, `ScanFrame`, `analyze`, `decodeCaptured`, `decodeImage` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrUtils.kt` | 35 | `qrBitmap` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/SettingsDialog.kt` | 1152 | `SettingsDialog`, `signalingWords`, `SectionTitle`, `DetailRow`, `ToggleRow`, `ChoiceChip` +3 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/SettingsDialog.kt` | 1158 | `SettingsDialog`, `signalingWords`, `SectionTitle`, `DetailRow`, `ToggleRow`, `ChoiceChip` +3 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/StatusScreens.kt` | 125 | `LoadingScreen`, `FatalScreen` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Theme.kt` | 254 | `figtree`, `style`, `mix`, `ensureReadable`, `onColor`, `scheme` +5 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/UpdateUi.kt` | 160 | `UpdateInstallButton`, `DownloadPill`, `UpdateDialog`, `UpdateCheckRow` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |

@@ -109,6 +109,7 @@ fun SettingsDialog(
     var displayName by remember { mutableStateOf(settings.displayName) }
     var nameStatus by remember { mutableStateOf<String?>(null) }
     var advanced by remember { mutableStateOf(false) }
+    var technical by remember { mutableStateOf(false) }
     var stunText by remember { mutableStateOf(settings.network.stun.joinToString("\n")) }
     val firstTurn = settings.network.turn.firstOrNull()
     var turnUrls by remember { mutableStateOf(firstTurn?.urls?.joinToString("\n").orEmpty()) }
@@ -453,25 +454,25 @@ SectionTitle("Appearance")
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
+                DetailRow("Friends connected now", "${state.linkCount} of ${state.contacts.size}")
+                DetailRow("Messages waiting to send", state.queuedCount.toString())
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { advanced = !advanced }) {
+                    Text(if (advanced) "Hide advanced options" else "Advanced options (for people who want control)")
+                }
+                if (advanced) {
+                    Spacer(Modifier.height(8.dp))
                 val hostsJson by androidx.compose.runtime.produceState("[]", settings.network, settings.updateChecks) {
                     value = insight("hosts", com.duochat.app.data.hostsInput(settings.network, settings.updateChecks))
                 }
                 NetworkHostsCard(com.duochat.app.data.parseHosts(hostsJson))
                 Spacer(Modifier.height(8.dp))
-                DetailRow("Friends connected now", "${state.linkCount} of ${state.contacts.size}")
-                DetailRow("Messages waiting to send", state.queuedCount.toString())
                 DetailRow("Your ID", state.uid.take(16) + "…", monospace = true)
                 Text(
                     "PrivCord stays connected to at most 30 friends at once; beyond that the rest connect when others drop.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { advanced = !advanced }) {
-                    Text(if (advanced) "Hide advanced options" else "Advanced options")
-                }
-                if (advanced) {
-                    Spacer(Modifier.height(8.dp))
                 Spacer(Modifier.height(10.dp))
                 OutlinedButton(onClick = onOpenManual) {
                     Text("Connect with a code (no internet)")
@@ -894,13 +895,19 @@ SectionTitle("About PrivCord")
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Spacer(Modifier.height(6.dp))
+                DetailRow("Version", com.duochat.app.BuildConfig.VERSION_NAME)
+                DetailRow("Created by", AppConfig.CREATED_BY)
+                DetailRow("License", AppConfig.LICENSE_SHORT)
+                TextButton(onClick = { technical = !technical }) {
+                    Text(if (technical) "Hide technical details" else "Technical details")
+                }
+                if (technical) {
                 Text("On this phone", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 DetailRow("Messages", state.usage.messages.toString())
                 DetailRow("Friends", state.usage.contacts.toString())
                 DetailRow("Files and photos", "${state.usage.files} · " + android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, state.usage.fileBytes))
                 if (state.usage.syncEntries > 0) DetailRow("Kept for syncing your devices", "${state.usage.syncEntries} entries")
                 Spacer(Modifier.height(10.dp))
-                DetailRow("Version", com.duochat.app.BuildConfig.VERSION_NAME)
                 DetailRow("Platform", "Android · Kotlin/Compose")
                 DetailRow("Rust core", com.duochat.app.RustCore.status)
                 val context = androidx.compose.ui.platform.LocalContext.current
@@ -910,10 +917,9 @@ SectionTitle("About PrivCord")
                     }
                 }
                 DetailRow("Rust engine", probe)
-                DetailRow("Created by", AppConfig.CREATED_BY)
-                DetailRow("License", AppConfig.LICENSE_SHORT)
-                Spacer(Modifier.height(12.dp))
-                AboutTools(settings.network, insight, diagnosticsJson, selfTestJson)
+                    Spacer(Modifier.height(12.dp))
+                    AboutTools(settings.network, insight, diagnosticsJson, selfTestJson)
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(
                     "Connections use a challenge-response identity proof, and you can compare a safety " +

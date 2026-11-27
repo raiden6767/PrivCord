@@ -538,6 +538,25 @@ pub async fn engine_erase(app: AppHandle, state: State<'_, EngineState>) -> Resu
     erase_engine_files(&dir)?;
     crate::autobackup::erase(&app);
     KeyringSecure.delete_identity();
+    // The settings files (display name, relay password, flags) and the keys that open them go too. Deleting the database
+    // key is what makes a file an undelete tool recovers unreadable.
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if name.ends_with(".sealed") || name == "network.json" {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    for key in [DATABASE_KEY, NETWORK_FILE_KEY] {
+        if let Ok(entry) = keyring::Entry::new(SERVICE, key) {
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(e) => return Err(format!("a key is still in the system credential store: {e}")),
+            }
+        }
+    }
     if KeyringSecure.load_identity().is_some() {
         return Err("the identity is still in the system credential store".to_owned());
     }

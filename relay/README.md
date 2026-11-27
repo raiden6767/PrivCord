@@ -27,7 +27,7 @@ PORT=8787 node index.js
 
 Limits: blob <= 64 KiB, `sig` ttl <= 120 s (delivered live to current subscribers,
 never stored), `msg` ttl <= 7 days, <= 500 queued messages per mailbox.
-Only a connection that listens to a mailbox may delete from it. `GET /healthz` returns counters only. `SIGTERM`/`SIGINT` shut down cleanly.
+Messages are not deleted on request (anyone who can work out a mailbox name could wipe it); they leave when they expire. `GET /healthz` returns counters only. `SIGTERM`/`SIGINT` shut down cleanly.
 
 Then put `wss://your-host` into PrivCord Settings -> Signaling -> Relay.
 

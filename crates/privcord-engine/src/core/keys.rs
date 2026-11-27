@@ -26,6 +26,9 @@ use std::collections::BTreeMap;
 
 const KV_KEYS: &str = "pq.keys";
 const ONETIME_PER_LINK: usize = 10;
+/// A later batch sent through a relay (a top-up) is smaller: with ten keys it is about 35 KB, too big to wrap in the
+/// anonymous envelope, and it would go out with sender and recipient in the clear.
+const ONETIME_PER_RELAY_TOPUP: usize = 5;
 /// One-time keys we keep for one contact at most (the oldest go first).
 const MAX_ISSUED_PER_PEER: usize = 60;
 /// Their one-time keys we keep at most.
@@ -58,6 +61,8 @@ pub(super) struct TheirKeys {
     inbox: Option<String>,
     /// The install that sent them, when it said (see `fresh_keys_for`): filed under its own address once we know it.
     dev: Option<String>,
+    /// The inbox generation they told us with these keys: an older one from the same install is a replay and is ignored.
+    ig: u32,
 }
 
 #[derive(Default)]
@@ -97,7 +102,7 @@ impl KeyState {
             .map(|(u, t)| {
                 (
                     u.to_string(),
-                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>(), "anon": t.anon, "inbox": t.inbox, "dev": t.dev }),
+                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>(), "anon": t.anon, "inbox": t.inbox, "dev": t.dev, "ig": t.ig }),
                 )
             })
             .collect();
@@ -163,6 +168,11 @@ impl KeyState {
                     .filter(|m| is_mailbox_name(m))
                     .map(str::to_owned);
                 let dev = t.get("dev").and_then(Value::as_str).map(str::to_owned);
+                let ig = t
+                    .get("ig")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .unwrap_or(0);
                 state.theirs.insert(
                     uid,
                     TheirKeys {
@@ -171,6 +181,7 @@ impl KeyState {
                         anon,
                         inbox,
                         dev,
+                        ig,
                     },
                 );
             }
@@ -217,7 +228,7 @@ impl Core {
 
     /// Fresh keys for `peer`: refresh our standing key if due, drop expired keys, and issue new one-time keys to them.
     /// Returns `{ standing, onetime }` to hand over.
-    fn fresh_keys_for(&mut self, peer: &UserId) -> Option<Value> {
+    fn fresh_keys_for(&mut self, peer: &UserId, count: usize) -> Option<Value> {
         let now = self.now();
         let fresh = self
             .keys
@@ -236,8 +247,8 @@ impl Core {
         for list in self.keys.issued.values_mut() {
             list.retain(|k| now - k.created_at < KEY_LIFETIME_MS);
         }
-        let mut new = Vec::with_capacity(ONETIME_PER_LINK);
-        for _ in 0..ONETIME_PER_LINK {
+        let mut new = Vec::with_capacity(count);
+        for _ in 0..count {
             match OwnKey::generate(&mut *self.ports.entropy, now) {
                 Ok(k) => new.push(k),
                 Err(_) => return None,
@@ -257,13 +268,13 @@ impl Core {
         // "dev": the install these keys belong to, so a friend who still has us under the account address can file
         // them under the device's own (the account key's holder speaks as the account until they know our list).
         Some(
-            json!({ "standing": standing, "onetime": publics, "anon": true, "inbox": inbox, "dev": self.device_id }),
+            json!({ "standing": standing, "onetime": publics, "anon": true, "inbox": inbox, "dev": self.device_id, "ig": self.keys.inbox_gen }),
         )
     }
 
     /// A post-quantum link to `peer` is up: hand them our standing key and fresh one-time keys over it.
     pub(super) fn keys_on_link(&mut self, peer: &UserId) {
-        let Some(mut frame) = self.fresh_keys_for(peer) else {
+        let Some(mut frame) = self.fresh_keys_for(peer, ONETIME_PER_LINK) else {
             return;
         };
         if let Some(o) = frame.as_object_mut() {
@@ -302,10 +313,16 @@ impl Core {
             .collect();
         for addr in due {
             // The first batch for an address is not a top-up; only later ones wait out the cooldown.
-            if self.keys.issued.contains_key(&addr) {
+            let later = self.keys.issued.contains_key(&addr);
+            if later {
                 self.keys.topup_at.insert(addr.clone(), now);
             }
-            let Some(mut payload) = self.fresh_keys_for(&addr) else {
+            let count = if later {
+                ONETIME_PER_RELAY_TOPUP
+            } else {
+                ONETIME_PER_LINK
+            };
+            let Some(mut payload) = self.fresh_keys_for(&addr, count) else {
                 return;
             };
             if let Some(o) = payload.as_object_mut() {
@@ -361,14 +378,28 @@ impl Core {
             .filter(|_| Self::device_of(peer).is_none())
             .and_then(|d| Self::device_address(peer, d))
             .filter(|a| self.known_address(a));
+        let ig = frame
+            .get("ig")
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0);
+        let address = device_address.unwrap_or_else(|| peer.clone());
+        // An old copy of their keys, replayed by a relay, would set their inbox back to one a removed contact still
+        // watches: a frame from the same install with an older inbox generation than we hold is ignored.
+        if let Some(have) = self.keys.theirs.get(&address) {
+            if have.dev.is_some() && have.dev == dev && ig < have.ig {
+                return;
+            }
+        }
         self.keys.theirs.insert(
-            device_address.unwrap_or_else(|| peer.clone()),
+            address,
             TheirKeys {
                 standing,
                 onetime,
                 anon,
                 inbox,
                 dev,
+                ig,
             },
         );
         self.save_keys();
