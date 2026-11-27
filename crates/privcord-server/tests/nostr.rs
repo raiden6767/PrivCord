@@ -800,3 +800,40 @@ async fn the_information_document_carries_the_admin_key() {
     assert_eq!(doc["pubkey"], "ab".repeat(32));
     r.stop().await;
 }
+
+#[tokio::test]
+async fn somebody_else_naming_a_deleted_event_cannot_bring_it_back() {
+    // Found by the randomised store test: a second deletion naming the same id used to displace the author's own record,
+    // so the (still validly signed) original could be published again.
+    let (r, url, _d) = server(|_| {}).await;
+    let (author, attacker, mut c) = (key(), key(), C::open(&url).await);
+    let ev = make(&author, 1, now(), vec![], "deleted by its author");
+    assert!(c.publish(&ev).await.0);
+    assert!(
+        c.publish(&make(
+            &author,
+            5,
+            now(),
+            vec![vec!["e", ev["id"].as_str().unwrap()]],
+            ""
+        ))
+        .await
+        .0
+    );
+    // the attacker publishes a deletion that merely names the same id
+    c.publish(&make(
+        &attacker,
+        5,
+        now(),
+        vec![vec!["e", ev["id"].as_str().unwrap()]],
+        "",
+    ))
+    .await;
+    let (ok, why) = c.publish(&ev).await;
+    assert!(
+        !ok && why.starts_with("blocked"),
+        "the deleted event came back: {why}"
+    );
+    assert!(c.req("x", vec![json!({ "kinds": [1] })]).await.is_empty());
+    r.stop().await;
+}

@@ -16,6 +16,8 @@ privcord-domain = { path = "../crates/privcord-domain" }
 privcord-crypto = { path = "../crates/privcord-crypto", features = ["test-support"] }
 privcord-ports = { path = "../crates/privcord-ports", features = ["testing"] }
 privcord-engine = { path = "../crates/privcord-engine" }
+privcord-server = { path = "../crates/privcord-server" }
+tokio = { version = "1", features = ["sync", "rt"] }
 
 # Its own workspace, so the main one (and its lockfile) never sees these.
 [workspace]
@@ -57,6 +59,27 @@ doc = false
 [[bin]]
 name = "media"
 path = "fuzz_targets/media.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_frames"
+path = "fuzz_targets/server_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_store"
+path = "fuzz_targets/server_store.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_turn"
+path = "fuzz_targets/server_turn.rs"
 test = false
 doc = false
 bench = false

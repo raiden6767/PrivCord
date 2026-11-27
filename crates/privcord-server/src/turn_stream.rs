@@ -148,6 +148,17 @@ impl Conn for StreamMux {
     }
 }
 
+/// From the first four bytes of a frame: its length without padding, and with it. `None`: not TURN, hang up.
+pub fn frame_lengths(head: [u8; 4]) -> Option<(usize, usize)> {
+    let len = usize::from(u16::from_be_bytes([head[2], head[3]]));
+    let (total, padded) = match head[0] >> 6 {
+        0 => (20 + len, 20 + len),
+        1 => (4 + len, 4 + len.div_ceil(4) * 4),
+        _ => return None, // neither STUN nor ChannelData
+    };
+    (padded <= MAX_FRAME).then_some((total, padded))
+}
+
 /// Reads STUN messages and ChannelData frames from a stream and passes each on, until it ends or turns out not to be TURN.
 async fn read_frames<R: AsyncRead + Unpin>(mut r: R, peer: SocketAddr, mux: &StreamMux) {
     loop {
@@ -156,15 +167,9 @@ async fn read_frames<R: AsyncRead + Unpin>(mut r: R, peer: SocketAddr, mux: &Str
             Ok(Ok(_)) => {}
             _ => return,
         }
-        let len = usize::from(u16::from_be_bytes([head[2], head[3]]));
-        let (total, padded) = match head[0] >> 6 {
-            0 => (20 + len, 20 + len),
-            1 => (4 + len, 4 + len.div_ceil(4) * 4),
-            _ => return, // neither STUN nor ChannelData
-        };
-        if padded > MAX_FRAME {
+        let Some((total, padded)) = frame_lengths(head) else {
             return;
-        }
+        };
         let mut msg = head.to_vec();
         msg.resize(padded, 0);
         let (_, rest) = msg.split_at_mut(4);

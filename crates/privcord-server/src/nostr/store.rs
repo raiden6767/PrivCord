@@ -19,9 +19,10 @@ struct Inner {
     /// Which event currently holds a replaceable or addressable slot.
     slots: HashMap<(Id, u64, String), Id>,
     expiring: BTreeSet<Key>,
-    /// Events somebody asked to delete: target id -> who asked. Kept even when the target has not arrived yet, so an event
-    /// that shows up after its deletion is refused. Bounded.
-    deleted: HashMap<Id, Id>,
+    /// Deletions asked for, as (target id, who asked). Kept even when the target has not arrived yet, so an event that
+    /// shows up after its deletion is refused. One entry per asker: somebody else naming the same id cannot displace the
+    /// author's own deletion. Bounded.
+    deleted: HashSet<(Id, Id)>,
     /// Addresses (author, kind, d tag) deleted up to and including a time (NIP-09 `a` tags). Bounded.
     deleted_addrs: HashMap<(Id, u64, String), i64>,
     bytes: usize,
@@ -120,8 +121,8 @@ impl Inner {
     }
 
     fn tombstone(&mut self, id: Id, by: Id) {
-        if self.deleted.len() < MAX_TOMBSTONES || self.deleted.contains_key(&id) {
-            self.deleted.insert(id, by);
+        if self.deleted.len() < MAX_TOMBSTONES {
+            self.deleted.insert((id, by));
         }
     }
 
@@ -230,7 +231,7 @@ impl Store {
         if w.by_id.contains_key(&e.id) {
             return Put::Duplicate;
         }
-        if w.deleted.get(&e.id) == Some(&e.pubkey) {
+        if w.deleted.contains(&(e.id, e.pubkey)) {
             return Put::Deleted;
         }
         if let Some(slot) = e.replace_key() {
