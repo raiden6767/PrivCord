@@ -386,6 +386,8 @@ const WHATS_NEW: &[(&str, &[&str])] = &[
             "Clear chats and Erase everything are at the top of Privacy, so they are never a long scroll away.",
             "Read ticks now reach the sender even when you read a message with no connection: the receipt is kept and sent as soon as there is a way, and delivery receipts fall back to the relay.",
             "Adding a friend from their QR code leaves a clear trail in the diagnostic log, to find out why a request does not arrive.",
+            "Windows: after your laptop sleeps or changes network, dead relay connections are noticed within a minute and replaced, so messages and new links no longer stall for minutes.",
+            "More public STUN servers (Cloudflare, Google, Twilio, Nextcloud, Telnyx) for finding your address on strict networks.",
         ],
     ),
     (
