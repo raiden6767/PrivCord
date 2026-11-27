@@ -80,6 +80,27 @@ This is an internal review, not an independent audit (see `AUDIT.md`).
 | **M18** | **Windows does not clear the clipboard** after copying an invite, the six words or a recovery phrase, so it stays there for any program to read (and in Windows clipboard history if that is on). | Other programs; clipboard history | **V** (no clear in desktop code) | Clear it after about 30 seconds if unchanged, as on Android. |
 | **M19** | **Windows: your local network address reached contacts after the first voice note.** Chromium hides it behind a random `.local` name, unless the page holds a *lasting* microphone permission, which WebView2 saves by default. Measured in Chromium: a one-time grant keeps it hidden, a saved grant exposes it, clearing the grant hides it again. | A contact you connect to | **V** (Chromium test), **I** (WebView2 saving the answer) | The app now answers the microphone request itself without saving it, and clears a saved one (`mic_permission.rs`). Compiles for Windows; **not tried on a real Windows machine**. Android's WebRTC library is untested. |
 
+## Sweep for leaks and critical issues (2026-11-27)
+
+Fixed here: Android release builds no longer write dial, signal, relay-put or relay-notice lines to logcat (they said when
+something happened and what relays answered; readable over USB debugging). The `cookie` crate in the desktop build is
+updated to 0.18.3 (RUSTSEC-2026-0594; it was not reachable on Windows, which is not in the advisory's list of affected systems).
+
+Open, by design or needing a decision:
+- **TURN credentials in public builds.** If a release is built with `PRIVCORD_TURN_*` set (CI secrets), the username and
+  credential sit in the app and in the web bundle as plain text, so anyone can extract and use that TURN server, and its
+  operator sees the traffic of everyone relayed through it. Fix: short-lived credentials issued per session. Not done.
+- `glib 0.18` unsound iterator (RUSTSEC-2024-0429) and several unmaintained crates (`bincode`, `paste`, `basic-toml`, `chrono`,
+  `zbus`/`zvariant`) arrive through Tauri's Linux stack or build tools; nothing to bump without a Tauri upgrade.
+- Windows file names such as `CON` or `NUL` are not rejected when a received file is saved (the save dialog still decides the path).
+
+Looked at and found clean: no hard-coded keys or secrets in tracked files; npm audit (production) is clean for the relay,
+desktop app, site and protocol package; `cargo audit` on the engine workspace has no vulnerabilities; no `unsafe` in the
+engine crates (one block, the Windows microphone handler); secret types print as redacted and are zeroed on drop; SQL is
+parameterised; the page cannot read the engine's keys through the Tauri commands and saved settings only accept known
+names; file names from other people are cleaned; the engine's memory stayed flat across 2,400 idle ticks, invite
+create/stop cycles and contact add/remove cycles (checked in a test run, not a long soak).
+
 ## Checked and clean
 
 - No analytics, advertising, crash-reporting or Google Play services libraries in the Android or desktop builds.
