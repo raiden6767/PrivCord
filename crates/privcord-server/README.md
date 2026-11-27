@@ -36,6 +36,14 @@ list `stun:YOUR-IP:3478` in the apps (Settings, Connection, STUN servers) next t
 your friends' addresses off third-party servers. The panel's Home page shows the address with a Copy button, and
 `tests/turn_stream.rs` checks the answer on both transports. A STUN-only mode (no relay, no ports to open beyond one) is not built.
 
+### Several servers (for example one per continent)
+
+In the apps, add each server with "Use my server": a phone then holds one login per server and uses whichever answers first.
+Each server hands out TURN logins signed with its own `data/turn-secret`, and a login only works on the server that made it.
+So the servers need nothing from each other. Copy one server's `turn-secret` to the others only if you want a login from any
+of them to work on all of them (then keep the file private: whoever holds it can make logins; with `encrypt = true` it is
+encrypted on disk under that server's own key, so copy the key too).
+
 ## Nostr
 
 Set `[nostr] enabled = true` and the same port also speaks the Nostr relay protocol (a client that sends a JSON array is
