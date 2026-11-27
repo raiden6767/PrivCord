@@ -34,6 +34,10 @@ class LoggedEngine(private val inner: ChatEngineApi) : ChatEngineApi by inner {
 
     private fun note(what: String, detail: String = "") = Diag.log("call", what, detail)
 
+    // Members that have a default body in the interface are NOT forwarded by `by inner`: without these two lines the call
+    // would reach the interface's default (an error, and "load earlier" doing nothing). Nothing typed here is logged.
+    override suspend fun recoverIdentity(phrase: String, passphrase: String) = tracked("create the identity from the recovery phrase") { inner.recoverIdentity(phrase, passphrase) }
+    override suspend fun loadEarlier(conversationId: String) = tracked("load earlier messages") { inner.loadEarlier(conversationId) }
     override suspend fun addFriend(text: String) = tracked("add a friend (scan, paste or words)", "chars=${text.length}") { inner.addFriend(text) }
     override fun retryAnswer() { note("retry the answer to an invite"); inner.retryAnswer() }
     override fun clearAnswer() { note("clear the answer to an invite"); inner.clearAnswer() }
