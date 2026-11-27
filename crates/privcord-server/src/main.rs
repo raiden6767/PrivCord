@@ -50,6 +50,19 @@ admin_contact = ""              # shown on the discovery page
 enabled = true
 store_and_forward = true        # keep sealed messages for people who are offline (7 days at most)
 
+[nostr]
+enabled = false                 # also speak the Nostr relay protocol on the same port (NIP-1, 9, 11, 13, 40, 42, 45)
+store_events = true
+name = "My PrivCord server"
+description = "A relay run by its administrator."
+retention_days = 30
+max_events = 1000000
+# allowed_pubkeys = []          # hex keys; if any are listed, only they may publish
+# blocked_pubkeys = []
+# allowed_kinds = []
+# min_pow = 0                   # NIP-13 difficulty (bits) required to publish
+# auth_required = false         # NIP-42: clients must prove who they are first
+
 [turn]
 enabled = TURN_ENABLED
 listen = "0.0.0.0:3478"         # UDP

@@ -10,6 +10,7 @@ pub mod relay;
 pub mod store;
 pub mod turn_role;
 
+use axum::serve::ListenerExt;
 use config::Config;
 use relay::Relay;
 use std::net::SocketAddr;
@@ -105,6 +106,10 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     let router = net::router(app).into_make_service_with_connect_info::<SocketAddr>();
     let mut for_server = stopped.clone();
     let server = tokio::spawn(async move {
+        // No Nagle: small replies must not wait for the other side's delayed ACK.
+        let listener = listener.tap_io(|tcp| {
+            let _ = tcp.set_nodelay(true);
+        });
         let _ = axum::serve(listener, router)
             .with_graceful_shutdown(async move {
                 let _ = for_server.wait_for(|s| *s).await;

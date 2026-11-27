@@ -6,7 +6,22 @@ use futures_util::{SinkExt, StreamExt};
 use privcord_server::{config::Config, start};
 use serde_json::json;
 use std::time::{Duration, Instant};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
+
+/// Connects with Nagle's algorithm off, as the apps' libraries and Node's `ws` do.
+async fn connect_async(
+    url: &str,
+) -> Result<
+    (
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        tokio_tungstenite::tungstenite::handshake::client::Response,
+    ),
+    tokio_tungstenite::tungstenite::Error,
+> {
+    tokio_tungstenite::connect_async_with_config(url, None, true).await
+}
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "load check; run on purpose"]
