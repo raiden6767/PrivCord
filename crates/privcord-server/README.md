@@ -162,6 +162,28 @@ I read its source (event handling, storage, limits, configuration) and adopted w
 Left out on purpose: NIP-05 write verification (needs outbound web requests from the server), pay-to-relay, an external
 admission service, and logging each client's address and browser (this server keeps no such log).
 
+## Certificates that renew themselves
+
+```toml
+[tls]
+https_listen = "0.0.0.0:443"
+domain = "relay.example.com"
+acme = true
+acme_accept_terms = true        # you accept the certificate authority's terms (Let's Encrypt: letsencrypt.org/repository)
+acme_email = "you@example.com"  # optional
+# acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"   # try the staging one first
+```
+
+The server gets a certificate for `domain` by itself (ACME) and renews it 30 days before it runs out (it looks twice a day;
+a failed try is repeated after 5 minutes, then less often, up to every 6 hours, and the reason is printed). The name is proved
+with TLS-ALPN-01 on the HTTPS port, so **port 443 of `domain` must reach `https_listen`**; nothing else has to be open (no port
+80, no DNS access). The certificate and its key are written to `data_dir/tls` (private files), the account to `acme-account.json`
+there (encrypted when `storage.encrypt` is on), and the new certificate is served at once, with no restart. Until the first one
+arrives a placeholder is served (apps will not trust it). `acme_ca_root` points at the root certificate of a private authority
+(step-ca, Pebble). Checked against a mock authority that behaves like Let's Encrypt (it connects back and checks the challenge
+the way the real one does, signs the request, and the server then serves that certificate and renews it), **not against the real
+Let's Encrypt, which this machine cannot reach**: try the staging directory first on your own server.
+
 ## Admin panel
 
 ```toml

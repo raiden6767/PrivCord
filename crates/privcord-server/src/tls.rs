@@ -13,8 +13,15 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::SystemTime;
 use tokio_rustls::TlsAcceptor;
 
+/// The ALPN name of the ACME TLS challenge (RFC 8737).
+pub const ACME_ALPN: &[u8] = b"acme-tls/1";
+
 struct Resolver {
     current: RwLock<Arc<CertifiedKey>>,
+    /// With ACME: the challenge certificates being offered right now, by name. Only a connection that asks for `acme-tls/1`
+    /// ever gets one.
+    acme: bool,
+    challenges: RwLock<std::collections::HashMap<String, Arc<CertifiedKey>>>,
     cert_file: PathBuf,
     key_file: PathBuf,
     stamp: Mutex<Option<(SystemTime, SystemTime)>>,
@@ -27,7 +34,16 @@ impl std::fmt::Debug for Resolver {
 }
 
 impl ResolvesServerCert for Resolver {
-    fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+    fn resolve(&self, hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        if self.acme && hello.alpn().is_some_and(|mut a| a.any(|p| p == ACME_ALPN)) {
+            let name = hello.server_name().unwrap_or("").to_ascii_lowercase();
+            return self
+                .challenges
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(&name)
+                .cloned();
+        }
         Some(
             self.current
                 .read()
@@ -35,6 +51,40 @@ impl ResolvesServerCert for Resolver {
                 .clone(),
         )
     }
+}
+
+/// A certificate for `domain` made on the spot, served until the first real one arrives (nothing trusts it).
+fn placeholder(domain: &str) -> Result<Arc<CertifiedKey>, String> {
+    let made = rcgen::generate_simple_self_signed(vec![domain.to_owned()])
+        .map_err(|e| format!("could not make a placeholder certificate: {e}"))?;
+    let key = PrivateKeyDer::try_from(made.key_pair.serialize_der())
+        .map_err(|e| format!("placeholder key: {e}"))?;
+    let signing = any_supported_type(&key).map_err(|e| format!("placeholder key: {e}"))?;
+    Ok(Arc::new(CertifiedKey::new(
+        vec![made.cert.der().clone()],
+        signing,
+    )))
+}
+
+/// The certificate for the ACME TLS challenge (RFC 8737): self-signed for `domain`, with the proof (the SHA-256 of the key
+/// authorization) in a critical extension.
+pub fn challenge_cert(domain: &str, proof: &[u8]) -> Result<Arc<CertifiedKey>, String> {
+    let mut params = rcgen::CertificateParams::new(vec![domain.to_owned()])
+        .map_err(|e| format!("challenge certificate: {e}"))?;
+    params
+        .custom_extensions
+        .push(rcgen::CustomExtension::new_acme_identifier(proof));
+    let pair = rcgen::KeyPair::generate().map_err(|e| format!("challenge key: {e}"))?;
+    let cert = params
+        .self_signed(&pair)
+        .map_err(|e| format!("challenge certificate: {e}"))?;
+    let key =
+        PrivateKeyDer::try_from(pair.serialize_der()).map_err(|e| format!("challenge key: {e}"))?;
+    let signing = any_supported_type(&key).map_err(|e| format!("challenge key: {e}"))?;
+    Ok(Arc::new(CertifiedKey::new(
+        vec![cert.der().clone()],
+        signing,
+    )))
 }
 
 fn modified(p: &Path) -> Option<SystemTime> {
@@ -80,7 +130,13 @@ impl std::fmt::Debug for Tls {
 impl Tls {
     /// Loads the certificate named in `cfg`, or makes (and keeps in `data_dir/tls`) a self-signed one.
     pub fn load(cfg: &TlsConfig, data_dir: &Path, public_ip: &str) -> Result<Arc<Self>, String> {
-        let (cert_file, key_file, self_signed) = if cfg.cert_file.is_empty() {
+        let (cert_file, key_file, self_signed) = if cfg.acme {
+            // The certificate the ACME task keeps in `tls/`; until the first one is issued, a placeholder is served (it is
+            // never written to those files, so the first real one is noticed as a change).
+            let dir = data_dir.join("tls");
+            crate::fsutil::create_private_dir(&dir)?;
+            (dir.join("acme.crt"), dir.join("acme.key"), false)
+        } else if cfg.cert_file.is_empty() {
             if !cfg.self_signed {
                 return Err("TLS needs tls.cert_file and tls.key_file (or tls.self_signed = true to try things out)".into());
             }
@@ -108,9 +164,15 @@ impl Tls {
                 false,
             )
         };
-        let current = read_pair(&cert_file, &key_file)?;
+        let current = if cfg.acme && !(cert_file.exists() && key_file.exists()) {
+            placeholder(&cfg.domain)?
+        } else {
+            read_pair(&cert_file, &key_file)?
+        };
         let resolver = Arc::new(Resolver {
             current: RwLock::new(current),
+            acme: cfg.acme,
+            challenges: RwLock::new(std::collections::HashMap::new()),
             stamp: Mutex::new(modified(&cert_file).zip(modified(&key_file))),
             cert_file,
             key_file,
@@ -127,7 +189,11 @@ impl Tls {
             Ok(TlsAcceptor::from(Arc::new(c)))
         };
         Ok(Arc::new(Self {
-            https: build(vec![b"http/1.1".to_vec()])?,
+            https: build(if cfg.acme {
+                vec![b"http/1.1".to_vec(), ACME_ALPN.to_vec()]
+            } else {
+                vec![b"http/1.1".to_vec()]
+            })?,
             turn: build(vec![b"stun.turn".to_vec(), b"stun.nat-discovery".to_vec()])?,
             resolver,
             self_signed,
@@ -153,6 +219,31 @@ impl Tls {
             .unwrap_or_else(PoisonError::into_inner) = fresh;
         *stamp = now;
         Ok(true)
+    }
+
+    /// Where the ACME task keeps the certificate and its key.
+    pub fn acme_files(&self) -> (PathBuf, PathBuf) {
+        (
+            self.resolver.cert_file.clone(),
+            self.resolver.key_file.clone(),
+        )
+    }
+
+    /// Offers `key` to a connection that asks for the ACME challenge for `domain`.
+    pub fn set_challenge(&self, domain: &str, key: Arc<CertifiedKey>) {
+        self.resolver
+            .challenges
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(domain.to_ascii_lowercase(), key);
+    }
+
+    pub fn clear_challenges(&self) {
+        self.resolver
+            .challenges
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     /// The first certificate being served, DER (for a client that wants to trust it, as the tests do).
@@ -230,6 +321,10 @@ impl TlsListener {
                     }
                     drop(permit);
                     if let Ok(Ok(stream)) = done {
+                        // A connection that only came to be shown the ACME challenge certificate has nothing else to say.
+                        if stream.get_ref().1.alpn_protocol() == Some(ACME_ALPN) {
+                            return;
+                        }
                         let _ = tx.send((stream, peer)).await;
                     }
                 });

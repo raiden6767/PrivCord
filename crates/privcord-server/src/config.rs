@@ -223,8 +223,28 @@ impl Config {
                 self.admin.listen
             ));
         }
-        if self.wants_tls() && self.tls.cert_file.is_empty() && !self.tls.self_signed {
+        if self.wants_tls()
+            && self.tls.cert_file.is_empty()
+            && !self.tls.self_signed
+            && !self.tls.acme
+        {
             out.push("TLS is asked for (tls.https_listen or turn.tls_listen) but there is no certificate: set tls.cert_file and tls.key_file, or tls.self_signed = true to try things out".into());
+        }
+        if self.tls.acme {
+            if self.tls.domain.trim().is_empty()
+                || self.tls.domain.parse::<std::net::IpAddr>().is_ok()
+            {
+                out.push("tls.acme needs tls.domain: the name (not an IP address) people use to reach this server".into());
+            }
+            if !self.tls.acme_accept_terms {
+                out.push("tls.acme needs tls.acme_accept_terms = true: you accept the certificate authority's terms of service".into());
+            }
+            if self.tls.https_listen.is_empty() {
+                out.push("tls.acme needs tls.https_listen (port 443): the authority proves the name by connecting there".into());
+            }
+            if !self.tls.cert_file.is_empty() {
+                out.push("tls.acme and tls.cert_file are alternatives: use one".into());
+            }
         }
         if self.tls.cert_file.is_empty() != self.tls.key_file.is_empty() {
             out.push("tls.cert_file and tls.key_file go together".into());
@@ -381,6 +401,19 @@ pub struct TlsConfig {
     pub domain: String,
     /// Serve the relay (and admin panel) over TLS here, for example `0.0.0.0:443`. The plain listener stays as it is.
     pub https_listen: String,
+    /// Get and renew the certificate for `domain` by itself (ACME, for example Let's Encrypt), proving the name with
+    /// TLS-ALPN-01 on `https_listen`: that must be reachable as port 443 of `domain`. The certificate and its key are kept in
+    /// `data_dir/tls`; until the first one is issued a placeholder is served. Needs `acme_accept_terms = true`.
+    pub acme: bool,
+    /// Say yes to the certificate authority's terms of service (for Let's Encrypt: https://letsencrypt.org/repository/).
+    pub acme_accept_terms: bool,
+    /// An address the authority can write to when something about the certificate needs attention (optional).
+    pub acme_email: String,
+    /// The authority's ACME directory. Empty: Let's Encrypt (production). The staging one is
+    /// `https://acme-staging-v02.api.letsencrypt.org/directory`: try that first (its certificates are not trusted).
+    pub acme_directory: String,
+    /// A file with the root certificate of a private authority (for a CA of your own, such as step-ca). Empty: the system's.
+    pub acme_ca_root: String,
 }
 
 /// The admin panel: a web page and API for managing this server, on its own listener so it can sit on localhost or a

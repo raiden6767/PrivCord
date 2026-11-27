@@ -2,6 +2,7 @@
 //!
 //! The server carries sealed messages and cannot read them. Whoever runs it is responsible for it.
 
+pub mod acme;
 pub mod admin;
 pub mod config;
 pub mod fsutil;
@@ -176,6 +177,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     #[cfg(not(feature = "turn"))]
     let turn_info = None;
     let https_listen = cfg.tls.https_listen.clone();
+    let acme_cfg = cfg.tls.clone();
     let admin_cfg = cfg.admin.clone();
     let data_dir = cfg.server.data_dir.clone();
     let http_limits = serve::HttpLimits::from_config(&cfg.server);
@@ -283,6 +285,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         .and_then(|r| r.nostr().cloned())
         .filter(|n| n.cfg.durable && n.cfg.persist)
         .map(|n| tokio::spawn(n.run_committer(stopped.clone())));
+    let stopped_for_acme = stopped.clone();
     let sweeper = relay.clone().map(|r| {
         tokio::spawn(async move {
             let mut sweep = tokio::time::interval(Duration::from_millis(500));
@@ -297,8 +300,21 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             }
         })
     });
+    // Certificates that renew themselves.
+    let acme_task = tls.clone().filter(|_| acme_cfg.acme).map(|t| {
+        tokio::spawn(acme::run(
+            t,
+            acme_cfg.clone(),
+            data_dir.clone(),
+            codec.clone(),
+            stopped_for_acme,
+        ))
+    });
     let done = tokio::spawn(async move {
         let _ = server.await;
+        if let Some(a) = acme_task {
+            let _ = a.await;
+        }
         if let Some(t) = tls_server {
             let _ = t.await;
         }
