@@ -12,6 +12,8 @@ held. What was found, and what was done:
 - The page can no longer read the settings-file key or the automatic-backup passphrase from the credential store.
 - A sealed blob longer than we ever produce (64 KB) is refused before it is decoded, so a hostile relay cannot make us decode huge ones.
 - Linking a new device by typing or scanning the first device's code: the new device now holds the grant until the person taps "They match" (desktop and Android). Before, the first grant to arrive was taken, so someone who photographed the QR could race the real device.
+- An old "keys" message replayed by a relay can no longer set a friend's inbox back: a message from the same install with an older inbox generation than we hold is ignored.
+- The Android recovery-phrase screen blocks screenshots, screen recording and the recent-apps preview whatever the setting says.
 - Right-to-left override and zero-width characters are removed from received file names.
 
 ## Open (not fixed yet)
@@ -25,7 +27,6 @@ held. What was found, and what was done:
 - The relay's `del` only needs a subscription to the mailbox, which anyone who has a contact card can make.
 - No total storage cap for files and messages from contacts; no size cap on blobs read from a relay.
 - The anonymous envelope falls back to a plain one when the inner blob is over about 34 KB (the first handover is).
-- "keys" payloads carry no counter, so a relay can replay an old one (this can undo an inbox rotation).
 - The Windows updater's manifest version is not signed (rollback needs write access to the release); test builds use a public
   debug keystore.
 - The desktop webview can call any engine command; the page is the engine's front end and uses nearly all of them, so an allowlist would add little. There is no XSS sink today and the CSP blocks inline script.

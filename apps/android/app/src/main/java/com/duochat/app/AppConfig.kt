@@ -11,7 +11,7 @@ object AppConfig {
     const val APP_VERSION = "0.1.0"
 
     // Who made it and under what licence: the same as docs/about.json (a test checks they agree).
-    const val CREATED_BY = "anandkrishna1900"
+    const val CREATED_BY = "raiden6767"
     const val LICENSE_SHORT = "PC-NC (non-commercial)"
 
     val conversationId: String =

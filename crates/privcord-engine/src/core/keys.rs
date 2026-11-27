@@ -58,6 +58,8 @@ pub(super) struct TheirKeys {
     inbox: Option<String>,
     /// The install that sent them, when it said (see `fresh_keys_for`): filed under its own address once we know it.
     dev: Option<String>,
+    /// The inbox generation they told us with these keys: an older one from the same install is a replay and is ignored.
+    ig: u32,
 }
 
 #[derive(Default)]
@@ -97,7 +99,7 @@ impl KeyState {
             .map(|(u, t)| {
                 (
                     u.to_string(),
-                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>(), "anon": t.anon, "inbox": t.inbox, "dev": t.dev }),
+                    json!({ "standing": t.standing.to_value(), "onetime": t.onetime.iter().map(PeerKey::to_value).collect::<Vec<_>>(), "anon": t.anon, "inbox": t.inbox, "dev": t.dev, "ig": t.ig }),
                 )
             })
             .collect();
@@ -163,6 +165,11 @@ impl KeyState {
                     .filter(|m| is_mailbox_name(m))
                     .map(str::to_owned);
                 let dev = t.get("dev").and_then(Value::as_str).map(str::to_owned);
+                let ig = t
+                    .get("ig")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .unwrap_or(0);
                 state.theirs.insert(
                     uid,
                     TheirKeys {
@@ -171,6 +178,7 @@ impl KeyState {
                         anon,
                         inbox,
                         dev,
+                        ig,
                     },
                 );
             }
@@ -257,7 +265,7 @@ impl Core {
         // "dev": the install these keys belong to, so a friend who still has us under the account address can file
         // them under the device's own (the account key's holder speaks as the account until they know our list).
         Some(
-            json!({ "standing": standing, "onetime": publics, "anon": true, "inbox": inbox, "dev": self.device_id }),
+            json!({ "standing": standing, "onetime": publics, "anon": true, "inbox": inbox, "dev": self.device_id, "ig": self.keys.inbox_gen }),
         )
     }
 
@@ -361,14 +369,28 @@ impl Core {
             .filter(|_| Self::device_of(peer).is_none())
             .and_then(|d| Self::device_address(peer, d))
             .filter(|a| self.known_address(a));
+        let ig = frame
+            .get("ig")
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0);
+        let address = device_address.unwrap_or_else(|| peer.clone());
+        // An old copy of their keys, replayed by a relay, would set their inbox back to one a removed contact still
+        // watches: a frame from the same install with an older inbox generation than we hold is ignored.
+        if let Some(have) = self.keys.theirs.get(&address) {
+            if have.dev.is_some() && have.dev == dev && ig < have.ig {
+                return;
+            }
+        }
         self.keys.theirs.insert(
-            device_address.unwrap_or_else(|| peer.clone()),
+            address,
             TheirKeys {
                 standing,
                 onetime,
                 anon,
                 inbox,
                 dev,
+                ig,
             },
         );
         self.save_keys();
