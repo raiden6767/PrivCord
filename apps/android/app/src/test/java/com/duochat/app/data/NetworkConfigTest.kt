@@ -13,7 +13,7 @@ class NetworkConfigTest {
         assertTrue(back.torMode)
         assertTrue("Tor mode has no live link, so messages must go through the relays", back.relaysMessages)
         assertTrue(!NetworkConfig().toJson().contains("torMode"))
-        assertTrue(!NetworkConfig().relaysMessages)
+        assertTrue("messages wait on the relay unless the person turned that off", NetworkConfig().relaysMessages)
     }
 
     @Test

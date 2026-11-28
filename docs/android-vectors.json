@@ -273,7 +273,7 @@
             ]
           }
         ],
-        "storeForward": false,
+        "storeForward": true,
         "forceRelay": false,
         "bluetooth": true
       }
@@ -300,7 +300,7 @@
             ]
           }
         ],
-        "storeForward": false,
+        "storeForward": true,
         "forceRelay": false,
         "bluetooth": true
       }
@@ -327,7 +327,7 @@
             ]
           }
         ],
-        "storeForward": false,
+        "storeForward": true,
         "forceRelay": false,
         "bluetooth": true
       }
@@ -370,7 +370,7 @@
         "stun": [],
         "turn": [],
         "signaling": [],
-        "storeForward": false,
+        "storeForward": true,
         "forceRelay": false,
         "bluetooth": true
       }
@@ -424,7 +424,7 @@
           }
         ],
         "signaling": [],
-        "storeForward": false,
+        "storeForward": true,
         "forceRelay": false,
         "bluetooth": true
       }

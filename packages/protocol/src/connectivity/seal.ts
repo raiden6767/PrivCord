@@ -19,7 +19,9 @@ import {
 
 /** A signed, encrypted payload addressed to one contact. Relays only ever see this. */
 export interface SealedBlob {
-  v: 1;
+  /** 1: sealed to the friend's account key; 2: to one of their one-time keys; 3: an anonymous envelope on a private inbox.
+   *  The page only carries blobs between the relay sockets and the engine, which checks them; it must not drop the newer kinds. */
+  v: 1 | 2 | 3;
   to: string;
   from: string;
   epk: PublicJwk;
@@ -132,7 +134,7 @@ export function validateBlob(value: unknown): value is SealedBlob {
   if (typeof value !== 'object' || value === null) return false;
   const b = value as Record<string, unknown>;
   return (
-    b.v === 1 &&
+    (b.v === 1 || b.v === 2 || b.v === 3) &&
     typeof b.to === 'string' &&
     typeof b.from === 'string' &&
     validatePublicJwk(b.epk) &&

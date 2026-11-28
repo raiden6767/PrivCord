@@ -36,7 +36,8 @@ export const DEFAULT_NETWORK_CONFIG: NetworkConfig = {
   stun: [...DEFAULT_STUN_URLS],
   turn: [],
   signaling: [{ kind: 'nostr', relays: [...DEFAULT_NOSTR_RELAYS] }],
-  storeForward: false,
+  // On: a message for a friend who is offline waits on the relay (sealed) until they open the app. Off only by choice.
+  storeForward: true,
   forceRelay: false,
   bluetooth: true,
   transportMode: 'AUTOMATIC',
@@ -101,7 +102,7 @@ export function parseNetworkConfig(raw: string | null | undefined): NetworkConfi
     stun: Array.isArray(p.stun) ? strList(p.stun).filter((u) => isIceUrl(u, ['stun', 'stuns'])) : [...DEFAULT_STUN_URLS],
     turn,
     signaling,
-    storeForward: p.storeForward === true,
+    storeForward: p.storeForward === undefined ? true : p.storeForward === true,
     forceRelay: p.forceRelay === true,
     bluetooth: p.bluetooth !== false,
     transportMode: mode,

@@ -154,6 +154,7 @@ fn a_channel_also_travels_through_the_signaling_service() {
     let (mut ann, mut bob) = (node("ann", &clock), node("bob", &clock));
     for n in [&mut ann, &mut bob] {
         n.transport.set_signaling(true);
+        n.core.set_store_forward(false).unwrap(); // (messages wait on the relay by default; this test is about it being off)
         n.core.join_channel("general").unwrap();
         n.core.tick();
     }

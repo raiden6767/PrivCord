@@ -38,8 +38,15 @@ const ANSWER_LINGER_MS: i64 = 1_500;
 const LIVE_TTL_SEC: u32 = 120;
 /// After adding someone from their card (a QR code), we ask them to add us back this often until we are connected...
 const HELLO_EVERY_MS: i64 = 60_000;
-/// ...for at most this long (they may be offline; on their side it waits as a request).
-const HELLO_FOR_MS: i64 = 30 * 60_000;
+/// After the first ten minutes the request is repeated less often: every quarter hour for six hours, then hourly.
+const HELLO_SLOW_EVERY_MS: i64 = 15 * 60_000;
+const HELLO_SLOWER_EVERY_MS: i64 = 60 * 60_000;
+/// A copy of the request the relay keeps for a week, left now and then (a friend who is away from their phone, or asleep, or
+/// on the other side of the world gets it whenever they next open the app).
+const HELLO_KEPT_TTL_SEC: u32 = 7 * 24 * 3600;
+const HELLO_KEPT_EVERY_MS: i64 = 12 * 3600 * 1000;
+/// ...for at most this long (they may be away for days; on their side it waits as a request).
+const HELLO_FOR_MS: i64 = 30 * 24 * 3600 * 1000;
 /// Requests kept at once: someone who saw our QR code cannot fill the screen with them.
 const MAX_REQUESTS: usize = 20;
 const KV_PENDING: &str = "invites.pending.v1";
@@ -121,8 +128,11 @@ impl Core {
         self.invites.hellos.contains_key(person)
     }
 
+    /// Messages (and setup) wait on the relay, sealed, for a friend who is offline. On unless the person turned it off:
+    /// without it a message reaches a friend only while both phones are online and able to open a direct link, which is a
+    /// gamble; with it, delivery needs only a relay that both can reach, whenever each opens the app.
     pub(super) fn store_forward(&self) -> bool {
-        matches!(self.ports.storage.kv(KV_STORE_FORWARD), Ok(Some(v)) if v == b"1")
+        !matches!(self.ports.storage.kv(KV_STORE_FORWARD), Ok(Some(v)) if v == b"0")
     }
 
     /// With this on, invites are also kept on the relay for 15 minutes; with it off nothing may be stored there.
@@ -218,23 +228,18 @@ impl Core {
         &self,
         mailbox: &str,
         blob: &SealedBlob,
-        keep: bool,
+        keep: Option<u32>,
     ) -> Result<(), ErrorCode> {
         let text = blob.encode();
         let live = self
             .ports
             .transport
             .signal_put(mailbox, &text, PutKind::Sig, LIVE_TTL_SEC);
-        let stored = if keep || self.store_forward() {
-            Some(self.ports.transport.signal_put(
-                mailbox,
-                &text,
-                PutKind::Msg,
-                u32::try_from(INVITE_TTL_SEC).unwrap_or(900),
-            ))
-        } else {
-            None
-        };
+        let stored = keep.map(|ttl| {
+            self.ports
+                .transport
+                .signal_put(mailbox, &text, PutKind::Msg, ttl)
+        });
         if live.is_ok() || stored.is_some_and(|s| s.is_ok()) {
             Ok(())
         } else {
@@ -265,7 +270,11 @@ impl Core {
             &mut *self.ports.entropy,
         )?;
         let mailbox = a.rv.mailbox.clone();
-        let sent = self.put_everywhere(&mailbox, &blob, first);
+        let sent = self.put_everywhere(
+            &mailbox,
+            &blob,
+            (first || self.store_forward()).then(|| u32::try_from(INVITE_TTL_SEC).unwrap_or(900)),
+        );
         if first && sent.is_ok() {
             if let Some(a) = self.invites.active.as_mut() {
                 a.stored = true;
@@ -481,12 +490,20 @@ impl Core {
                 self.invites.hellos.remove(&uid);
                 continue;
             }
-            let mut keep = false;
+            let mut keep = None;
             if let Some(h) = self.invites.hellos.get_mut(&uid) {
-                h.next_at = now + HELLO_EVERY_MS;
-                keep = h.stored_at == 0 || now - h.stored_at >= 10 * 60_000;
-                if keep {
+                let age = now - (h.until - HELLO_FOR_MS);
+                h.next_at = now
+                    + if age < 10 * 60_000 {
+                        HELLO_EVERY_MS
+                    } else if age < 6 * 3600 * 1000 {
+                        HELLO_SLOW_EVERY_MS
+                    } else {
+                        HELLO_SLOWER_EVERY_MS
+                    };
+                if h.stored_at == 0 || now - h.stored_at >= HELLO_KEPT_EVERY_MS {
                     h.stored_at = now;
+                    keep = Some(HELLO_KEPT_TTL_SEC);
                 }
             }
             let Ok(card) = self.own_card(self.display_name.clone().as_deref()) else {
@@ -600,7 +617,11 @@ impl Core {
             &card,
             &mut *self.ports.entropy,
         )?;
-        self.put_everywhere(&rv.mailbox, &blob, true)
+        self.put_everywhere(
+            &rv.mailbox,
+            &blob,
+            Some(u32::try_from(INVITE_TTL_SEC).unwrap_or(900)),
+        )
     }
 
     /// Send our answer again after it failed.
@@ -661,9 +682,20 @@ impl Core {
         // through the same checks as any other message.
         if blob.v == 3 {
             if self.own_mailboxes().iter().any(|m| m == mailbox) {
-                if let Some(inner) = self.open_anon_blob(&blob) {
-                    self.signal_blob(mailbox, &inner.encode());
+                match self.open_anon_blob(&blob) {
+                    Some(inner) => self.signal_blob(mailbox, &inner.encode()),
+                    None => self.diag(
+                        "relay",
+                        "an envelope on our mailbox could not be opened",
+                        "",
+                    ),
                 }
+            } else {
+                self.diag(
+                    "relay",
+                    "an envelope came on a mailbox that is not ours",
+                    "",
+                );
             }
             return;
         }

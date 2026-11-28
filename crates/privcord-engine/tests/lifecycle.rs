@@ -643,6 +643,7 @@ fn a_message_for_an_offline_friend_waits_on_the_relay_only_when_allowed_and_is_a
     befriend(&mut a, &mut b);
     a.transport.set_signaling(true);
     b.transport.set_signaling(true);
+    a.core.set_store_forward(false).unwrap(); // on by default; this test starts with it off
     let id = a.core.send_message(&b.uid, "see you at 9", None).unwrap();
     a.core.tick();
     assert!(
@@ -714,6 +715,7 @@ fn relayed_and_received() -> (
     a.transport.set_signaling(true);
     b.transport.set_signaling(true);
     a.core.set_store_forward(true).unwrap();
+    b.core.set_store_forward(false).unwrap();
     let id = a.core.send_message(&b.uid, "read me", None).unwrap();
     a.core.tick();
     for s in put_blobs(&a) {
@@ -1275,6 +1277,7 @@ fn an_open_invite_slows_down_after_a_minute_and_stops_when_closed() {
     let clock = FakeClock::at(1_700_000_000_000);
     let mut a = node("alice", &clock);
     a.transport.set_signaling(true);
+    a.core.set_store_forward(false).unwrap();
     a.core.create_invite().unwrap();
     let puts = |n: &Node| {
         n.transport

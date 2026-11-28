@@ -405,7 +405,8 @@ impl World {
             }
             // Time passes.
             _ => {
-                let secs = [5, 30, 120, 600][self.rand(4)];
+                // From seconds to days: the people met at an event, and one of them opens the app on the way home, or next week.
+                let secs = [5, 30, 120, 600, 6 * 3600, 86_400, 3 * 86_400][self.rand(7)];
                 self.clock.advance(secs * 1000);
                 self.note(format!("{secs} s pass"));
             }
@@ -431,8 +432,8 @@ impl World {
             let b_rounds = self.phones[b].open_rounds - p.their_rounds_then;
             let a_rounds = self.phones[a].open_rounds - p.own_rounds_then;
             // Both were around long enough (a keeps asking while it is open; b listens while it is open), within the half
-            // hour a keeps asking for.
-            if now - p.since <= 25 * 60_000 && b_rounds >= 6 && a_rounds >= 6 {
+            // days a keeps asking for.
+            if now - p.since <= 6 * 86_400_000 && b_rounds >= 6 && a_rounds >= 6 {
                 return Some(format!("{a} added {b}, {b} had the app open for {b_rounds} rounds, but {b} never got a request"));
             }
         }

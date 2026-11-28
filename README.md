@@ -122,7 +122,7 @@ friend across the internet it uses a few optional services. They do different jo
 | **Signaling** (public Nostr relays, or your own) | Helps two devices find each other | No (sealed, signed blobs) | For automatic reconnect |
 | **STUN** | Tells a device its public address | No | Without it, only same-network links |
 | **TURN** | Relays the encrypted stream when a direct link is impossible | No (sees only encrypted data) | Only on strict networks |
-| **Store-and-forward relay** | Holds sealed messages for friends who are offline | No | Off by default |
+| **Store-and-forward relay** | Holds sealed messages for friends who are offline | No | On by default (you can turn it off) |
 | **Bluetooth LE** | Local link, no internet at all | No | Optional |
 
 The defaults use public third-party STUN and Nostr servers. They can see connection metadata (your IP
