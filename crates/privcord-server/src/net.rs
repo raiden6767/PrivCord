@@ -654,7 +654,12 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String, who: Who) {
             match out {
                 Out::Text(t) => {
                     let n = t.len();
-                    let sent = sink.send(Message::Text(t.as_ref().into())).await;
+                    // Frames that are waiting behind this one go out in the same write: flush only when the queue is empty
+                    // (or before waiting for the speed limit), so a burst costs one system call, not one per message.
+                    let mut sent = sink.feed(Message::Text(t.as_ref().into())).await;
+                    if sent.is_ok() && (rx.is_empty() || pace_out.is_some()) {
+                        sent = sink.flush().await;
+                    }
                     usage_w.web(0, n);
                     if let Some(p) = pace_out.as_mut() {
                         p.wait(n).await;
