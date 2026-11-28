@@ -1,9 +1,9 @@
 /**
- * Everything the screens use from a chat engine. Two implementations: `ChatEngine` (the original TypeScript engine) and
- * `HostedChatEngine` (the same behaviour from the Rust engine hosted in the Tauri shell). Same idea as `ChatEngineApi` on Android.
+ * Everything the screens use from a chat engine. The one implementation is
+ * `HostedChatEngine` (the Rust engine hosted in the Tauri shell); tests use an in-memory fake. Same idea as `ChatEngineApi` on Android.
  */
-import type { FileMeta, LocalStore } from './localDb';
-import type { ChatState, SearchHit } from './engine';
+import type { FileMeta, WipeStore } from './chatTypes';
+import type { ChatState, SearchHit } from './chatTypes';
 
 export interface DeviceReceipt {
   deviceId: string;
@@ -18,13 +18,13 @@ export interface ChatEngineApi {
   getState(): ChatState;
   subscribe(listener: (state: ChatState) => void): () => void;
   /** The store the emergency wipe works on. */
-  readonly localStore: LocalStore;
+  readonly localStore: WipeStore;
 
   start(): Promise<void>;
   stop(): void;
   setVisible(visible: boolean): void;
   openConversation(convId: string | null): void;
-  /** Load a page of older messages of a chat (only the hosted engine keeps a window; the other holds them all). */
+  /** Load a page of older messages of a chat (the engine keeps a window of each chat). */
   loadEarlier?(convId: string): Promise<void>;
   clearNotice(): void;
 

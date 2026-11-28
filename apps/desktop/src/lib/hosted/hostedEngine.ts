@@ -14,11 +14,11 @@ import {
   validateFileSize,
   type NetworkConfig,
 } from '@duochat/protocol';
-import { NO_PREFS, type ChatState, type DeviceLinkState, type PrefsView, type SearchHit } from '../engine';
+import { NO_PREFS, type ChatState, type DeviceLinkState, type PrefsView, type SearchHit } from '../chatTypes';
 import type { ChatEngineApi, DeviceReceipt, SendResult } from '../engineApi';
 import { HostedEngine, type EngineBridge } from '../engineBridge';
 import { uidMatchesKeys, type DeviceIdentity } from '../identity';
-import type { FileMeta, LocalStore, StoredMessage } from '../localDb';
+import type { FileMeta, StoredMessage, WipeStore } from '../chatTypes';
 import { HostedRuntime, type RuntimeOptions } from './runtime';
 import { shapeState, type MessageJson, type SnapshotJson } from './shape';
 
@@ -979,7 +979,7 @@ export class HostedChatEngine implements ChatEngineApi {
    * The emergency wipe works on a `LocalStore`. With the engine, the data lives in the engine's own database, so this stands in
    * for it: clearing it wipes the engine (and its identity secret), and there is no separate schema to destroy.
    */
-  get localStore(): LocalStore {
+  get localStore(): WipeStore {
     // The wipe stops networking (and so the engine) before it erases data, so this cannot rely on the engine running: the
     // shell deletes the database and the identity itself, and a failure fails the step instead of reading "erased".
     const wipe = async () => {
@@ -987,7 +987,7 @@ export class HostedChatEngine implements ChatEngineApi {
       if (this.deps.bridge.erase) await this.deps.bridge.erase();
       await this.deps.deleteSecret(ENGINE_IDENTITY_KEY).catch(() => undefined);
     };
-    return { clearAll: wipe, destroySchema: async () => undefined } as unknown as LocalStore;
+    return { clearAll: wipe, clearMessages: async () => undefined, destroySchema: async () => undefined };
   }
 
   async clearLocalData(): Promise<void> {

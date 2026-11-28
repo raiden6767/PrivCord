@@ -21,8 +21,8 @@ import type {
   LastMessage,
   MemberView,
   UiMessage,
-} from '../engine';
-import type { StoredMessage } from '../localDb';
+} from '../chatTypes';
+import type { StoredMessage } from '../chatTypes';
 import type { SignalingStatus } from '../signaling/types';
 
 /* ---- the engine's JSON (serde output of the FFI types) ---- */

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { InviteRequest } from '../lib/engine';
+import type { InviteRequest } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { Modal } from './Modal';
 import { CheckIcon, ShieldIcon } from './Icons';

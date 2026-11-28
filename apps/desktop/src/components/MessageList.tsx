@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { REACTION_EMOJI, formatBytes, isInlineAudio, isInlineImage, isInlineVideo, type DeliveryState } from '@duochat/protocol';
-import type { FileMeta } from '../lib/localDb';
-import type { UiMessage } from '../lib/engine';
+import type { FileMeta } from '../lib/chatTypes';
+import type { UiMessage } from '../lib/chatTypes';
 import { formatDay, formatTime } from '../lib/format';
 import { copyText } from '../lib/clipboard';
 import { playedBars, waveformFor } from '../lib/waveform';

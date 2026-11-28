@@ -8,7 +8,7 @@ import {
   type NetworkConfig,
   type TransportMode,
 } from '@duochat/protocol';
-import type { ChatState } from '../lib/engine';
+import type { ChatState } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { BUILTIN_TURN, loadNetworkConfig, saveNetworkConfig, setTorMode, torModeActive } from '../lib/network';
 import { CheckIcon, InfoIcon } from './Icons';

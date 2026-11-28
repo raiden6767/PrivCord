@@ -3,7 +3,7 @@ import { loadNetworkConfig } from '../lib/network';
 import { privacyCheckup, SECTION_OF, type CheckupItem } from '../lib/privacyCheckup';
 import type { ChatEngineApi } from '../lib/engineApi';
 import type { AppSettings } from '../lib/settings';
-import type { ChatState } from '../lib/engine';
+import type { ChatState } from '../lib/chatTypes';
 import { isLockEnabled } from '../lib/appLock';
 import { hidesIp } from '../lib/insightInputs';
 import type { SettingsSection } from './SettingsDialog';

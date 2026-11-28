@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { disableLock, enableLock, isLockEnabled, lockSupported, unlock } from '../lib/appLock';
-import type { ChatState } from '../lib/engine';
+import type { ChatState } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import type { AppSettings, ThemeMode } from '../lib/settings';
 import { ACCENTS } from '../lib/settings';
@@ -16,7 +16,7 @@ import { LAST_BACKUP_KEY, PrivacyCheckup } from './PrivacyCheckup';
 import { NetworkTransparency } from './NetworkTransparency';
 import { UpdateCheck } from './UpdateControl';
 import { StorageByChat } from './StorageByChat';
-import { NO_PREFS } from '../lib/engine';
+import { NO_PREFS } from '../lib/chatTypes';
 import { formatBytes } from '../lib/format';
 import { DeliveryHealth, DevicesStrip, DiagLogCard, SupportTools, WhatsNew } from './Insights';
 import { AlertIcon, CheckIcon, KeyIcon, TrashIcon } from './Icons';

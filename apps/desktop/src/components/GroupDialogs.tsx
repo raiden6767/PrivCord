@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ChatState, ContactView, GroupView } from '../lib/engine';
+import type { ChatState, ContactView, GroupView } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { Modal } from './Modal';
 import { Avatar } from './Avatar';

@@ -1,15 +1,11 @@
 import { useEffect, useState } from 'react';
 import { watchMyServers } from '../lib/myServerLoop';
-import { ChatEngine, type ChatState } from '../lib/engine';
 import { pushNativeConfig } from '../lib/network';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { hostedEngineEnabled } from '../lib/hosted/enable';
 import { startHostedEngine } from '../lib/hosted/start';
-import { LOCAL_ID, loadIdentity } from '../lib/identity';
-import { LocalStore } from '../lib/localDb';
-import { createTextCipher } from '../lib/encryption';
-import { notifyIncoming } from '../lib/notifications';
-import { config } from '../config';
+import type { ChatState } from '../lib/chatTypes';
+import { loadIdentity } from '../lib/identity';
 import { attachDiag, installDiagHooks, withDiag } from '../lib/diag';
 
 export interface UseChatEngine {
@@ -44,7 +40,10 @@ export function useChatEngine(): UseChatEngine {
       await stopping;
       const identity = await loadIdentity();
       if (cancelled) return;
-      if (!identity && hostedEngineEnabled()) {
+      if (!hostedEngineEnabled()) {
+        throw new Error('PrivCord runs inside its desktop app: the engine is hosted by the app shell.');
+      }
+      if (!identity) {
         // No recovery phrase on this device: the engine may hold an account this device was linked to, or the person
         // may link it now. Start it either way; only an engine with no account asks for an identity.
         const hosted = await startHostedEngine(null);
@@ -61,37 +60,20 @@ export function useChatEngine(): UseChatEngine {
         await pushNativeConfig();
         return;
       }
-      setNeedsIdentity(identity === null);
-      if (!identity) return;
-      if (hostedEngineEnabled()) {
-        // The Rust engine, hosted in the shell. The old local store is not opened: the engine has its own database.
-        const hosted = await startHostedEngine(identity);
-        created = hosted;
-        if (cancelled) {
-          hosted.stop();
-          return;
-        }
-        setEngine(withDiag(hosted));
-        attachDiag(hosted);
-        unsubscribe = hosted.subscribe(setState);
-        await hosted.start();
-        // The shell's relay sockets get the settings once the engine runs (and, after a start at sign-in, the hidden
-        // window can then go).
-        await pushNativeConfig();
+      setNeedsIdentity(false);
+      const hosted = await startHostedEngine(identity);
+      created = hosted;
+      if (cancelled) {
+        hosted.stop();
         return;
       }
-      const store = new LocalStore();
-      store.setCipher(await createTextCipher(LOCAL_ID));
-      const chatEngine = new ChatEngine({
-        identity,
-        context: config.conversationId,
-        store,
-        onNotify: (message, title) => void notifyIncoming(message, title),
-      });
-      created = chatEngine;
-      setEngine(chatEngine);
-      unsubscribe = chatEngine.subscribe(setState);
-      await chatEngine.start();
+      setEngine(withDiag(hosted));
+      attachDiag(hosted);
+      unsubscribe = hosted.subscribe(setState);
+      await hosted.start();
+      // The shell's relay sockets get the settings once the engine runs (and, after a start at sign-in, the hidden
+      // window can then go).
+      await pushNativeConfig();
     })().catch((error) => {
       if (!cancelled) setFatal(error instanceof Error ? error.message : String(error));
     });

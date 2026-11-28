@@ -1,6 +1,6 @@
 /**
- * Whether the page runs on the Rust engine hosted in the Tauri shell. The packaged app always does. The browser build (development
- * and the end-to-end suite) has no shell to host the engine, so it runs the TypeScript one.
+ * Whether the page can run the Rust engine hosted in the Tauri shell. The packaged app always can. A plain browser has no shell to
+ * host the engine, so there the app shows a message instead (there is no other engine).
  */
 import { isTauri } from '../../config';
 
