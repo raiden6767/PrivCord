@@ -169,3 +169,14 @@ fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; }
 .setup { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
 .setup h3 { margin-top: 0; }
 [hidden] { display: none !important; }
+
+/* Health and live details */
+.head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.lvl { display: inline-block; font: 800 .74rem/1 var(--sans); letter-spacing: .05em; text-transform: uppercase; padding: 6px 10px; border-radius: 99px; border: 1.5px solid var(--line2); justify-self: end; }
+.lvl.good { background: var(--yellow); color: var(--on-yellow); border-color: var(--text); }
+.lvl.watch { border-style: dashed; }
+.lvl.fix { border-color: var(--danger); color: var(--danger); }
+.item .detail.todo { color: var(--text); }
+
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
+.row select { flex: 1 1 240px; width: auto; }

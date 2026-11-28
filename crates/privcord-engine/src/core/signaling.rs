@@ -484,10 +484,7 @@ impl Core {
         match text("t") {
             Some("ready") => {
                 // They are online and waiting: if we dial, do it now.
-                if let Some(p) = self.peers.get_mut(&from) {
-                    p.attempts = 0;
-                    p.last_attempt_at = 0;
-                }
+                self.reset_dial_backoff(Some(&from));
                 self.hub.publish(EngineEvent::SignalReceived {
                     peer: from,
                     message: SignalMessage::Ready,

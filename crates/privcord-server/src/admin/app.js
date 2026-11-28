@@ -5,7 +5,7 @@
   const store = (k) => { try { return window[k]; } catch { return null; } };
   const session = store('sessionStorage'), local = store('localStorage');
   let token = (session && session.getItem('pc-admin-token')) || '';
-  let me = null, current = 'home', timer = null;
+  let me = null, current = 'home', timer = null, liveTimer = null;
 
   // ---------- small helpers ----------
   function el(tag, attrs, ...kids) {
@@ -162,7 +162,7 @@
     };
   }
   function show(id) {
-    current = id; clearInterval(timer);
+    current = id; clearInterval(timer); clearInterval(liveTimer);
     for (const b of tabsOf()) { const on = b.id === 'tab-' + id; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
     $('view').setAttribute('aria-labelledby', 'tab-' + id);
     put($('view'), skeleton());
@@ -171,8 +171,80 @@
   }
   const go = (id) => { if (tabsOf().some((b) => b.id === 'tab-' + id)) { tabsOf().find((b) => b.id === 'tab-' + id).focus(); show(id); } };
 
+  // ----- Health and live numbers (Home) -----
+  const LEVEL_WORD = { good: 'Good', watch: 'Watch', fix: 'Fix' };
+  const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} GB` : `${Math.round(n / 1024)} MB`);
+  const bytesText = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${(b / 1e6).toFixed(0)} MB` : `${Math.round(b / 1e3)} kB`);
+
+  async function downloadReport() {
+    const res = await fetch('/admin/api/health/report', { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' });
+    if (!res.ok) throw new Error('Could not make the report.');
+    const blob = await res.blob();
+    const name = (/filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '') || [])[1] || 'privcord-health.txt';
+    const a = el('a', { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  function healthSection() {
+    const box = el('div', { 'aria-live': 'polite' }, skeleton());
+    const btn = el('button', { type: 'button', class: 'btn ghost sm', on: { click: async () => { try { await downloadReport(); say('Report downloaded'); } catch (e) { say(e.message); } } } }, 'Download the health report');
+    api('/health').then((h) => {
+      const fix = h.checks.filter((c) => c.level === 'fix').length, watch = h.checks.filter((c) => c.level === 'watch').length;
+      put(box,
+        el('p', { class: 'lead' }, h.overall === 'good' ? 'Everything looks good.' : `${fix ? plural(fix, 'thing needs', 'things need') + ' fixing' : ''}${fix && watch ? ' and ' : ''}${watch ? plural(watch, 'thing is', 'things are') + ' worth watching' : ''}.`),
+        el('div', { class: 'list' }, h.checks.map((c) => el('div', { class: 'item' },
+          el('span', { class: 'what' }, c.title), el('span', { class: 'lvl ' + c.level }, LEVEL_WORD[c.level]),
+          el('span', { class: 'detail' }, c.found), c.todo ? el('span', { class: 'detail todo' }, 'What to do: ' + c.todo) : null))));
+    }).catch((e) => { if (e.message !== 'signed out') put(box, errorState(e.message, () => put(box, healthSection()))); });
+    return el('section', { 'aria-labelledby': 'health-h' }, el('div', { class: 'head-row' }, el('h3', { id: 'health-h' }, 'Health'), btn), box);
+  }
+
+  // The live numbers are off until the person turns them on (some find them too much), and the choice is remembered.
+  function liveSection() {
+    const on = () => !!(local && local.getItem('pc-admin-live'));
+    const sw = el('button', { type: 'button', class: 'adv-switch', role: 'switch', 'aria-checked': String(on()) }, el('span', { class: 'track', 'aria-hidden': 'true' }), el('span', {}, 'Show live details'));
+    const box = el('div', { 'aria-live': 'off' });
+    let prev = null;
+    const row = (label, value, note) => el('div', { class: 'item' }, el('span', {}, label), el('span', { class: 'num what' }, value), note ? el('span', { class: 'detail' }, note) : null);
+    async function poll() {
+      const d = await api('/live');
+      const dt = prev ? Math.max(1, d.at - prev.at) : 0, per = (a, b) => (prev && dt ? Math.max(0, (a - b) / dt) : null);
+      const r = d.relay || {}, n = d.nostr && typeof d.nostr === 'object' ? d.nostr : null;
+      const inRate = per((r.put || 0) + (n ? n.received || 0 : 0), prev ? (prev.relay.put || 0) + (prev.nostr && typeof prev.nostr === 'object' ? prev.nostr.received || 0 : 0) : 0);
+      const cpu = prev && d.cpu_secs != null && prev.cpu_secs != null && dt ? Math.max(0, (d.cpu_secs - prev.cpu_secs) / dt * 100) : null;
+      put(box, el('div', { class: 'list' }, [
+        row('Devices connected now', String(r.open_connections ?? 0)),
+        row('Messages waiting for someone offline', String(r.queued ?? 0), `${r.mailboxes ?? 0} mailboxes hold them`),
+        n ? row('Nostr events stored', String(n.events ?? 0), `${bytesText(n.bytes || 0)}${n.on_disk ? ', kept on disk' : ', kept in memory'}`) : null,
+        inRate != null ? row('Messages and events arriving', `${inRate.toFixed(inRate < 10 ? 1 : 0)} per second`) : null,
+        d.memory_kb != null ? row('Memory used by the server', kb(d.memory_kb), d.memory_free_kb != null ? `${kb(d.memory_free_kb)} still free on this machine` : null) : null,
+        cpu != null ? row('Processor use', `${cpu.toFixed(cpu < 10 ? 1 : 0)}%`) : null,
+        d.disk_free != null ? row('Disk space left', bytesText(d.disk_free), `of ${bytesText(d.disk_total)}; the server’s files take ${bytesText(d.data_bytes || 0)}`) : null,
+        row('Running for', dur(d.uptime_secs)),
+      ]));
+      prev = d;
+    }
+    function apply() {
+      const v = on(); sw.setAttribute('aria-checked', String(v)); clearInterval(liveTimer);
+      if (!v) { put(box, el('p', { class: 'muted' }, 'Hidden. Turn it on to see memory, disk, connections and activity, refreshed every few seconds.')); return; }
+      put(box, skeleton());
+      poll().catch((e) => { if (e.message !== 'signed out') put(box, errorState(e.message, apply)); });
+      liveTimer = setInterval(() => { if (document.visibilityState === 'visible') poll().catch(() => {}); }, 2500);
+    }
+    sw.addEventListener('click', () => {
+      const v = !on();
+      if (local) { try { v ? local.setItem('pc-admin-live', '1') : local.removeItem('pc-admin-live'); } catch { /* not saved */ } }
+      apply(); say(v ? 'Live details shown' : 'Live details hidden');
+    });
+    apply();
+    return el('section', { 'aria-labelledby': 'live-h' }, el('div', { class: 'head-row' }, el('h3', { id: 'live-h' }, 'Live details'), sw), box);
+  }
+
   // ----- Home: is it healthy, and how do I connect -----
   async function home() {
+    // Drawn once and kept: the page redraws every few seconds, and these two refresh themselves.
+    let healthKeep = null, liveKeep = null;
     const draw = async () => {
       const o = overviewCache = await api('/overview');
       if (current !== 'home') return;
@@ -183,6 +255,7 @@
         el('div', { class: 'page-head' }, el('h2', {}, 'Home'), el('p', { class: 'lead' }, o.access.private ? 'This server is private. Only people you gave a token can connect.' : 'This server is open: anyone who finds it can connect.')),
         o.warnings.length ? el('section', { 'aria-labelledby': 'attn-h' }, el('h3', { id: 'attn-h' }, 'Needs your attention'),
           el('div', { class: 'attn' }, o.warnings.map((w) => el('div', { class: 'item' }, icon('alert'), el('span', {}, w.text), w.go ? el('button', { type: 'button', class: 'btn ghost sm act', on: { click: () => go(w.go) } }, w.go === 'people' ? 'Add a token' : w.go === 'rules' ? 'Set rules' : 'Open settings') : null)))) : null,
+        healthKeep || (healthKeep = healthSection()),
         el('section', {}, el('h3', {}, 'Connect your apps'),
           el('p', { class: 'muted' }, 'Add this address as the relay in each app (Settings, Connection).' + (o.access.private ? ' Add a token to the end as ?token=…' : '')),
           copyRow(o.addresses.relay, 'relay address', true)),
@@ -198,6 +271,7 @@
             row('Nostr', null, onoff(o.roles.nostr)),
             row('Calls through this server (TURN)', null, onoff(o.roles.turn)),
             row('Running for', `Version ${o.version}`, el('span', { class: 'num what' }, dur(o.uptime_secs))))),
+        liveKeep || (liveKeep = liveSection()),
         el('section', { class: 'adv' }, el('h3', {}, 'Activity since it started'),
           el('div', { class: 'list' }, [
             ['Messages received', c.put], ['Messages delivered', c.delivered], ['Messages waiting for someone offline', c.queued], ['Mailboxes holding messages', c.mailboxes],
@@ -300,11 +374,64 @@
         } } }, el('div', { class: 'inline' }, el('div', { class: 'grow' }, el('label', { for: 'evid' }, 'Event id'), evId), el('button', { class: 'btn danger', type: 'submit' }, 'Remove event')), evMsg)) : null);
   }
 
+  // ----- What the server runs: protocols on or off, then limits; changes restart the server (a few seconds) -----
+  const GB = (b) => `${(b / 1e9).toFixed(1)} GB`;
+  async function applyChoices(body) {
+    await api('/protocols', { method: 'PUT', body });
+    say('Restarting the server with your change');
+    put($('view'), el('p', { class: 'muted', role: 'status' }, 'Restarting the server with your change. This takes a few seconds.'));
+    await sleep(1500);
+    for (let i = 0; i < 40; i++) {
+      try { const r = await fetch('/admin/api/me', { headers: { Authorization: 'Bearer ' + token }, cache: 'no-store' }); if (r.ok) break; } catch { /* still restarting */ }
+      await sleep(1000);
+    }
+    show('settings');
+  }
+  function protocolsSection(pr, isOwner) {
+    const modeName = { stun: 'Address lookup only (STUN)', turn: 'Calls and files (TURN, includes STUN)' };
+    const on = pr.protocols.filter((p) => p.on), off = pr.protocols.filter((p) => !p.on);
+    const msg = el('p', { class: 'msg', role: 'status' });
+    const run = (body) => applyChoices(body).catch((e) => { msg.className = 'msg bad'; msg.textContent = e.message; });
+    const rows = on.map((p) => el('div', { class: 'item' },
+      el('span', { class: 'what' }, p.mode ? `${p.name}: ${modeName[p.mode]}` : p.name),
+      el('span', { class: 'detail' }, `${p.ports.join(', ')} · ${p.source === 'panel' ? 'set here' : 'from the settings file'}`),
+      el('span', { class: 'detail' }, p.about),
+      isOwner ? el('div', { class: 'act' },
+        p.mode ? el('button', { class: 'btn ghost sm', type: 'button', on: { click: () => run({ turn: p.mode === 'stun' ? 'turn' : 'stun' }) } }, p.mode === 'stun' ? 'Also relay calls and files' : 'Only answer address lookups') : null,
+        confirmAction({ label: 'Turn off…', yes: 'Yes, turn off', ask: 'The server restarts for a few seconds and stops running this.', onConfirm: () => run(p.id === 'turn' ? { turn: 'off' } : { [p.id]: false }) })) : null));
+    const choices = [];
+    for (const p of off) {
+      if (p.id === 'turn') { choices.push(['stun', modeName.stun]); choices.push(['turn', modeName.turn]); } else choices.push([p.id, p.name]);
+    }
+    const pick = el('select', { id: 'add-proto', 'aria-label': 'Protocol to add' }, el('option', { value: '' }, 'Choose a protocol…'), choices.map(([v, t]) => el('option', { value: v }, t)));
+    const add = isOwner && choices.length ? el('div', { class: 'field' }, el('label', { for: 'add-proto' }, 'Add a protocol'), el('div', { class: 'row' }, pick,
+      el('button', { class: 'btn primary', type: 'button', on: { click: () => { const v = pick.value; if (!v) { msg.className = 'msg bad'; msg.textContent = 'Choose one first.'; pick.focus(); return; } run(v === 'stun' || v === 'turn' ? { turn: v } : { [v]: true }); } } }, 'Add and restart')),
+      el('p', { class: 'hint' }, 'You can run several at once. The relay and Nostr share one web port; calls use their own UDP port.')) : null;
+    const u = pr.usage, lim = pr.limits;
+    const limField = (id, label, hint, key, max) => el('div', { class: 'field' }, el('label', { for: id }, label),
+      el('input', { id, type: 'number', inputmode: 'numeric', min: '0', max: String(max), value: String(lim[key].value), disabled: !isOwner, 'data-key': key }), el('p', { class: 'hint' }, `${hint} Now: ${lim[key].source === 'panel' ? 'set here' : 'from the settings file'}.`));
+    const limFields = [limField('lim-gb', 'Traffic allowance per month (GB)', '0 means no limit. When it is used up, new connections are refused until next month.', 'monthly_traffic_gb', 1000000),
+      limField('lim-kbps', 'Speed limit per connection (kilobits per second)', '0 means no limit. Applies to the relay and Nostr, each way.', 'connection_kbps', 10000000),
+      limField('lim-mb', 'Disk space the server may use (MB)', '0 means no limit. Shared between waiting messages and Nostr events.', 'disk_quota_mb', 100000000)];
+    return [
+      el('section', { 'aria-labelledby': 'proto-h' }, el('h3', { id: 'proto-h' }, 'What this server runs'),
+        pr.last_error ? el('p', { class: 'msg bad', role: 'alert' }, pr.last_error) : null,
+        el('div', { class: 'list' }, rows), add,
+        u.cap ? el('p', { class: 'muted num' }, `This month: ${GB(u.total)} of ${GB(u.cap)} traffic used.`) : el('p', { class: 'muted num' }, `This month: ${GB(u.total)} of traffic so far (no limit set).`),
+        isOwner ? null : el('p', { class: 'muted' }, 'Only an owner can change what the server runs.'), msg),
+      el('section', { class: 'adv' }, el('h3', {}, 'Resource limits'),
+        el('p', { class: 'muted' }, 'Decide how much of this machine the server may use. Saving restarts the server for a few seconds.'),
+        el('form', { on: { submit: (e) => { e.preventDefault(); const body = {}; for (const f of limFields) body[f.querySelector('input').dataset.key] = Number(f.querySelector('input').value); run(body); } } },
+          limFields, isOwner ? el('div', { class: 'field' }, el('button', { class: 'btn primary', type: 'submit' }, 'Save limits and restart')) : null)),
+    ];
+  }
+
   // ----- Settings: clear data first, then the few things beginners need, then Advanced -----
   let freshToken = null; // a replacement token, shown once after the page redraws
   async function settings() {
     const s = await api('/settings'); const canChange = me.role !== 'viewer';
     const mine = await api('/me'); const shown = freshToken; freshToken = null;
+    const pr = await api('/protocols'); const isOwner = me.role === 'owner';
     const r = s.relay, n = s.nostr;
     const clearRow = (what, count, noun, path, after) => el('div', { class: 'item' }, el('span', { class: 'what' }, what),
       el('span', { class: 'detail num' }, count ? `${plural(count, noun[0], noun[1])} stored now` : 'Nothing stored right now'),
@@ -323,6 +450,7 @@
         el('p', { class: 'muted' }, 'These cannot be undone, so each one asks first.'),
         el('div', { class: 'list' }, r ? clearRow('Stored messages', r.stored_messages, ['message', 'messages'], '/clear/messages', () => show('settings')) : null,
           n ? clearRow('Nostr events', n.stored_events, ['event', 'events'], '/clear/nostr', () => show('settings')) : null)),
+      protocolsSection(pr, isOwner),
       r ? el('section', {}, el('h3', {}, 'Messages'),
         switchRow({ id: 'keep', label: 'Keep messages for people who are offline', checked: r.keep_offline_messages, disabled: !canChange || !r.can_keep_offline_messages,
           hint: r.can_keep_offline_messages ? 'They arrive when the person opens the app (kept for up to 7 days). Turn off and only people online right now receive messages.' : 'Switched off in the settings file (store_and_forward = false).',

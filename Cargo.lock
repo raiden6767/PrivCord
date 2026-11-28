@@ -2214,6 +2214,7 @@ name = "privcord-server"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "argon2",
  "async-trait",
  "axum",
  "base64 0.23.1",
@@ -2228,6 +2229,7 @@ dependencies = [
  "log",
  "negentropy",
  "rcgen 0.13.2",
+ "redb",
  "rustls",
  "serde",
  "serde_json",
@@ -2408,6 +2410,15 @@ dependencies = [
  "time",
  "x509-parser 0.18.1",
  "yasna 0.6.0",
+]
+
+[[package]]
+name = "redb"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11175cc688ba1b9d3cec4fe582fd82cb97e2a82e28ccc8101b7b8030a8003280"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

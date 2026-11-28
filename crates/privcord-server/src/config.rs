@@ -14,6 +14,20 @@ pub struct Config {
     pub server: ServerConfig,
     pub relay: RelayConfig,
     pub turn: TurnConfig,
+    pub limits: LimitsConfig,
+}
+
+/// What this server may use. Each is 0 (no limit) unless set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LimitsConfig {
+    /// Gigabytes the server may send and receive in a calendar month (relay, Nostr and TURN together). At the cap new
+    /// connections are refused until the month changes.
+    pub monthly_traffic_gb: u64,
+    /// A speed limit for each relay/Nostr connection, in kilobits per second, in both directions.
+    pub connection_kbps: u64,
+    /// Megabytes of disk the server may fill with what it stores; it is shared out as the Nostr and waiting-message caps.
+    pub disk_quota_mb: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +115,8 @@ pub struct TurnConfig {
     pub allow_private_peers: bool,
     /// A speed limit for each relayed connection, in kilobits per second. 0: none.
     pub max_kbps: u64,
+    /// Only answer STUN ("what address do you see me at?"): no relaying, no logins, no port range to open, almost no traffic.
+    pub stun_only: bool,
 }
 
 impl Default for ServerConfig {
@@ -155,6 +171,7 @@ impl Default for TurnConfig {
             users: Vec::new(),
             allow_private_peers: false,
             max_kbps: 0,
+            stun_only: false,
         }
     }
 }
@@ -178,6 +195,20 @@ impl Config {
         let mut out = Vec::new();
         if !self.relay.enabled && !self.turn.enabled && !self.nostr.enabled {
             out.push("the relay, Nostr and TURN are all off: there is nothing to run".into());
+        }
+        if !matches!(self.nostr.backend.as_str(), "memory" | "disk") {
+            out.push(format!(
+                "nostr.backend \"{}\" must be \"memory\" or \"disk\"",
+                self.nostr.backend
+            ));
+        }
+        if self.nostr.enabled && self.nostr.backend == "disk" && self.storage.encrypt {
+            out.push(
+                "nostr.backend = \"disk\" cannot encrypt its indexes yet (the times, authors and kinds of events would stay \
+                 readable on disk), so storage.encrypt is refused with it: use the \"memory\" backend with encryption, or \
+                 encrypt the whole disk"
+                    .into(),
+            );
         }
         if self.server.listen.parse::<std::net::SocketAddr>().is_err() {
             out.push(format!(
@@ -259,7 +290,7 @@ impl Config {
             }
         }
         if self.turn.enabled {
-            if self.turn.public_ip.parse::<std::net::IpAddr>().is_err() {
+            if !self.turn.stun_only && self.turn.public_ip.parse::<std::net::IpAddr>().is_err() {
                 out.push("turn.public_ip must be this machine's public IP address (phones are told to send traffic there)".into());
             }
             if self.turn.listen.parse::<std::net::SocketAddr>().is_err() {
@@ -268,7 +299,9 @@ impl Config {
                     self.turn.listen
                 ));
             }
-            if self.turn.min_port == 0 || self.turn.max_port < self.turn.min_port {
+            if !self.turn.stun_only
+                && (self.turn.min_port == 0 || self.turn.max_port < self.turn.min_port)
+            {
                 out.push(
                     "turn.min_port and turn.max_port must be a range of ports, lowest first".into(),
                 );
@@ -323,6 +356,9 @@ pub struct NostrConfig {
     pub durable: bool,
     /// Keep events on disk at all. Off: memory only, gone at restart.
     pub persist: bool,
+    /// Where events live: `memory` (fast; held in memory with a log on disk, so bounded by memory) or `disk` (a database on
+    /// disk with every index in it, so bounded by the disk; for relays with millions of events).
+    pub backend: String,
     /// NIP-42: send direct messages (kinds 4 and 1059) only to the authenticated sender and recipient.
     pub auth_dms: bool,
     /// The administrator's Nostr public key (hex), shown in the information document. It may also use the management API.
@@ -371,6 +407,7 @@ impl Default for NostrConfig {
             relay_url: String::new(),
             durable: false,
             persist: true,
+            backend: "memory".into(),
             auth_dms: false,
             admin_pubkey: String::new(),
             admin_pubkeys: Vec::new(),

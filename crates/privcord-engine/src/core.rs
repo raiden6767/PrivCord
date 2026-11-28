@@ -96,6 +96,8 @@ const MAX_STORED_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const PQ_SETUP_MS: i64 = 10_000;
 /// A link that is open but whose own handshake never finishes (the other side froze, does not know us, or dropped our hello)
 /// is dropped after this long, so it cannot hold one of the few dial slots for ever.
+/// The shortest time between two forced retries of one friend (half a second) (see `reset_dial_backoff`).
+const RESET_MIN_GAP_MS: i64 = 500;
 const LINK_HANDSHAKE_MS: i64 = 20_000;
 /// How long to wait for a delivery receipt before sending a message again.
 pub const RETRY_AFTER_MS: i64 = 20_000;
@@ -676,6 +678,8 @@ impl Core {
         self.contacts
             .insert(uid.clone(), StoredContactState { stored, contact });
         if new {
+            // Keys left from an earlier friendship (before they were forgotten on removal) must not be used again.
+            self.forget_keys_of_person(&uid);
             self.hub
                 .publish(EngineEvent::ContactAdded { uid: uid.clone() });
         }
@@ -1841,8 +1845,14 @@ impl Core {
     /// linked. An adapter calls this when something that was in the way is gone (signaling came online, the other side
     /// announced it is online), so a link does not wait out a delay that was earned while it could not have worked.
     pub fn reset_dial_backoff(&mut self, peer: Option<&UserId>) {
+        let now = self.now();
         for (uid, p) in &mut self.peers {
             if p.ready() || peer.is_some_and(|only| only != uid && only != &Self::person_of(uid)) {
+                continue;
+            }
+            // A dial asked for under half a second ago is still being tried: many reasons to retry arriving together (a
+            // phone waking up, every relay answering) made hundreds of dial requests in half a second.
+            if p.attempts > 0 && now - p.last_attempt_at < RESET_MIN_GAP_MS {
                 continue;
             }
             p.attempts = 0;

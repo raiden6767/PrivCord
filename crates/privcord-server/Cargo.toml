@@ -42,6 +42,8 @@ getrandom.workspace = true
 turn = { version = "0.17", optional = true }
 webrtc-util = { version = "0.17", optional = true }
 async-trait = { version = "0.1", optional = true }
+redb = "5"
+argon2.workspace = true
 
 [dev-dependencies]
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "x509-parser"] }

@@ -3050,3 +3050,96 @@ fn messages_between_friends_arrive_once_whatever_is_closed_away_or_lost() {
         }
     }
 }
+
+#[test]
+fn a_phone_with_a_linked_laptop_that_scans_a_friends_qr_code_gets_through_as_a_request() {
+    // Seen on real phones: the account with two devices scanned the code; the friend's phone refused the request as
+    // "not readable or not signed by the card inside", while the same thing the other way round worked.
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    phone.core.create_identity().unwrap();
+    let mut fran = Device::new("fran", &clock);
+    fran.core.create_identity().unwrap();
+    let _laptop = link_laptop(&mut phone, &mut relay, &clock);
+    let pat = phone.core.own_uid().unwrap().clone();
+    let fran_uid = fran.core.own_uid().unwrap().clone();
+
+    phone
+        .core
+        .accept_invite(&fran.core.own_card(Some("Fran")).unwrap())
+        .unwrap();
+    for _ in 0..4 {
+        phone.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    assert!(
+        fran.core.snapshot().requests.iter().any(|r| r.uid == pat),
+        "Fran sees Pat's request"
+    );
+    fran.core.accept_request(&pat).unwrap();
+    for _ in 0..6 {
+        phone.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    assert!(phone
+        .core
+        .snapshot()
+        .contacts
+        .iter()
+        .any(|c| c.uid == fran_uid));
+}
+
+#[test]
+fn removing_a_friend_and_scanning_their_qr_code_again_gets_through_as_a_request() {
+    // Seen on real phones: after a friend was removed, scanning their code again produced requests the other phone
+    // refused as "not readable", because keys from the old friendship were still used to seal the new request.
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut ann = Device::new("ann", &clock);
+    ann.core.create_identity().unwrap();
+    let mut ben = Device::new("ben", &clock);
+    ben.core.create_identity().unwrap();
+    let (ann_uid, ben_uid) = (
+        ann.core.own_uid().unwrap().clone(),
+        ben.core.own_uid().unwrap().clone(),
+    );
+    ann.core.set_store_forward(true).unwrap();
+    ben.core.set_store_forward(true).unwrap();
+
+    for round in 0..2 {
+        ann.core
+            .accept_invite(&ben.core.own_card(Some("Ben")).unwrap())
+            .unwrap();
+        for _ in 0..4 {
+            ann.online(&mut relay);
+            ben.online(&mut relay);
+        }
+        assert!(
+            ben.core
+                .snapshot()
+                .requests
+                .iter()
+                .any(|r| r.uid == ann_uid),
+            "round {round}: Ben sees Ann's request"
+        );
+        ben.core.accept_request(&ann_uid).unwrap();
+        for _ in 0..8 {
+            ann.online(&mut relay);
+            ben.online(&mut relay);
+        }
+        // They exchange messages, so keys are given and used.
+        ann.core.send_message(&ben_uid, "hi", None).unwrap();
+        ben.core.send_message(&ann_uid, "hello", None).unwrap();
+        for _ in 0..8 {
+            ann.online(&mut relay);
+            ben.online(&mut relay);
+        }
+        ann.core.remove_contact(&ben_uid).unwrap();
+        ben.core.remove_contact(&ann_uid).unwrap();
+        for _ in 0..2 {
+            ann.online(&mut relay);
+            ben.online(&mut relay);
+        }
+    }
+}

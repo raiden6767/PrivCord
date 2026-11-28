@@ -196,207 +196,31 @@ fun SettingsDialog(
                 Spacer(Modifier.height(8.dp))
                 ToggleRow(
                     title = "Show advanced settings",
-                    description = "Linked devices, connection options, diagnostics and power-user tools. Everything works without them.",
+                    description = "Connection options, Bluetooth mesh, diagnostics and power-user tools. Everything you need every day is already above.",
                     checked = settings.advanced,
                     onChange = { on -> onUpdateSettings { copy(advanced = on) } },
                 )
                 Spacer(Modifier.height(12.dp))
 
-                // The things you may want to delete come first, so they are never a long scroll away.
-                SectionTitle("Your data")
-                Text(
-                    "Messages are encrypted on this phone with a key in the Android Keystore and travel straight between " +
-                        "phones; no server can read or keep them. Deleting here never touches your friends' phones.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(10.dp))
-                if (clearConfirm) {
-                    WrapRow(8.dp) {
-                        Button(
-                            onClick = {
-                                clearing = true
-                                onClearLocalData { result ->
-                                    clearing = false
-                                    clearConfirm = false
-                                    clearStatus = result.fold(
-                                        onSuccess = { "Local data cleared." },
-                                        onFailure = { it.message ?: "Could not clear local data." },
-                                    )
-                                }
-                            },
-                            enabled = !clearing,
-                        ) {
-                            if (clearing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(15.dp),
-                                    strokeWidth = 2.dp,
-                                )
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            Text("Yes, clear all messages")
-                        }
-                        TextButton(onClick = { clearConfirm = false }) {
-                            Text("Cancel")
-                        }
-                    }
-                } else {
-                    OutlinedButton(onClick = { clearConfirm = true }) {
-                        Text("Clear all messages")
-                    }
+                // Linked devices and the things people reach for most come first; clearing data comes last.
+                SectionTitle("Devices")
+                val devicesLine by androidx.compose.runtime.produceState<String?>(null, state.devices) {
+                    value = com.duochat.app.data.parseDevicesLine(insight("devices_summary", com.duochat.app.data.devicesInput(state.devices)))
                 }
-                clearStatus?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                devicesLine?.let {
+                    DevicesStrip(it)
+                    Spacer(Modifier.height(10.dp))
+                }
+                DevicesSection(state, onLinkNew = { onCancelDeviceLink(); linking = true }, onRemoval = onDeviceRemoval)
+                if (linking) {
+                    LinkHostDialog(
+                        state = state,
+                        onStart = onStartDeviceLink,
+                        onScanned = onHostScannedLink,
+                        onConfirm = onConfirmDeviceLink,
+                        onCancel = onCancelDeviceLink,
+                        onClose = { linking = false },
                     )
-                }
-                Spacer(Modifier.height(14.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Erase everything", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Permanently deletes your chats, friends, groups, keys and settings from this phone and starts over " +
-                                "with a new identity. You will be asked to confirm twice.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 6.dp),
-                        )
-                        Button(
-                            onClick = {
-                                onDismiss()
-                                onOpenNuke()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        ) {
-                            Text("Erase everything")
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                SectionTitle("Profile")
-                Text(
-                    "There are no accounts. Your identity is a key that lives on this phone. " +
-                        "Friends see this name on your invite and in groups.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(10.dp))
-                DuoTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it.take(40) },
-                    label = { Text("Your name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        onUpdateSettings { copy(displayName = displayName.trim()) }
-                        nameStatus = "Saved. New invites and groups use this name."
-                    },
-                    enabled = displayName.trim() != settings.displayName,
-                ) {
-                    Text("Save name")
-                }
-                nameStatus?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-SectionTitle("Appearance")
-                Text(
-                    "Color theme",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
-                // About three to six tiles a row, filling the width exactly, whatever the screen.
-                val columns = (maxWidth / 104.dp).toInt().coerceAtLeast(3)
-                val tileWidth = (maxWidth - 8.dp * (columns - 1)) / columns
-                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                androidx.compose.foundation.layout.FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    ThemeTile(tileWidth, "Plum & paper", listOf(Color(0xFFF7F3EE), Color(0xFF7A3E73), Color(0xFFF2A65A), Color(0xFF131112)), settings.palette == com.duochat.app.data.CLASSIC_PALETTE) {
-                        onUpdateSettings { copy(palette = com.duochat.app.data.CLASSIC_PALETTE) }
-                    }
-                    for (t in com.duochat.app.data.THEMES) {
-                        ThemeTile(tileWidth, t.name, listOf(Color(t.bg), Color(t.surface), Color(com.duochat.app.data.accentFill(t.accent))), settings.palette == t.id) {
-                            onUpdateSettings { copy(palette = t.id) }
-                        }
-                    }
-                }
-                }
-                Spacer(Modifier.height(12.dp))
-                if (settings.palette != com.duochat.app.data.CLASSIC_PALETTE) {
-                    Text(
-                        "The color theme sets the light or dark look and the accent color.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                WrapRow(8.dp) {
-                    ChoiceChip("System", settings.theme == "system") {
-                        onUpdateSettings { copy(theme = "system") }
-                    }
-                    ChoiceChip("Dark", settings.theme == "dark") {
-                        onUpdateSettings { copy(theme = "dark") }
-                    }
-                    ChoiceChip("Light", settings.theme == "light") {
-                        onUpdateSettings { copy(theme = "light") }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "Accent color",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                WrapRow(4.dp) {
-                    for ((label, value) in ACCENTS) {
-                        Box(
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(parseColor(value))
-                                .border(
-                                    width = if (settings.accent == value) 3.dp else 1.dp,
-                                    color = if (settings.accent == value) {
-                                        MaterialTheme.colorScheme.onSurface
-                                    } else {
-                                        MaterialTheme.colorScheme.outline
-                                    },
-                                    shape = CircleShape,
-                                )
-                                .clickable { onUpdateSettings { copy(accent = value) } },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (settings.accent == value) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = label,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            }
-                        }
-                    }
-                }
                 }
 
                 Spacer(Modifier.height(20.dp))
@@ -515,6 +339,219 @@ SectionTitle("Appearance")
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+
+                Spacer(Modifier.height(20.dp))
+
+SectionTitle("Security")
+                val staleCount = state.devices.count { it.stale }
+                val checkupJson by androidx.compose.runtime.produceState(
+                    "[]", settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), settings.notificationPreviews,
+                    settings.groupOnly, settings.panicWipe, staleCount,
+                ) {
+                    value = insight(
+                        "checkup",
+                        com.duochat.app.data.checkupInput(
+                            settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), !settings.notificationPreviews,
+                            settings.groupOnly, settings.panicWipe, staleCount,
+                        ),
+                    )
+                }
+                PrivacyCheckupCard(
+                    items = com.duochat.app.data.parseCheckup(checkupJson),
+                    canTurnOn = setOf("lock", "previews", "grouponly", "panic"),
+                    onTurnOn = { id ->
+                        onUpdateSettings {
+                            when (id) {
+                                "lock" -> copy(appLock = true)
+                                "previews" -> copy(notificationPreviews = false)
+                                "grouponly" -> copy(groupOnly = true)
+                                "panic" -> copy(panicWipe = true)
+                                else -> this
+                            }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(12.dp))
+                val appContext = LocalContext.current
+                val lockAvailable = remember { com.duochat.app.security.AppLock.available(appContext) }
+                ToggleRow(
+                    title = "Lock with fingerprint, face or screen lock",
+                    description = if (lockAvailable) {
+                        "Ask for it every time PrivCord opens, and again after it has been out of sight for ${com.duochat.app.security.AppLock.GRACE_MS / 1000} seconds. It keeps other people who pick up your phone out; it does not replace the encryption of your chats."
+                    } else {
+                        "Not available: set a screen lock (PIN, pattern or password) or a fingerprint in your phone's settings first."
+                    },
+                    checked = settings.appLock && lockAvailable,
+                    enabled = lockAvailable,
+                    onChange = { value ->
+                        if (value) {
+                            onUpdateSettings { copy(appLock = true) }
+                        } else {
+                            // Turning it off needs the same proof as opening the app.
+                            // Inside a Dialog the context is a ContextThemeWrapper, not the activity: unwrap it. With no
+                            // activity there is no prompt, so the lock stays on (never turned off without proof).
+                            val activity = generateSequence(appContext) { (it as? android.content.ContextWrapper)?.baseContext }
+                                .firstNotNullOfOrNull { it as? androidx.fragment.app.FragmentActivity }
+                            if (activity != null) {
+                                com.duochat.app.security.AppLock.prompt(activity, "Turn off app lock") { ok, _ ->
+                                    if (ok) onUpdateSettings { copy(appLock = false) }
+                                }
+                            }
+                        }
+                    },
+                )
+                Spacer(Modifier.height(10.dp))
+                ToggleRow(
+                    "Hide the app from screenshots and the app switcher",
+                    "Screenshots, screen recordings and the recent-apps preview show a blank screen. Applies to your chats, on every device you link.",
+                    state.prefs.secureScreen,
+                ) { on -> onSetSecureScreen(on) }
+                Spacer(Modifier.height(14.dp))
+                if (advanced) {
+                ToggleRow(
+                    title = "Stay group-only with people I meet in groups",
+                    description = "You still read and reply in the groups you share, but nobody you only know through a group can message you directly, and you cannot message them, unless you swap invites yourselves.",
+                    checked = settings.groupOnly,
+                    onChange = { value -> onUpdateSettings { copy(groupOnly = value) } },
+                )
+                Spacer(Modifier.height(10.dp))
+ToggleRow(
+                    "Panic wipe",
+                    "Tap the \"Chats\" title on the home screen three times quickly and everything on this phone is erased at once, with no confirmation. Your 12 recovery words are the only way back, so keep them somewhere safe first.",
+                    settings.panicWipe,
+                ) { on -> onUpdateSettings { copy(panicWipe = on) } }
+                                }
+                Spacer(Modifier.height(20.dp))
+
+                SectionTitle("Backup")
+                BackupSection({ pass, done -> onExportBackup(pass) { r -> if (r.isSuccess) onUpdateSettings { copy(lastBackupAt = System.currentTimeMillis()) }; done(r) } }, onImportBackup)
+                Spacer(Modifier.height(20.dp))
+
+SectionTitle("Updates")
+                ToggleRow(
+                    "Check for updates",
+                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 3_600_000} hours while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
+                    settings.updateChecks,
+                ) { onUpdateSettings { copy(updateChecks = it) } }
+                UpdateCheckRow(settings.network)
+                Spacer(Modifier.height(20.dp))
+
+                SectionTitle("Profile")
+                Text(
+                    "There are no accounts. Your identity is a key that lives on this phone. " +
+                        "Friends see this name on your invite and in groups.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                DuoTextField(
+                    value = displayName,
+                    onValueChange = { displayName = it.take(40) },
+                    label = { Text("Your name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        onUpdateSettings { copy(displayName = displayName.trim()) }
+                        nameStatus = "Saved. New invites and groups use this name."
+                    },
+                    enabled = displayName.trim() != settings.displayName,
+                ) {
+                    Text("Save name")
+                }
+                nameStatus?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+SectionTitle("Appearance")
+                Text(
+                    "Color theme",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                // About three to six tiles a row, filling the width exactly, whatever the screen.
+                val columns = (maxWidth / 104.dp).toInt().coerceAtLeast(3)
+                val tileWidth = (maxWidth - 8.dp * (columns - 1)) / columns
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    ThemeTile(tileWidth, "Plum & paper", listOf(Color(0xFFF7F3EE), Color(0xFF7A3E73), Color(0xFFF2A65A), Color(0xFF131112)), settings.palette == com.duochat.app.data.CLASSIC_PALETTE) {
+                        onUpdateSettings { copy(palette = com.duochat.app.data.CLASSIC_PALETTE) }
+                    }
+                    for (t in com.duochat.app.data.THEMES) {
+                        ThemeTile(tileWidth, t.name, listOf(Color(t.bg), Color(t.surface), Color(com.duochat.app.data.accentFill(t.accent))), settings.palette == t.id) {
+                            onUpdateSettings { copy(palette = t.id) }
+                        }
+                    }
+                }
+                }
+                Spacer(Modifier.height(12.dp))
+                if (settings.palette != com.duochat.app.data.CLASSIC_PALETTE) {
+                    Text(
+                        "The color theme sets the light or dark look and the accent color.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                WrapRow(8.dp) {
+                    ChoiceChip("System", settings.theme == "system") {
+                        onUpdateSettings { copy(theme = "system") }
+                    }
+                    ChoiceChip("Dark", settings.theme == "dark") {
+                        onUpdateSettings { copy(theme = "dark") }
+                    }
+                    ChoiceChip("Light", settings.theme == "light") {
+                        onUpdateSettings { copy(theme = "light") }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "Accent color",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                WrapRow(4.dp) {
+                    for ((label, value) in ACCENTS) {
+                        Box(
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(parseColor(value))
+                                .border(
+                                    width = if (settings.accent == value) 3.dp else 1.dp,
+                                    color = if (settings.accent == value) {
+                                        MaterialTheme.colorScheme.onSurface
+                                    } else {
+                                        MaterialTheme.colorScheme.outline
+                                    },
+                                    shape = CircleShape,
+                                )
+                                .clickable { onUpdateSettings { copy(accent = value) } },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (settings.accent == value) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = label,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                }
 
                 Spacer(Modifier.height(20.dp))
 
@@ -795,121 +832,88 @@ SectionTitle("Appearance")
 
                 Spacer(Modifier.height(20.dp))
 
-SectionTitle("Security")
-                val staleCount = state.devices.count { it.stale }
-                val checkupJson by androidx.compose.runtime.produceState(
-                    "[]", settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), settings.notificationPreviews,
-                    settings.groupOnly, settings.panicWipe, staleCount,
-                ) {
-                    value = insight(
-                        "checkup",
-                        com.duochat.app.data.checkupInput(
-                            settings.appLock, settings.lastBackupAt, com.duochat.app.data.hidesIp(settings.network), !settings.notificationPreviews,
-                            settings.groupOnly, settings.panicWipe, staleCount,
-                        ),
-                    )
-                }
-                PrivacyCheckupCard(
-                    items = com.duochat.app.data.parseCheckup(checkupJson),
-                    canTurnOn = setOf("lock", "previews", "grouponly", "panic"),
-                    onTurnOn = { id ->
-                        onUpdateSettings {
-                            when (id) {
-                                "lock" -> copy(appLock = true)
-                                "previews" -> copy(notificationPreviews = false)
-                                "grouponly" -> copy(groupOnly = true)
-                                "panic" -> copy(panicWipe = true)
-                                else -> this
-                            }
-                        }
-                    },
-                )
-                Spacer(Modifier.height(12.dp))
-                val appContext = LocalContext.current
-                val lockAvailable = remember { com.duochat.app.security.AppLock.available(appContext) }
-                ToggleRow(
-                    title = "Lock with fingerprint, face or screen lock",
-                    description = if (lockAvailable) {
-                        "Ask for it every time PrivCord opens, and again after it has been out of sight for ${com.duochat.app.security.AppLock.GRACE_MS / 1000} seconds. It keeps other people who pick up your phone out; it does not replace the encryption of your chats."
-                    } else {
-                        "Not available: set a screen lock (PIN, pattern or password) or a fingerprint in your phone's settings first."
-                    },
-                    checked = settings.appLock && lockAvailable,
-                    enabled = lockAvailable,
-                    onChange = { value ->
-                        if (value) {
-                            onUpdateSettings { copy(appLock = true) }
-                        } else {
-                            // Turning it off needs the same proof as opening the app.
-                            // Inside a Dialog the context is a ContextThemeWrapper, not the activity: unwrap it. With no
-                            // activity there is no prompt, so the lock stays on (never turned off without proof).
-                            val activity = generateSequence(appContext) { (it as? android.content.ContextWrapper)?.baseContext }
-                                .firstNotNullOfOrNull { it as? androidx.fragment.app.FragmentActivity }
-                            if (activity != null) {
-                                com.duochat.app.security.AppLock.prompt(activity, "Turn off app lock") { ok, _ ->
-                                    if (ok) onUpdateSettings { copy(appLock = false) }
-                                }
-                            }
-                        }
-                    },
+                // Destructive things, last: each one asks before it does anything.
+                // The things you may want to delete come first, so they are never a long scroll away.
+                SectionTitle("Your data")
+                Text(
+                    "Messages are encrypted on this phone with a key in the Android Keystore and travel straight between " +
+                        "phones; no server can read or keep them. Deleting here never touches your friends' phones.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(10.dp))
-                ToggleRow(
-                    "Hide the app from screenshots and the app switcher",
-                    "Screenshots, screen recordings and the recent-apps preview show a blank screen. Applies to your chats, on every device you link.",
-                    state.prefs.secureScreen,
-                ) { on -> onSetSecureScreen(on) }
+                if (clearConfirm) {
+                    WrapRow(8.dp) {
+                        Button(
+                            onClick = {
+                                clearing = true
+                                onClearLocalData { result ->
+                                    clearing = false
+                                    clearConfirm = false
+                                    clearStatus = result.fold(
+                                        onSuccess = { "Local data cleared." },
+                                        onFailure = { it.message ?: "Could not clear local data." },
+                                    )
+                                }
+                            },
+                            enabled = !clearing,
+                        ) {
+                            if (clearing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(15.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text("Yes, clear all messages")
+                        }
+                        TextButton(onClick = { clearConfirm = false }) {
+                            Text("Cancel")
+                        }
+                    }
+                } else {
+                    OutlinedButton(onClick = { clearConfirm = true }) {
+                        Text("Clear all messages")
+                    }
+                }
+                clearStatus?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Spacer(Modifier.height(14.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Erase everything", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Permanently deletes your chats, friends, groups, keys and settings from this phone and starts over " +
+                                "with a new identity. You will be asked to confirm twice.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 6.dp),
+                        )
+                        Button(
+                            onClick = {
+                                onDismiss()
+                                onOpenNuke()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) {
+                            Text("Erase everything")
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+
                 if (advanced) {
-                ToggleRow(
-                    title = "Stay group-only with people I meet in groups",
-                    description = "You still read and reply in the groups you share, but nobody you only know through a group can message you directly, and you cannot message them, unless you swap invites yourselves.",
-                    checked = settings.groupOnly,
-                    onChange = { value -> onUpdateSettings { copy(groupOnly = value) } },
-                )
-                Spacer(Modifier.height(10.dp))
-ToggleRow(
-                    "Panic wipe",
-                    "Tap the \"Chats\" title on the home screen three times quickly and everything on this phone is erased at once, with no confirmation. Your 12 recovery words are the only way back, so keep them somewhere safe first.",
-                    settings.panicWipe,
-                ) { on -> onUpdateSettings { copy(panicWipe = on) } }
-                                }
-                SectionTitle("Backup")
-                BackupSection({ pass, done -> onExportBackup(pass) { r -> if (r.isSuccess) onUpdateSettings { copy(lastBackupAt = System.currentTimeMillis()) }; done(r) } }, onImportBackup)
-                Spacer(Modifier.height(20.dp))
-
-SectionTitle("Updates")
-                ToggleRow(
-                    "Check for updates",
-                    "Looks for a new version when the app starts, when you come back to it, and about every ${com.duochat.app.data.AppUpdate.RECHECK_MS / 3_600_000} hours while it is open, and offers to install it. This contacts GitHub, which can see your IP address, so it stays off while Hide my IP or Tor mode is on.",
-                    settings.updateChecks,
-                ) { onUpdateSettings { copy(updateChecks = it) } }
-                UpdateCheckRow(settings.network)
-                Spacer(Modifier.height(20.dp))
-
-                if (advanced) {
-                SectionTitle("Devices")
-                val devicesLine by androidx.compose.runtime.produceState<String?>(null, state.devices) {
-                    value = com.duochat.app.data.parseDevicesLine(insight("devices_summary", com.duochat.app.data.devicesInput(state.devices)))
-                }
-                devicesLine?.let {
-                    DevicesStrip(it)
-                    Spacer(Modifier.height(10.dp))
-                }
-                DevicesSection(state, onLinkNew = { onCancelDeviceLink(); linking = true }, onRemoval = onDeviceRemoval)
-                if (linking) {
-                    LinkHostDialog(
-                        state = state,
-                        onStart = onStartDeviceLink,
-                        onScanned = onHostScannedLink,
-                        onConfirm = onConfirmDeviceLink,
-                        onCancel = onCancelDeviceLink,
-                        onClose = { linking = false },
-                    )
-                }
-
-                Spacer(Modifier.height(20.dp))
-
 val storageJson by androidx.compose.runtime.produceState("[]", state.messages) { value = storageByChatJson() }
                 StorageByChatCard(
                     rows = com.duochat.app.data.parseStorage(storageJson) { id ->

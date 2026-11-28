@@ -34,7 +34,10 @@ The TURN port also answers STUN Binding requests, over UDP and over TCP, without
 "what address do you see me at?" before it asks for a relay). So a server with `[turn] enabled = true` is also a STUN server:
 list `stun:YOUR-IP:3478` in the apps (Settings, Connection, STUN servers) next to the public ones, or instead of them to keep
 your friends' addresses off third-party servers. The panel's Home page shows the address with a Copy button, and
-`tests/turn_stream.rs` checks the answer on both transports. A STUN-only mode (no relay, no ports to open beyond one) is not built.
+`tests/turn_stream.rs` checks the answer on both transports. With `[turn] stun_only = true` (or "Only answer address lookups" in the panel) the server answers STUN
+and nothing else: no logins, no relaying, no port range to open, no public address to configure, and almost no bandwidth. It is the
+cheapest thing to host for people who only want their friends' addresses kept off third-party STUN servers. Binding requests are
+answered; every allocation is refused even with a valid fixed login (`tests/turn_stream.rs`).
 
 ### Several servers (for example one per continent)
 
@@ -152,6 +155,41 @@ Read it carefully:
   figures show the order of magnitude, not exact ratios.
 - strfry, the most used relay, was not measured here. The script runs it too if you give it `STRFRY=/path/to/strfry`.
 
+### Large relays: the disk store
+
+By default events are held in memory with a log on disk, which is the fastest and is bounded by memory. For a relay with
+more events than memory holds, set
+
+```toml
+[nostr]
+backend = "disk"
+```
+
+and the events and every index (time, author, kind, tag) live in a database file, `nostr-events.redb` (redb: pure Rust,
+crash-safe, no C code). Memory then stays flat however many events there are. It behaves exactly like the memory store:
+`tests/disk_store.rs` applies a long run of random events, deletions, requests to vanish, bans, expiry and sweeps to both
+and requires the same answers after every step, and the whole Nostr test suite runs on both.
+
+One run of `scripts/bench-nostr.sh` on a shared 4-vCPU container (20,000 events, orders of magnitude only):
+
+| | memory | memory, durable | disk |
+|---|---|---|---|
+| events stored per second | 38,000 | 36,000 | 6,200 |
+| reads of 50 events per second | 3,200 | 3,600 | 1,600 |
+| one event at a time, median | 0.19 ms | 0.19 ms | 0.19 ms |
+| memory at peak | 49 MB | 49 MB | 77 MB |
+
+What to know before choosing it:
+- It is slower to write than the memory store (each event is a database transaction); reads and live delivery are as quick as
+  you can notice. It is still several times faster to write than the SQLite relay measured above.
+- **It cannot be combined with `storage.encrypt`**: the indexes (times, authors, kinds) would stay readable on disk, so the
+  server refuses to start with both rather than promise what it does not do. Use the memory backend with encryption, or
+  encrypt the whole disk.
+- Writes are committed without waiting for the disk and made durable about twice a second (or per batch with
+  `durable = true`), as with the log: a power cut loses at most that last moment.
+- The file reuses the space of what is removed but does not shrink by itself; copying it with `backup` (below) makes a compact one.
+- Switching an existing relay from `memory` to `disk` starts the database empty; move events with `backup` and `restore`.
+
 ### What was learned from nostr-rs-relay
 
 I read its source (event handling, storage, limits, configuration) and adopted what fits PrivCord:
@@ -169,6 +207,54 @@ I read its source (event handling, storage, limits, configuration) and adopted w
 
 Left out on purpose: NIP-05 write verification (needs outbound web requests from the server), pay-to-relay, an external
 admission service, and logging each client's address and browser (this server keeps no such log).
+
+## What the server runs, and how much it may use
+
+The panel's Settings page shows each protocol the server runs (the PrivCord relay, Nostr, and TURN/STUN) with the ports it uses and
+whether the setting comes from the panel or from your settings file. An owner can add a protocol from the "Add a protocol" menu,
+turn one off, or switch calls between "address lookup only" and "calls and files". Several can run at once. The relay and Nostr share
+one web port (they are both WebSockets, told apart by the request); TURN and STUN use their own UDP port (and TCP or TLS ports if you set them).
+
+Saving a change restarts the server for a few seconds with the new choices. If they cannot start (a port is taken, a setting is
+refused), the server goes back to the last choices that worked, and the panel says why. The panel's choices are kept in
+`data_dir/panel.json` and are laid over the settings file when the server starts.
+
+Limits, in the `[limits]` section or on the panel (Advanced), each 0 for "no limit":
+
+```
+[limits]
+monthly_traffic_gb = 500    # relay, Nostr and TURN together; at the cap new connections get 503 with a long Retry-After
+connection_kbps = 2000      # each relay/Nostr connection, each way
+disk_quota_mb = 20000       # shared out as the Nostr and waiting-message caps
+```
+
+The month's traffic is counted in `data_dir/usage.json` (saved about once a minute; a crash can lose up to a minute of counts)
+and shown on the panel and in the health report, which warns at 80% and turns red at the cap. The counters split the relay and
+Nostr together from TURN for now; they will be split further when each protocol is its own module.
+
+## Backup, restore, and moving to another server
+
+One command saves everything the server keeps (people's waiting messages, Nostr events, admins, the TURN secret, the TLS
+account) into one file, and one command puts it back:
+
+```
+privcord-server backup  --out saved.pcbk --passphrase-env BACKUP_PASSPHRASE   # on the old server
+privcord-server restore --in  saved.pcbk --passphrase-env BACKUP_PASSPHRASE   # on the new one, before it first starts
+```
+
+- **Moving:** make the backup, copy the file to the new machine, install the server there, run `restore`, start it. Point your
+  name (DNS) at the new address; people's apps follow the name. Add `--with-config` to carry the settings file too (it is
+  put beside the data as `restored-config.toml`, not applied over yours).
+- **Safe by default:** the file is created private (0600) and never overwrites another. It is checked whole before a single
+  file is written, so a cut-off, edited or wrong-passphrase backup is refused and nothing changes. `restore` will not mix into
+  a folder that already has data; add `--replace` and the old data is moved aside to `<folder>.before-restore`, not deleted.
+- **Passphrase:** give the name of an environment variable, never the passphrase itself (it would show in the process list).
+  Without one the file is not encrypted; it holds your admins' access and the TURN secret, so keep it private. It is
+  encrypted with AES-256-GCM under an Argon2id key.
+- **Disk store:** with `nostr.backend = "disk"` stop the server first (the command tells you if it is running); the memory
+  store can be backed up while running.
+- **Not in the file:** the storage key (`storage.encrypt`) lives outside the data folder on purpose; copy it yourself.
+- The health report on the admin panel shows when the last backup was made and turns amber when there is none.
 
 ## Certificates that renew themselves
 

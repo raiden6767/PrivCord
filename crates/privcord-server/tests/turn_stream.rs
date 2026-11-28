@@ -331,3 +331,42 @@ async fn the_turn_ports_are_also_stun_servers_over_udp_and_tcp_with_no_login() {
     assert_eq!(mapped_address(&buf[..n]), Some(s.local_addr().unwrap()));
     r.stop().await;
 }
+
+#[tokio::test]
+async fn stun_only_answers_binding_but_refuses_every_allocation_even_with_a_valid_login() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = Config::default();
+    cfg.server.listen = "127.0.0.1:0".into();
+    cfg.server.data_dir = dir.path().into();
+    cfg.relay.enabled = false;
+    cfg.nostr.enabled = false;
+    cfg.turn.enabled = true;
+    cfg.turn.stun_only = true;
+    cfg.turn.listen = "127.0.0.1:0".into();
+    cfg.turn.public_ip = String::new(); // not needed, and not looked up
+    cfg.turn.min_port = 0; // not needed either
+    cfg.turn.users = vec!["fixed:secret".into()];
+    let r = privcord_server::start(cfg).await.unwrap();
+    let port = r.turn_port().unwrap();
+
+    let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    sock.send_to(&binding_request(), format!("127.0.0.1:{port}"))
+        .await
+        .unwrap();
+    let mut buf = [0u8; 512];
+    let (n, _) = tokio::time::timeout(Duration::from_secs(3), sock.recv_from(&mut buf))
+        .await
+        .expect("no STUN answer")
+        .unwrap();
+    assert_eq!(mapped_address(&buf[..n]), Some(sock.local_addr().unwrap()));
+
+    // A real client with the fixed login (valid on a full TURN server) gets no relay.
+    let conn = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let client = Client::new(client_cfg(conn, port, "fixed", "secret"))
+        .await
+        .unwrap();
+    client.listen().await.unwrap();
+    assert!(client.allocate().await.is_err(), "STUN-only must not relay");
+    client.close().await.unwrap();
+    r.stop().await;
+}

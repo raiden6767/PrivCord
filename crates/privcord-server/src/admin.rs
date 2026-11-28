@@ -902,7 +902,11 @@ async fn overview(
     if a.state.tls_self_signed {
         warnings.push(json!({ "text": "The TLS certificate is self-signed: apps and browsers will not trust it. Use real certificate files for production.", "go": null }));
     }
-    if c.turn.enabled && c.turn.tcp_listen.is_empty() && c.turn.tls_listen.is_empty() {
+    if c.turn.enabled
+        && !c.turn.stun_only
+        && c.turn.tcp_listen.is_empty()
+        && c.turn.tls_listen.is_empty()
+    {
         warnings.push(json!({ "text": "TURN accepts UDP only: phones on networks that block UDP cannot use it. Set turn.tcp_listen and turn.tls_listen.", "go": null }));
     }
     if c.nostr.enabled && c.nostr.allowed_pubkeys.is_empty() && !app.requires_token() {
@@ -948,6 +952,135 @@ async fn overview(
         "warnings": warnings,
     }))
     .into_response()
+}
+
+/// What is wrong or at risk, in plain words (the Home page's health card).
+async fn health_checks(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    let app = &a.state.app;
+    let list = crate::health::checks(app, &app.cfg.server.data_dir, a.state.tls_self_signed);
+    Json(crate::health::checks_json(&list)).into_response()
+}
+
+/// The same, as a text file to download and send to whoever is helping.
+async fn health_report(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    let app = &a.state.app;
+    let body = crate::health::report_text(app, &app.cfg.server.data_dir, a.state.tls_self_signed);
+    let name = format!(
+        "privcord-health-{}.txt",
+        crate::health::civil(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        )
+        .0
+    );
+    (
+        [
+            ("content-type", "text/plain; charset=utf-8".to_owned()),
+            (
+                "content-disposition",
+                format!("attachment; filename=\"{name}\""),
+            ),
+            ("cache-control", "no-store".to_owned()),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+fn protocols_view(a: &AdminApp) -> Value {
+    let app = &a.state.app;
+    let dir = &app.cfg.server.data_dir;
+    let panel = crate::protocols::Panel::load(dir);
+    json!({
+        "protocols": crate::protocols::describe(&app.cfg, &panel),
+        "limits": crate::protocols::limits(&app.cfg, &panel),
+        "usage": app.usage.snapshot(),
+        "data_bytes": crate::health::data_bytes(dir),
+        "last_error": crate::protocols::last_error(dir),
+    })
+}
+
+async fn get_protocols(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    Json(protocols_view(&a)).into_response()
+}
+
+/// Changes what the server runs and its limits, then restarts it (about a second) with the new choices. Owners only. A key
+/// that is `null` goes back to the settings file's value. If the new choices cannot start, the server returns to the last that
+/// worked and the panel shows why.
+async fn put_protocols(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Owner);
+    let app = &a.state.app;
+    let dir = &app.cfg.server.data_dir;
+    let Some(change) = body.as_object() else {
+        return text(StatusCode::BAD_REQUEST, "send an object");
+    };
+    let mut merged =
+        serde_json::to_value(crate::protocols::Panel::load(dir)).unwrap_or(Value::Null);
+    if let Some(m) = merged.as_object_mut() {
+        for (k, v) in change {
+            m.insert(k.clone(), v.clone());
+        }
+    }
+    let panel = match crate::protocols::Panel::from_json(&merged) {
+        Ok(p) => p,
+        Err(e) => return text(StatusCode::BAD_REQUEST, &e),
+    };
+    // The same checks as at start-up, on the settings these choices would give.
+    let mut candidate = app.cfg.clone();
+    panel.apply(&mut candidate);
+    let problems = candidate.problems();
+    if !problems.is_empty() {
+        return text(StatusCode::BAD_REQUEST, &problems.join("; "));
+    }
+    if let Err(e) = panel.save(dir) {
+        return text(StatusCode::INTERNAL_SERVER_ERROR, &e);
+    }
+    // Answer first: the restart closes this listener.
+    let app = app.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        app.restart.notify_one();
+    });
+    (StatusCode::ACCEPTED, Json(json!({ "restarting": true }))).into_response()
+}
+
+/// Live numbers (memory, disk, connections, events), read every few seconds by the panel if the person turned them on.
+async fn live_numbers(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    let app = &a.state.app;
+    let mut resp = Json(crate::health::live(app, &app.cfg.server.data_dir)).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        "no-store"
+            .parse()
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("no-store")),
+    );
+    resp
 }
 
 fn nostr_of(a: &AdminApp) -> Option<&Arc<crate::nostr::Nostr>> {
@@ -1448,6 +1581,13 @@ pub fn router(state: Arc<AdminState>) -> Router {
         .route("/admin/api/me", get(me))
         .route("/admin/api/me/token", post(rotate_me))
         .route("/admin/api/overview", get(overview))
+        .route("/admin/api/health", get(health_checks))
+        .route("/admin/api/health/report", get(health_report))
+        .route("/admin/api/live", get(live_numbers))
+        .route(
+            "/admin/api/protocols",
+            get(get_protocols).put(put_protocols),
+        )
         .route("/admin/api/settings", get(get_settings).put(put_settings))
         .route("/admin/api/clear/messages", post(clear_messages))
         .route("/admin/api/clear/nostr", post(clear_nostr))

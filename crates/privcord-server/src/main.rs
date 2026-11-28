@@ -45,6 +45,31 @@ enum Cmd {
     },
     /// Make a one-time setup code for another admin (works while the server runs). They enter it on the panel's login page
     /// and get their own token there; nothing long-lived is printed.
+    /// Save everything in the data folder (messages waiting, Nostr events, admins, TURN secret) to one file. Stop the server
+    /// first if it uses the disk store. To move to another server: back up, copy the file there, `restore`.
+    Backup {
+        /// The file to create (it must not exist).
+        #[arg(long)]
+        out: PathBuf,
+        /// Also keep the settings file in the backup.
+        #[arg(long)]
+        with_config: bool,
+        /// Encrypt the backup with the passphrase held in this environment variable.
+        #[arg(long, value_name = "NAME")]
+        passphrase_env: Option<String>,
+    },
+    /// Put a backup back into the data folder, after checking all of it. Run it before the server's first start there.
+    Restore {
+        /// The backup file.
+        #[arg(long = "in")]
+        input: PathBuf,
+        /// The passphrase's environment variable, if the backup is encrypted.
+        #[arg(long, value_name = "NAME")]
+        passphrase_env: Option<String>,
+        /// The data folder already holds data: move it aside (to `<folder>.before-restore`) and restore.
+        #[arg(long)]
+        replace: bool,
+    },
     AdminInvite {
         /// A name for this admin.
         #[arg(long, default_value = "admin")]
@@ -109,6 +134,12 @@ public_ip = "auto"              # "auto" asks a public STUN server; or write the
 min_port = 49152                # open this UDP range in your firewall / forward it on your router
 max_port = 49400
 max_kbps = 0                    # per relayed connection, 0 = no limit
+# stun_only = true              # only answer STUN: no relaying, no logins, no port range to open
+
+# [limits]                      # all 0 = no limit
+# monthly_traffic_gb = 500
+# connection_kbps = 2000
+# disk_quota_mb = 20000
 "#;
 
 /// A minimal logger to stderr. Quiet by default (warnings and errors only); `PRIVCORD_LOG=info|debug|trace` turns it up. At
@@ -155,12 +186,88 @@ fn main() -> std::process::ExitCode {
         Cmd::Serve => rt.block_on(serve(&cli.config)),
         Cmd::Doctor => rt.block_on(doctor(&cli.config)),
         Cmd::StoreKey { out } => store_key(&out),
+        Cmd::Backup {
+            out,
+            with_config,
+            passphrase_env,
+        } => backup(&cli.config, &out, with_config, passphrase_env.as_deref()),
+        Cmd::Restore {
+            input,
+            passphrase_env,
+            replace,
+        } => restore(&cli.config, &input, passphrase_env.as_deref(), replace),
         Cmd::AdminInvite { name, role } => admin_invite(&cli.config, &name, &role),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => fail(&e),
     }
+}
+
+fn passphrase(var: Option<&str>) -> Result<Option<String>, String> {
+    var.map(|v| {
+        std::env::var(v)
+            .ok()
+            .filter(|p| !p.is_empty())
+            .ok_or_else(|| format!("the environment variable {v} is empty or not set"))
+    })
+    .transpose()
+}
+
+fn backup(
+    cfg: &std::path::Path,
+    out: &std::path::Path,
+    with_config: bool,
+    pass: Option<&str>,
+) -> Result<(), String> {
+    let c = load(cfg)?;
+    let pass = passphrase(pass)?;
+    let s = privcord_server::backup::create(
+        &c.server.data_dir,
+        with_config.then_some(cfg),
+        out,
+        pass.as_deref(),
+    )?;
+    println!(
+        "saved {} files ({} bytes) to {}{}",
+        s.files,
+        s.bytes,
+        out.display(),
+        if pass.is_some() { ", encrypted" } else { "" }
+    );
+    if pass.is_none() {
+        println!("this file is not encrypted: it holds your admins' access and the TURN secret. Keep it private, or add --passphrase-env.");
+    }
+    if c.storage.encrypt {
+        println!("storage.encrypt is on: the storage key is NOT in this file. Copy it separately, or the data cannot be read.");
+    }
+    Ok(())
+}
+
+fn restore(
+    cfg: &std::path::Path,
+    input: &std::path::Path,
+    pass: Option<&str>,
+    replace: bool,
+) -> Result<(), String> {
+    let c = load(cfg)?;
+    let pass = passphrase(pass)?;
+    let (s, conf) =
+        privcord_server::backup::restore(input, &c.server.data_dir, pass.as_deref(), replace)?;
+    println!(
+        "restored {} files ({} bytes) into {}",
+        s.files,
+        s.bytes,
+        c.server.data_dir.display()
+    );
+    if let Some(p) = conf {
+        println!(
+            "the old settings are in {} for you to look at; they were not applied.",
+            p.display()
+        );
+    }
+    println!("start the server as usual. If its address changed, tell your people the new one.");
+    Ok(())
 }
 
 fn fail(msg: &str) -> std::process::ExitCode {
@@ -251,27 +358,35 @@ fn admin_invite(path: &std::path::Path, name: &str, role: &str) -> Result<(), St
 
 async fn serve(path: &std::path::Path) -> Result<(), String> {
     let cfg = load(path)?;
-    let (relay, turn) = (cfg.relay.enabled, cfg.turn.enabled);
-    let admin_tls = cfg.admin.tls;
-    let running = privcord_server::start(cfg).await?;
-    println!(
-        "privcord-server {} listening on {} (relay: {relay}, turn: {turn}). Ctrl-C to stop.",
-        env!("CARGO_PKG_VERSION"),
-        running.addr
-    );
-    if let Some(a) = running.admin_addr() {
-        println!(
-            "admin panel: {}://{a}/admin",
-            if admin_tls { "https" } else { "http" }
-        );
-        if let Some(code) = running.admin_setup_code() {
-            // Not a token: it works once and stops after 15 minutes, so a terminal log that keeps it is worth nothing later.
-            println!("first time here? open the page and enter this setup code (works once, for 15 minutes): {code}");
-        }
-    }
-    tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;
-    running.stop().await;
-    Ok(())
+    privcord_server::supervise(
+        cfg,
+        async {
+            let _ = tokio::signal::ctrl_c().await;
+        },
+        |running| {
+            // What is on may change while the server runs (the panel can restart it with other choices).
+            let c = running.config();
+            println!(
+                "privcord-server {} listening on {} (relay: {}, nostr: {}, turn: {}). Ctrl-C to stop.",
+                env!("CARGO_PKG_VERSION"),
+                running.addr,
+                c.relay.enabled,
+                c.nostr.enabled,
+                if !c.turn.enabled { "off" } else if c.turn.stun_only { "stun only" } else { "on" },
+            );
+            if let Some(a) = running.admin_addr() {
+                println!(
+                    "admin panel: {}://{a}/admin",
+                    if c.admin.tls { "https" } else { "http" }
+                );
+                if let Some(code) = running.admin_setup_code() {
+                    // Not a token: it works once and stops after 15 minutes, so a terminal log that keeps it is worth nothing later.
+                    println!("first time here? open the page and enter this setup code (works once, for 15 minutes): {code}");
+                }
+            }
+        },
+    )
+    .await
 }
 
 async fn doctor(path: &std::path::Path) -> Result<(), String> {
@@ -283,7 +398,7 @@ async fn doctor(path: &std::path::Path) -> Result<(), String> {
             bad += 1;
         }
     };
-    if matches!(cfg.turn.public_ip.trim(), "" | "auto") && cfg.turn.enabled {
+    if matches!(cfg.turn.public_ip.trim(), "" | "auto") && cfg.turn.enabled && !cfg.turn.stun_only {
         match nat::public_ip().await {
             Ok(ip) => {
                 say(true, format!("public address seen from the internet: {ip}"));
@@ -309,8 +424,15 @@ async fn doctor(path: &std::path::Path) -> Result<(), String> {
             tokio::net::UdpSocket::bind(&cfg.turn.listen).await.is_ok(),
             format!("TURN can listen on {} (UDP)", cfg.turn.listen),
         );
-        let n = u32::from(cfg.turn.max_port.saturating_sub(cfg.turn.min_port)) + 1;
-        println!("note: forward UDP {} and UDP {}-{} to this machine ({n} simultaneous relayed connections).", cfg.turn.listen, cfg.turn.min_port, cfg.turn.max_port);
+        if cfg.turn.stun_only {
+            println!(
+                "note: STUN only: forward just UDP {} to this machine (no relay ports are used).",
+                cfg.turn.listen
+            );
+        } else {
+            let n = u32::from(cfg.turn.max_port.saturating_sub(cfg.turn.min_port)) + 1;
+            println!("note: forward UDP {} and UDP {}-{} to this machine ({n} simultaneous relayed connections).", cfg.turn.listen, cfg.turn.min_port, cfg.turn.max_port);
+        }
         if !cfg.turn.tcp_listen.is_empty() || !cfg.turn.tls_listen.is_empty() {
             println!("note: also forward the TCP port(s) you set for TURN over TCP / TLS; relayed traffic still leaves over UDP.");
         }

@@ -997,3 +997,195 @@ fn the_panel_is_refused_over_plain_http_on_another_address_unless_allowed() {
     c.admin.tls = true;
     assert!(!said(&c), "TLS is fine anywhere");
 }
+
+#[tokio::test]
+async fn the_health_page_says_what_is_wrong_in_plain_words_and_the_report_downloads_without_secrets(
+) {
+    let (r, dir, token) = boot().await;
+    let addr = r.admin_addr().unwrap();
+    // A signed-in person sees an overall verdict and findings, each with what it means and what to do.
+    let (status, _, body) = http(addr, "GET", "/admin/api/health", Some(&token), None).await;
+    assert_eq!(status, 200, "{body}");
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert!(["good", "watch", "fix"].contains(&v["overall"].as_str().unwrap()));
+    let checks = v["checks"].as_array().unwrap();
+    assert!(!checks.is_empty());
+    for c in checks {
+        assert!(!c["title"].as_str().unwrap().is_empty());
+        assert!(!c["found"].as_str().unwrap().is_empty());
+    }
+    // This server is open (no tokens) and has never been backed up: both are said.
+    let titles: Vec<&str> = checks
+        .iter()
+        .map(|c| c["title"].as_str().unwrap())
+        .collect();
+    assert!(titles.contains(&"Who can connect"), "{titles:?}");
+    assert!(titles.contains(&"Backups"), "{titles:?}");
+
+    // The report is a text file to download, with nothing secret in it.
+    let (status, headers, text) =
+        http(addr, "GET", "/admin/api/health/report", Some(&token), None).await;
+    assert_eq!(status, 200);
+    assert!(headers.contains("attachment"), "{headers}");
+    assert!(headers.contains("privcord-health-"), "{headers}");
+    assert!(text.contains("health report"));
+    assert!(text.contains("THE NUMBERS"));
+    assert!(
+        !text.contains(&token),
+        "the admin token must never be in the report"
+    );
+    assert!(
+        !text.contains(dir.path().to_str().unwrap()),
+        "no folder paths"
+    );
+
+    // Without a token neither is available.
+    for path in [
+        "/admin/api/health",
+        "/admin/api/health/report",
+        "/admin/api/live",
+    ] {
+        let (status, _, _) = http(addr, "GET", path, None, None).await;
+        assert_eq!(status, 401, "{path}");
+    }
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_live_numbers_move_when_things_happen_and_a_backup_marker_is_noticed() {
+    let (r, dir, token) = boot().await;
+    let addr = r.admin_addr().unwrap();
+    let (status, _, body) = http(addr, "GET", "/admin/api/live", Some(&token), None).await;
+    assert_eq!(status, 200, "{body}");
+    let before: Value = serde_json::from_str(&body).unwrap();
+    assert!(before["uptime_secs"].as_u64().is_some());
+    assert!(before["relay"]["open_connections"].as_u64().is_some());
+    let events_before = before["nostr"]["events"].as_u64().unwrap();
+    let k = key();
+    assert!(publish(&r, &nostr_event(&k, "one")).await.0);
+    let (_, _, body) = http(addr, "GET", "/admin/api/live", Some(&token), None).await;
+    let after: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        after["nostr"]["events"].as_u64().unwrap(),
+        events_before + 1
+    );
+
+    // Once a backup is made (the command writes its time), the report no longer warns.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    std::fs::write(dir.path().join("last-backup"), now.to_string()).unwrap();
+    let (_, _, body) = http(addr, "GET", "/admin/api/health", Some(&token), None).await;
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let backups = v["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["title"] == "Backups")
+        .unwrap();
+    assert_eq!(backups["level"], "good", "{backups}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_protocols_card_lists_what_runs_and_only_an_owner_can_change_it_after_the_same_checks_as_start_up(
+) {
+    let (r, dir, owner) = boot().await;
+    let (code, v) = api(&r, "GET", "/protocols", &owner, None).await;
+    assert_eq!(code, 200);
+    let ids: Vec<&str> = v["protocols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["relay", "nostr", "turn"]);
+    assert_eq!(v["usage"]["over_cap"], false);
+
+    // a viewer can look but not change
+    let (c, made) = api(
+        &r,
+        "POST",
+        "/admins",
+        &owner,
+        Some(json!({ "name": "Vi", "role": "viewer" })),
+    )
+    .await;
+    assert_eq!(c, 200, "{made}");
+    let vt = made["token"].as_str().unwrap();
+    assert_eq!(api(&r, "GET", "/protocols", vt, None).await.0, 200);
+    assert_eq!(
+        api(&r, "PUT", "/protocols", vt, Some(json!({ "turn": "stun" })))
+            .await
+            .0,
+        403
+    );
+
+    // refused: nonsense, and turning everything off
+    assert_eq!(
+        api(
+            &r,
+            "PUT",
+            "/protocols",
+            &owner,
+            Some(json!({ "turn": "all" }))
+        )
+        .await
+        .0,
+        400
+    );
+    assert_eq!(
+        api(
+            &r,
+            "PUT",
+            "/protocols",
+            &owner,
+            Some(json!({ "relay": false, "nostr": false, "turn": "off" }))
+        )
+        .await
+        .0,
+        400
+    );
+    assert!(
+        !dir.path().join("panel.json").exists(),
+        "a refused change is not saved"
+    );
+
+    // accepted: saved, and the server will restart with it
+    let (code, v) = api(
+        &r,
+        "PUT",
+        "/protocols",
+        &owner,
+        Some(json!({ "turn": "stun", "monthly_traffic_gb": 100 })),
+    )
+    .await;
+    assert_eq!(code, 202, "{v}");
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("panel.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["turn"], "stun");
+    assert_eq!(saved["monthly_traffic_gb"], 100);
+    // and a later change keeps what was chosen before
+    assert_eq!(
+        api(
+            &r,
+            "PUT",
+            "/protocols",
+            &owner,
+            Some(json!({ "nostr": false }))
+        )
+        .await
+        .0,
+        202
+    );
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("panel.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        (saved["turn"].as_str(), saved["nostr"].as_bool()),
+        (Some("stun"), Some(false))
+    );
+    r.stop().await;
+}

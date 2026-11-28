@@ -4,11 +4,15 @@
 
 pub mod acme;
 pub mod admin;
+pub mod backup;
 pub mod config;
 pub mod fsutil;
+pub mod health;
+pub mod limits;
 pub mod nat;
 pub mod net;
 pub mod nostr;
+pub mod protocols;
 pub mod record;
 pub mod relay;
 pub mod serve;
@@ -37,14 +41,42 @@ pub struct Running {
     tls: Option<Arc<tls::Tls>>,
     admin_addr: Option<SocketAddr>,
     admin_token: Option<String>,
+    usage: Arc<limits::Usage>,
+    app: Arc<net::App>,
 }
 
 impl Running {
+    /// Asks the supervisor (see [`supervise`]) to restart with the panel's current choices.
+    pub fn request_restart(&self) {
+        self.app.restart.notify_one();
+    }
+
+    /// The same, as something that can be kept and called later (the admin panel and tests use it).
+    pub fn restart_handle(&self) -> impl Fn() + Send + Sync + 'static {
+        let app = self.app.clone();
+        move || app.restart.notify_one()
+    }
+
+    /// The settings this run started with (the file with the panel's choices laid over it).
+    pub fn config(&self) -> &Config {
+        &self.app.cfg
+    }
+
+    /// The traffic counted this month.
+    pub fn usage(&self) -> &Arc<limits::Usage> {
+        &self.usage
+    }
+
     pub async fn stop(self) {
         let _ = self.stop.send(true);
         let _ = self.done.await;
         if let Some(r) = &self.relay {
             r.compact(net::now_ms());
+            // Connections may still hold the relay for a moment; the event database is let go now, so the next start in
+            // this process (or the next process) can open it.
+            if let Some(store) = r.nostr().and_then(|n| n.store()) {
+                store.close();
+            }
         }
     }
 
@@ -85,13 +117,15 @@ impl Running {
 
 /// Starts what `cfg` asks for. The returned address is the one the web side listens on.
 pub async fn start(mut cfg: Config) -> Result<Running, String> {
-    if cfg.turn.enabled && matches!(cfg.turn.public_ip.trim(), "" | "auto") {
+    if cfg.turn.enabled && !cfg.turn.stun_only && matches!(cfg.turn.public_ip.trim(), "" | "auto") {
         cfg.turn.public_ip = nat::public_ip().await?.to_string();
     }
     let problems = cfg.problems();
     if !problems.is_empty() {
         return Err(problems.join("; "));
     }
+    limits::apply_disk_budget(&mut cfg);
+    let usage = limits::Usage::load(&cfg.server.data_dir, &cfg.limits);
     let tls = if cfg.wants_tls() {
         Some(tls::Tls::load(
             &cfg.tls,
@@ -127,13 +161,18 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     #[cfg(feature = "turn")]
     let turn = if cfg.turn.enabled {
         let secret = turn_role::load_or_make_secret_with(&cfg.server.data_dir, &codec)?;
-        let ip: std::net::IpAddr = cfg
-            .turn
-            .public_ip
-            .parse()
-            .map_err(|_| "bad turn.public_ip".to_owned())?;
+        // STUN-only never hands out a relay address, so it needs no public address (and works offline).
+        let ip: std::net::IpAddr = if cfg.turn.stun_only {
+            std::net::Ipv4Addr::LOCALHOST.into()
+        } else {
+            cfg.turn
+                .public_ip
+                .parse()
+                .map_err(|_| "bad turn.public_ip".to_owned())?
+        };
         let server =
-            turn_role::server::start(&cfg.turn, secret.clone(), ip, tls.as_deref()).await?;
+            turn_role::server::start(&cfg.turn, secret.clone(), ip, tls.as_deref(), usage.clone())
+                .await?;
         // What phones are told: UDP first, then the ways through a network that blocks it.
         let mut urls = vec![format!("turn:{ip}:{}", server.addr.port())];
         if let Some(a) = server.tcp_addr {
@@ -161,7 +200,8 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
     #[cfg(feature = "turn")]
     let (turn_server, turn_info) = match turn {
-        Some((s, secret, urls)) => (Some(s), Some((secret, urls))),
+        // STUN-only has no logins to hand out: /turn answers "not here".
+        Some((s, secret, urls)) => (Some(s), (!cfg.turn.stun_only).then_some((secret, urls))),
         None => (None, None),
     };
     #[cfg(feature = "turn")]
@@ -181,7 +221,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     let admin_cfg = cfg.admin.clone();
     let data_dir = cfg.server.data_dir.clone();
     let http_limits = serve::HttpLimits::from_config(&cfg.server);
-    let app = Arc::new(net::App::new(cfg, relay.clone(), turn_info));
+    let app = Arc::new(net::App::new(cfg, relay.clone(), turn_info, usage.clone()));
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
     let router = net::router(app.clone());
     let mut for_server = stopped.clone();
@@ -286,6 +326,21 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         .filter(|n| n.cfg.durable && n.cfg.persist)
         .map(|n| tokio::spawn(n.run_committer(stopped.clone())));
     let stopped_for_acme = stopped.clone();
+    // The traffic counters are saved about once a minute, and once more at stop.
+    let usage_task = {
+        let (u, mut st) = (usage.clone(), stopped.clone());
+        tokio::spawn(async move {
+            let mut every = tokio::time::interval(Duration::from_secs(60));
+            every.tick().await;
+            loop {
+                tokio::select! {
+                    _ = every.tick() => u.tick(),
+                    _ = st.wait_for(|s| *s) => break,
+                }
+            }
+            u.tick();
+        })
+    };
     let sweeper = relay.clone().map(|r| {
         tokio::spawn(async move {
             let mut sweep = tokio::time::interval(Duration::from_millis(500));
@@ -332,6 +387,7 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         if let Some(s) = sweeper {
             let _ = s.await;
         }
+        let _ = usage_task.await;
         if let Some(c) = committer {
             // Confirms what was still waiting for the disk.
             let _ = c.await;
@@ -348,11 +404,69 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         tls,
         admin_addr,
         admin_token,
+        usage,
+        app,
     })
 }
 
 impl std::fmt::Debug for Running {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Running")
+    }
+}
+
+/// Runs the server until `quit` finishes, and starts it again with the admin panel's choices whenever the panel asks for that.
+/// If the new choices cannot start (a port is taken, a setting is refused), the last choices that worked are started again and
+/// the reason is kept for the panel (`apply-error.txt`): a mistake in the panel must never leave the server down with the
+/// panel gone. `started` is called after every successful start.
+pub async fn supervise(
+    base: Config,
+    quit: impl std::future::Future<Output = ()>,
+    mut started: impl FnMut(&Running),
+) -> Result<(), String> {
+    let dir = base.server.data_dir.clone();
+    let with = |p: &protocols::Panel| {
+        let mut c = base.clone();
+        p.apply(&mut c);
+        c
+    };
+    let mut good = protocols::Panel::load(&dir);
+    let mut running = match start(with(&good)).await {
+        Ok(r) => r,
+        Err(e) if good != protocols::Panel::default() => {
+            // The saved choices do not start (for example a port changed): start without them and say why.
+            protocols::set_error(&dir, &format!("the saved panel choices did not start: {e}"));
+            good = protocols::Panel::default();
+            good.save(&dir)?;
+            start(with(&good)).await?
+        }
+        Err(e) => return Err(e),
+    };
+    started(&running);
+    tokio::pin!(quit);
+    loop {
+        let app = running.app.clone();
+        tokio::select! {
+            () = &mut quit => {
+                running.stop().await;
+                return Ok(());
+            }
+            () = app.restart.notified() => {}
+        }
+        running.stop().await;
+        let wanted = protocols::Panel::load(&dir);
+        running = match start(with(&wanted)).await {
+            Ok(r) => {
+                good = wanted;
+                protocols::clear_error(&dir);
+                r
+            }
+            Err(e) => {
+                protocols::set_error(&dir, &format!("the new choices did not start, so the server went back to the last ones that worked: {e}"));
+                good.save(&dir)?;
+                start(with(&good)).await?
+            }
+        };
+        started(&running);
     }
 }

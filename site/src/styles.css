@@ -470,3 +470,6 @@ html, * { scrollbar-width: thin; scrollbar-color: var(--thumb) var(--track); }
 .cl-links { margin: 10px 0 0; display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: .88rem; }
 .cl-links a { color: var(--on-ink-muted); text-underline-offset: 3px; } .cl-links a:hover { color: var(--yellow); }
 @media (min-width: 720px) { .cl-body { padding: 4px 22px 22px; } }
+
+.dl-server { display: flex; flex-wrap: wrap; gap: 12px; }
+.dl-server .btn { min-height: 48px; }

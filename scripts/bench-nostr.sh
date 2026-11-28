@@ -24,17 +24,23 @@ cat > "$TMP/p.toml" <<T
 [server]
 listen = "127.0.0.1:$PORT"
 data_dir = "$TMP/p"
+max_http_connections_per_ip = 100000
 [relay]
 enabled = false
 max_conns_per_ip = 100000
 [nostr]
 enabled = true
 events_per_minute_per_ip = 0
+reqs_per_minute_per_conn = 0
+events_per_second_global = 0
 T
 run privcord target/release/privcord-server -c "$TMP/p.toml" serve
 # The same, confirming each event only after it is safely on disk (what SQLite-based relays do).
 sed "s|data_dir = .*|data_dir = \"$TMP/pd\"|; s|^events_per_minute_per_ip = 0|events_per_minute_per_ip = 0\ndurable = true|" "$TMP/p.toml" > "$TMP/pd.toml"
 run privcord-durable target/release/privcord-server -c "$TMP/pd.toml" serve
+# The database on disk (events and every index in a file, so memory does not grow with the number of events).
+sed "s|data_dir = .*|data_dir = \"$TMP/pk\"|; s|^events_per_minute_per_ip = 0|events_per_minute_per_ip = 0\nbackend = \"disk\"|" "$TMP/p.toml" > "$TMP/pk.toml"
+run privcord-disk target/release/privcord-server -c "$TMP/pk.toml" serve
 if [ -n "${NOSTR_RS_RELAY:-}" ]; then
   mkdir -p "$TMP/n"
   cat > "$TMP/n.toml" <<T
