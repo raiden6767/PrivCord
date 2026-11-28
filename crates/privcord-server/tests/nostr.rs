@@ -61,6 +61,10 @@ async fn server(tweak: impl FnOnce(&mut Config)) -> (Running, String, tempfile::
     c.nostr.enabled = true;
     c.nostr.events_per_minute_per_ip = 0;
     c.relay.rate_limit = 100_000;
+    // The same tests run against the database on disk: PRIVCORD_TEST_BACKEND=disk cargo test --test nostr
+    if std::env::var("PRIVCORD_TEST_BACKEND").is_ok_and(|b| b == "disk") {
+        c.nostr.backend = "disk".into();
+    }
     tweak(&mut c);
     let r = start(c).await.unwrap();
     let url = format!("ws://{}", r.addr);
@@ -665,11 +669,15 @@ async fn in_durable_mode_the_confirmation_comes_after_the_event_is_on_disk() {
     sub.req("s", vec![json!({ "kinds": [1] })]).await;
     let ev = make(&k, 1, now(), vec![], "durable");
     assert_eq!(c.publish(&ev).await, (true, String::new()));
-    let log = std::fs::read_to_string(dir.path().join("nostr-events.jsonl")).unwrap();
-    assert!(
-        log.contains(ev["id"].as_str().unwrap()),
-        "confirmed before it was written"
-    );
+    // The log file is the memory backend's; the disk backend keeps the event in its database, which the next test restarts.
+    if let Ok(log) = std::fs::read_to_string(dir.path().join("nostr-events.jsonl")) {
+        assert!(
+            log.contains(ev["id"].as_str().unwrap()),
+            "confirmed before it was written"
+        );
+    } else {
+        assert!(dir.path().join("nostr-events.redb").exists());
+    }
     assert_eq!(
         sub.next().await[2]["id"],
         ev["id"],
@@ -1155,4 +1163,39 @@ async fn a_request_to_vanish_removes_the_authors_events_and_refuses_older_ones_e
         1
     );
     r2.stop().await;
+}
+
+#[tokio::test]
+async fn asking_for_a_few_events_by_a_tag_that_thousands_share_is_quick() {
+    // The benchmark's shape: every stored event carries the same tag value, and a reader asks for the newest 50.
+    let (r, url, _d) = server(|_| {}).await;
+    let (k, mut c) = (key(), C::open(&url).await);
+    let t0 = std::time::Instant::now();
+    for i in 0..3000 {
+        assert!(
+            c.publish(&make(
+                &k,
+                1,
+                now() - i,
+                vec![vec!["t", "busy"]],
+                &format!("e{i}")
+            ))
+            .await
+            .0
+        );
+    }
+    let wrote = t0.elapsed();
+    let t1 = std::time::Instant::now();
+    for _ in 0..20 {
+        let got = c
+            .req("q", vec![json!({ "#t": ["busy"], "limit": 50 })])
+            .await;
+        assert_eq!(got.len(), 50);
+    }
+    let read = t1.elapsed();
+    assert!(
+        read < std::time::Duration::from_secs(5),
+        "20 reads of 50 events took {read:?} (writing 3000 took {wrote:?})"
+    );
+    r.stop().await;
 }

@@ -4,6 +4,7 @@
 //! Supported: NIP-01 (events, REQ/CLOSE, replaceable, ephemeral and addressable kinds), NIP-09 (deletion), NIP-11 (relay
 //! information), NIP-13 (proof of work), NIP-40 (expiration), NIP-42 (authentication), NIP-45 (COUNT).
 
+pub mod disk;
 pub mod event;
 pub mod filter;
 pub mod nip98;
@@ -203,7 +204,13 @@ impl Nostr {
     ) -> Result<Self, String> {
         let store = cfg
             .store_events
-            .then(|| Store::open_with(cfg.persist.then_some(data_dir), cfg.max_store_bytes, codec))
+            .then(|| {
+                if cfg.backend == "disk" && cfg.persist {
+                    Store::open_disk(data_dir, cfg.max_store_bytes, codec)
+                } else {
+                    Store::open_with(cfg.persist.then_some(data_dir), cfg.max_store_bytes, codec)
+                }
+            })
             .transpose()?;
         let policy = Policy::from_config(&cfg);
         Ok(Self {

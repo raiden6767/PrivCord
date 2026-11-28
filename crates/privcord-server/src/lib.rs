@@ -45,6 +45,11 @@ impl Running {
         let _ = self.done.await;
         if let Some(r) = &self.relay {
             r.compact(net::now_ms());
+            // Connections may still hold the relay for a moment; the event database is let go now, so the next start in
+            // this process (or the next process) can open it.
+            if let Some(store) = r.nostr().and_then(|n| n.store()) {
+                store.close();
+            }
         }
     }
 

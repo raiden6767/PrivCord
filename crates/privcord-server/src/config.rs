@@ -179,6 +179,20 @@ impl Config {
         if !self.relay.enabled && !self.turn.enabled && !self.nostr.enabled {
             out.push("the relay, Nostr and TURN are all off: there is nothing to run".into());
         }
+        if !matches!(self.nostr.backend.as_str(), "memory" | "disk") {
+            out.push(format!(
+                "nostr.backend \"{}\" must be \"memory\" or \"disk\"",
+                self.nostr.backend
+            ));
+        }
+        if self.nostr.enabled && self.nostr.backend == "disk" && self.storage.encrypt {
+            out.push(
+                "nostr.backend = \"disk\" cannot encrypt its indexes yet (the times, authors and kinds of events would stay \
+                 readable on disk), so storage.encrypt is refused with it: use the \"memory\" backend with encryption, or \
+                 encrypt the whole disk"
+                    .into(),
+            );
+        }
         if self.server.listen.parse::<std::net::SocketAddr>().is_err() {
             out.push(format!(
                 "server.listen \"{}\" is not an address like 0.0.0.0:8787",
@@ -323,6 +337,9 @@ pub struct NostrConfig {
     pub durable: bool,
     /// Keep events on disk at all. Off: memory only, gone at restart.
     pub persist: bool,
+    /// Where events live: `memory` (fast; held in memory with a log on disk, so bounded by memory) or `disk` (a database on
+    /// disk with every index in it, so bounded by the disk; for relays with millions of events).
+    pub backend: String,
     /// NIP-42: send direct messages (kinds 4 and 1059) only to the authenticated sender and recipient.
     pub auth_dms: bool,
     /// The administrator's Nostr public key (hex), shown in the information document. It may also use the management API.
@@ -371,6 +388,7 @@ impl Default for NostrConfig {
             relay_url: String::new(),
             durable: false,
             persist: true,
+            backend: "memory".into(),
             auth_dms: false,
             admin_pubkey: String::new(),
             admin_pubkeys: Vec::new(),

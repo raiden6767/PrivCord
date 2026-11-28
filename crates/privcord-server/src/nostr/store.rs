@@ -1,5 +1,6 @@
 //! The events a Nostr relay keeps: indexed by time, author, kind and tag, with a log on disk.
 
+use super::disk::DiskStore;
 use super::event::{Event, Id};
 use super::filter::Filter;
 use crate::record::{Codec, Decoded};
@@ -46,7 +47,7 @@ pub enum Put {
     Failed,
 }
 
-pub struct Store {
+pub struct MemStore {
     inner: RwLock<Inner>,
     log: Option<Mutex<std::fs::File>>,
     path: Option<PathBuf>,
@@ -61,20 +62,20 @@ pub struct Store {
 
 const LABEL: &str = "nostr-events";
 
-impl std::fmt::Debug for Store {
+impl std::fmt::Debug for MemStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("nostr::Store")
+        f.write_str("nostr::MemStore")
     }
 }
 
-const MAX_TOMBSTONES: usize = 500_000;
+pub(super) const MAX_TOMBSTONES: usize = 500_000;
 /// The most index entries one query looks at, however many events there are: a wide or hostile filter cannot hold the
 /// store's lock for long.
-const MAX_SCAN: usize = 200_000;
+pub(super) const MAX_SCAN: usize = 200_000;
 /// The most events COUNT will count.
-const MAX_COUNT: usize = 100_000;
+pub(super) const MAX_COUNT: usize = 100_000;
 
-fn tag_keys(e: &Event) -> impl Iterator<Item = (char, String)> + '_ {
+pub(super) fn tag_keys(e: &Event) -> impl Iterator<Item = (char, String)> + '_ {
     e.tags.iter().filter_map(|t| {
         let name = t.first()?;
         let mut c = name.chars();
@@ -243,7 +244,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-impl Store {
+impl MemStore {
     /// A store that keeps its log in `dir` (or only in memory when `dir` is `None`), reading back what it finds. Plain lines
     /// with no check: use [`Store::open_with`] for the settings' codec.
     pub fn open(dir: Option<&std::path::Path>, max_bytes: usize) -> Result<Self, String> {
@@ -723,5 +724,102 @@ impl Store {
                 self.lines.store(live, std::sync::atomic::Ordering::Relaxed);
             }
         }
+    }
+}
+
+/// The events a relay keeps: in memory with a log on disk (fast, bounded by memory), or in a database on disk (bounded by
+/// the disk). Both behave the same; the same tests run against each.
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // one store exists for the whole run; boxing would only add a pointer to every call
+pub enum Store {
+    Memory(MemStore),
+    Disk(DiskStore),
+}
+
+macro_rules! each {
+    ($self:ident, $s:ident => $e:expr) => {
+        match $self {
+            Store::Memory($s) => $e,
+            Store::Disk($s) => $e,
+        }
+    };
+}
+
+impl Store {
+    /// In memory, with a log in `dir` (plain lines).
+    pub fn open(dir: Option<&std::path::Path>, max_bytes: usize) -> Result<Self, String> {
+        MemStore::open(dir, max_bytes).map(Self::Memory)
+    }
+
+    /// In memory, with a log in `dir` written the way the settings ask (checked, or encrypted).
+    pub fn open_with(
+        dir: Option<&std::path::Path>,
+        max_bytes: usize,
+        codec: Arc<Codec>,
+    ) -> Result<Self, String> {
+        MemStore::open_with(dir, max_bytes, codec).map(Self::Memory)
+    }
+
+    /// In a database in `dir`: for relays with more events than memory holds.
+    pub fn open_disk(
+        dir: &std::path::Path,
+        max_bytes: usize,
+        codec: Arc<Codec>,
+    ) -> Result<Self, String> {
+        DiskStore::open(dir, max_bytes, codec).map(Self::Disk)
+    }
+
+    /// Releases the files (the server is stopping): the database lets go of its lock, so the next start can open it.
+    pub fn close(&self) {
+        if let Self::Disk(d) = self {
+            d.close();
+        }
+    }
+
+    pub fn is_disk(&self) -> bool {
+        matches!(self, Self::Disk(_))
+    }
+
+    pub fn corrupt_lines(&self) -> usize {
+        each!(self, s => s.corrupt_lines())
+    }
+    pub fn insert(&self, e: Arc<Event>) -> Put {
+        each!(self, s => s.insert(e))
+    }
+    pub fn sync(&self) -> bool {
+        each!(self, s => s.sync())
+    }
+    pub fn banned_events(&self) -> Vec<Id> {
+        each!(self, s => s.banned_events())
+    }
+    pub fn unban_event(&self, id: &Id) -> bool {
+        each!(self, s => s.unban_event(id))
+    }
+    pub fn ban_event(&self, id: &Id) -> bool {
+        each!(self, s => s.ban_event(id))
+    }
+    pub fn clear(&self) -> usize {
+        each!(self, s => s.clear())
+    }
+    pub fn len(&self) -> usize {
+        each!(self, s => s.len())
+    }
+    pub fn is_empty(&self) -> bool {
+        each!(self, s => s.is_empty())
+    }
+    pub fn bytes(&self) -> usize {
+        each!(self, s => s.bytes())
+    }
+    pub fn query(&self, f: &Filter, now: i64, max: usize) -> Vec<Arc<Event>> {
+        each!(self, s => s.query(f, now, max))
+    }
+    pub fn count(&self, filters: &[Filter], now: i64) -> usize {
+        each!(self, s => s.count(filters, now))
+    }
+    pub fn sweep(&self, now: i64, retention_secs: i64, max_events: usize) -> usize {
+        each!(self, s => s.sweep(now, retention_secs, max_events))
+    }
+    pub fn compact(&self, force: bool) {
+        each!(self, s => s.compact(force));
     }
 }

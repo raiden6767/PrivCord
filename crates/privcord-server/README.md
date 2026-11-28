@@ -152,6 +152,41 @@ Read it carefully:
   figures show the order of magnitude, not exact ratios.
 - strfry, the most used relay, was not measured here. The script runs it too if you give it `STRFRY=/path/to/strfry`.
 
+### Large relays: the disk store
+
+By default events are held in memory with a log on disk, which is the fastest and is bounded by memory. For a relay with
+more events than memory holds, set
+
+```toml
+[nostr]
+backend = "disk"
+```
+
+and the events and every index (time, author, kind, tag) live in a database file, `nostr-events.redb` (redb: pure Rust,
+crash-safe, no C code). Memory then stays flat however many events there are. It behaves exactly like the memory store:
+`tests/disk_store.rs` applies a long run of random events, deletions, requests to vanish, bans, expiry and sweeps to both
+and requires the same answers after every step, and the whole Nostr test suite runs on both.
+
+One run of `scripts/bench-nostr.sh` on a shared 4-vCPU container (20,000 events, orders of magnitude only):
+
+| | memory | memory, durable | disk |
+|---|---|---|---|
+| events stored per second | 38,000 | 36,000 | 6,200 |
+| reads of 50 events per second | 3,200 | 3,600 | 1,600 |
+| one event at a time, median | 0.19 ms | 0.19 ms | 0.19 ms |
+| memory at peak | 49 MB | 49 MB | 77 MB |
+
+What to know before choosing it:
+- It is slower to write than the memory store (each event is a database transaction); reads and live delivery are as quick as
+  you can notice. It is still several times faster to write than the SQLite relay measured above.
+- **It cannot be combined with `storage.encrypt`**: the indexes (times, authors, kinds) would stay readable on disk, so the
+  server refuses to start with both rather than promise what it does not do. Use the memory backend with encryption, or
+  encrypt the whole disk.
+- Writes are committed without waiting for the disk and made durable about twice a second (or per batch with
+  `durable = true`), as with the log: a power cut loses at most that last moment.
+- The file reuses the space of what is removed but does not shrink by itself; copying it with `backup` (below) makes a compact one.
+- Switching an existing relay from `memory` to `disk` starts the database empty; move events with `backup` and `restore`.
+
 ### What was learned from nostr-rs-relay
 
 I read its source (event handling, storage, limits, configuration) and adopted what fits PrivCord:
