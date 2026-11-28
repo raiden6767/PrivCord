@@ -3255,6 +3255,7 @@ impl Core {
                     .unwrap_or_default(),
                 connection: self.person_state(&c.stored.uid),
                 can_message: self.may_start_direct(&c.stored.uid),
+                awaiting_acceptance: self.awaiting_acceptance(&c.stored.uid),
             })
             .collect();
         let mut messages = Vec::new();

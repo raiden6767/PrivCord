@@ -3,7 +3,7 @@
 //! With the sockets here, the window can be closed completely when DuoCord sits in the tray: messages, sync entries
 //! and notifications keep arriving with only the Rust engine running. The relay and Nostr protocol logic is the
 //! engine's own (`privcord_engine::signaling`), the same the phone uses; this file only carries out what it asks for
-//! on real WebSockets: one hub per mailbox, as the page did.
+//! on real WebSockets: one connection per relay, whatever the number of mailboxes (`SignalingMux`).
 //!
 //! In private mode every connection goes through Tor's SOCKS proxy, and host names are resolved by Tor (never here).
 //!
@@ -17,13 +17,11 @@ use privcord_domain::{
     signaling::{PutKind, SignalingStatus},
 };
 use privcord_engine::signaling::{
-    hub::{Service, SignalingHub},
-    nostr::NostrTransport,
-    relay::RelayClient,
-    Action, Event, Out, PutRequest,
+    mux::{MuxConfig, MuxEvent, MuxOut, SignalingMux},
+    Action, PutRequest,
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::{Read, Write},
     net::{TcpStream, ToSocketAddrs},
     sync::{
@@ -83,13 +81,6 @@ impl Default for Timing {
             resume_gap_ms: RESUME_GAP_MS,
         }
     }
-}
-
-/// When anything last came from a socket, and when it was last pinged (wall-clock milliseconds: a monotonic timer may not
-/// count the time a laptop spends asleep).
-struct Clock {
-    last_rx: i64,
-    last_ping: i64,
 }
 
 enum Cmd {
@@ -182,12 +173,6 @@ impl Drop for NativeSignaling {
     }
 }
 
-struct Hub {
-    hub: SignalingHub,
-    sockets: BTreeMap<String, Ws>,
-    clocks: BTreeMap<String, Clock>,
-}
-
 struct PendingPut {
     mailbox: String,
     blob: SealedBlob,
@@ -203,8 +188,13 @@ struct Worker {
     idle: String,
     config: NetworkConfig,
     socks: Option<String>,
-    hubs: BTreeMap<String, Hub>,
+    /// Every mailbox listened on, over one connection per relay (the engine's `SignalingMux` decides what to send where).
+    mux: SignalingMux,
+    mailboxes: BTreeSet<String>,
+    sockets: BTreeMap<String, Ws>,
+    /// Puts waiting for a relay to be online, and puts a relay refused (tried again until their time is up).
     puts: Vec<PendingPut>,
+    in_flight: BTreeMap<String, PendingPut>,
     sink: BlobSink,
     status: StatusSink,
     online: Arc<AtomicBool>,
@@ -216,33 +206,34 @@ struct Worker {
     put_seq: u64,
 }
 
-fn services_for(config: &NetworkConfig, mailbox: &str) -> Vec<Service> {
-    config
-        .signaling
-        .iter()
-        .map(|s| match s {
-            SignalingConfig::Relay { url } => Service::Relay(RelayClient::new(url)),
-            SignalingConfig::Nostr { relays } => Service::Nostr(NostrTransport::new(
-                relays,
-                &format!("dc-{}", mailbox.get(..12).unwrap_or(mailbox)),
-            )),
-        })
-        .collect()
+fn mux_for(config: &NetworkConfig, timing: Timing) -> SignalingMux {
+    let mut cfg = MuxConfig::default();
+    for s in &config.signaling {
+        match s {
+            SignalingConfig::Relay { url } => cfg.relays.push(url.clone()),
+            SignalingConfig::Nostr { relays } => cfg.nostr.extend(relays.iter().cloned()),
+        }
+    }
+    SignalingMux::new(&cfg).with_timing(timing.ping_every_ms, timing.dead_after_ms)
 }
 
 impl Worker {
     fn new(sink: BlobSink, status: StatusSink, online: Arc<AtomicBool>, timing: Timing) -> Self {
         let mut raw = [0u8; 16];
         let _ = OsEntropy.fill(&mut raw);
+        let config = NetworkConfig {
+            signaling: Vec::new(),
+            ..NetworkConfig::default()
+        };
         Self {
             idle: raw.iter().map(|b| format!("{b:02x}")).collect(),
-            config: NetworkConfig {
-                signaling: Vec::new(),
-                ..NetworkConfig::default()
-            },
+            mux: mux_for(&config, timing),
+            config,
             socks: None,
-            hubs: BTreeMap::new(),
+            mailboxes: BTreeSet::new(),
+            sockets: BTreeMap::new(),
             puts: Vec::new(),
+            in_flight: BTreeMap::new(),
             sink,
             status,
             online,
@@ -298,9 +289,12 @@ impl Worker {
     fn handle(&mut self, cmd: Cmd) {
         match cmd {
             Cmd::Configure { config, socks } => {
+                // New settings: close everything and listen again, on the new relays, for every mailbox we had.
+                self.stop_all();
                 self.config = config;
                 self.socks = socks;
-                let mut mailboxes: Vec<String> = self.hubs.keys().cloned().collect();
+                self.mux = mux_for(&self.config, self.timing);
+                let mut mailboxes: Vec<String> = self.mailboxes.iter().cloned().collect();
                 if !mailboxes.contains(&self.idle) {
                     mailboxes.push(self.idle.clone());
                 }
@@ -309,7 +303,7 @@ impl Worker {
                 }
             }
             Cmd::Subscribe(m) => {
-                if !self.hubs.contains_key(&m) {
+                if !self.mailboxes.contains(&m) {
                     self.subscribe(&m);
                 }
             }
@@ -317,11 +311,9 @@ impl Worker {
                 if m == self.idle {
                     return;
                 }
-                if let Some(mut h) = self.hubs.remove(&m) {
-                    let _ = h.hub.stop();
-                    for (_, mut s) in std::mem::take(&mut h.sockets) {
-                        let _ = s.close(None);
-                    }
+                if self.mailboxes.remove(&m) {
+                    let out = self.mux.unsubscribe(&m);
+                    self.apply(out);
                 }
             }
             Cmd::Put {
@@ -345,72 +337,72 @@ impl Worker {
     }
 
     fn subscribe(&mut self, mailbox: &str) {
-        if let Some(mut old) = self.hubs.remove(mailbox) {
-            for (_, mut s) in std::mem::take(&mut old.sockets) {
-                let _ = s.close(None);
-            }
-        }
-        let mut hub = Hub {
-            hub: SignalingHub::new(services_for(&self.config, mailbox)),
-            sockets: BTreeMap::new(),
-            clocks: BTreeMap::new(),
-        };
-        let out = hub.hub.start(mailbox);
-        self.hubs.insert(mailbox.to_owned(), hub);
-        self.apply(mailbox, out);
+        self.mailboxes.insert(mailbox.to_owned());
+        let now = self.now();
+        let out = self.mux.subscribe(mailbox, now);
+        self.apply(out);
     }
 
     fn stop_all(&mut self) {
-        for (_, mut h) in std::mem::take(&mut self.hubs) {
-            let _ = h.hub.stop();
-            for (_, mut s) in h.sockets {
-                let _ = s.close(None);
-            }
+        let out = self.mux.stop();
+        self.apply(out);
+        for (_, mut s) in std::mem::take(&mut self.sockets) {
+            let _ = s.close(None);
         }
     }
 
-    /// Carries out what a hub asked for, and passes on what it reported.
-    fn apply(&mut self, mailbox: &str, out: Out) {
+    /// Carries out what the mux asked for, and passes on what it reported.
+    fn apply(&mut self, out: MuxOut) {
         let mut pending = vec![out];
         while let Some(out) = pending.pop() {
             for e in out.events {
-                if let Event::Blob { blob, .. } = e {
-                    (self.sink)(mailbox.to_owned(), blob.encode());
+                match e {
+                    MuxEvent::Blob { mailbox, blob, .. } => (self.sink)(mailbox, blob.encode()),
+                    MuxEvent::PutOk { put_id } => {
+                        self.in_flight.remove(&put_id);
+                    }
+                    // A relay refused it, or none answered: it goes round again until its time is up.
+                    MuxEvent::PutFailed { put_id, .. } => {
+                        if let Some(p) = self.in_flight.remove(&put_id) {
+                            if Instant::now() < p.until {
+                                self.puts.push(p);
+                            }
+                        }
+                    }
                 }
             }
             for a in out.actions {
                 let now = self.now();
-                let socks = self.socks.clone();
-                let Some(h) = self.hubs.get_mut(mailbox) else {
-                    return;
-                };
                 match a {
-                    Action::Connect { url } => match connect(&url, socks.as_deref()) {
+                    Action::Connect { url } => match connect(&url, self.socks.as_deref()) {
                         Ok(ws) => {
-                            h.sockets.insert(url.clone(), ws);
-                            h.clocks.insert(
-                                url.clone(),
-                                Clock {
-                                    last_rx: now,
-                                    last_ping: now,
-                                },
-                            );
-                            pending.push(h.hub.socket_opened(&url, now));
+                            self.sockets.insert(url.clone(), ws);
+                            pending.push(self.mux.socket_opened(&url, now));
                         }
-                        Err(_) => pending.push(h.hub.socket_closed(&url, now)),
+                        Err(_) => pending.push(self.mux.socket_closed(&url, now)),
                     },
                     Action::Send { url, text } => {
-                        let failed = h
+                        let failed = self
                             .sockets
                             .get_mut(&url)
                             .is_none_or(|s| s.send(Message::text(text)).is_err());
                         if failed {
-                            h.sockets.remove(&url);
-                            pending.push(h.hub.socket_closed(&url, now));
+                            self.sockets.remove(&url);
+                            pending.push(self.mux.socket_closed(&url, now));
+                        }
+                    }
+                    Action::Ping { url } => {
+                        let failed = self
+                            .sockets
+                            .get_mut(&url)
+                            .is_none_or(|s| s.send(Message::Ping(Vec::new().into())).is_err());
+                        if failed {
+                            self.sockets.remove(&url);
+                            pending.push(self.mux.socket_closed(&url, now));
                         }
                     }
                     Action::Close { url } => {
-                        if let Some(mut s) = h.sockets.remove(&url) {
+                        if let Some(mut s) = self.sockets.remove(&url) {
                             let _ = s.close(None);
                         }
                     }
@@ -422,36 +414,26 @@ impl Worker {
     /// Reads every socket once. Returns whether anything arrived.
     fn read_all(&mut self) -> bool {
         let mut any = false;
-        let keys: Vec<(String, String)> = self
-            .hubs
-            .iter()
-            .flat_map(|(m, h)| h.sockets.keys().map(move |u| (m.clone(), u.clone())))
-            .collect();
-        for (mailbox, url) in keys {
+        let urls: Vec<String> = self.sockets.keys().cloned().collect();
+        for url in urls {
             let now = self.now();
-            let Some(h) = self.hubs.get_mut(&mailbox) else {
+            let Some(sock) = self.sockets.get_mut(&url) else {
                 continue;
             };
-            let Some(sock) = h.sockets.get_mut(&url) else {
-                continue;
-            };
-            let read = sock.read();
-            if read.is_ok() {
-                // Anything at all (a pong, a ping, an event) proves the other end is there.
-                if let Some(c) = h.clocks.get_mut(&url) {
-                    c.last_rx = now;
-                }
-            }
-            let out = match read {
+            let out = match sock.read() {
                 Ok(Message::Text(t)) => {
                     any = true;
-                    h.hub.socket_message(&url, t.as_str(), now)
+                    self.mux.socket_message(&url, t.as_str(), now)
                 }
                 Ok(Message::Close(_)) => {
-                    h.sockets.remove(&url);
-                    h.hub.socket_closed(&url, now)
+                    self.sockets.remove(&url);
+                    self.mux.socket_closed(&url, now)
                 }
-                Ok(_) => continue,
+                Ok(_) => {
+                    // A pong, a ping, anything: the other end is there.
+                    self.mux.socket_alive(&url, now);
+                    continue;
+                }
                 Err(tungstenite::Error::Io(e))
                     if matches!(
                         e.kind(),
@@ -461,93 +443,46 @@ impl Worker {
                     continue
                 }
                 Err(_) => {
-                    h.sockets.remove(&url);
-                    h.hub.socket_closed(&url, now)
+                    self.sockets.remove(&url);
+                    self.mux.socket_closed(&url, now)
                 }
             };
-            self.apply(&mailbox, out);
+            self.apply(out);
         }
         any
     }
 
     fn tick_all(&mut self) {
-        let mailboxes: Vec<String> = self.hubs.keys().cloned().collect();
         let now = self.now();
         // The worker ticks twice a second. A long gap means the machine slept: every socket is suspect, so all are
         // replaced at once instead of waiting out the silence.
         let slept =
             self.last_tick_wall != 0 && now - self.last_tick_wall > self.timing.resume_gap_ms;
-        let timing = self.timing;
-        for m in mailboxes {
-            let now = self.now();
-            let Some(h) = self.hubs.get_mut(&m) else {
-                continue;
-            };
-            let urls: Vec<String> = h.sockets.keys().cloned().collect();
-            let mut closed = Vec::new();
-            for url in urls {
-                let Some(clock) = h.clocks.get_mut(&url) else {
-                    continue;
-                };
-                let silent = now - clock.last_rx;
-                let dead = slept || silent > timing.dead_after_ms;
-                let ping_failed = !dead && now - clock.last_ping >= timing.ping_every_ms && {
-                    clock.last_ping = now;
-                    h.sockets
-                        .get_mut(&url)
-                        .is_none_or(|s| s.send(Message::Ping(Vec::new().into())).is_err())
-                };
-                if dead || ping_failed {
-                    if let Some(mut s) = h.sockets.remove(&url) {
-                        let _ = s.close(None);
-                    }
-                    h.clocks.remove(&url);
-                    closed.push(url);
-                }
-            }
-            let mut outs: Vec<Out> = closed
-                .iter()
-                .map(|url| h.hub.socket_closed(url, now))
-                .collect();
-            outs.push(h.hub.tick(now));
-            for out in outs {
-                self.apply(&m, out);
-            }
-        }
+        let out = if slept {
+            self.mux.suspect_all(now)
+        } else {
+            self.mux.tick(now)
+        };
+        self.apply(out);
         // Measured from the end of the work, not the start: a tick that spent its time connecting to slow relays must not
         // make the next one believe the machine slept (that closed every healthy socket and started the storm again).
         self.last_tick_wall = self.now();
     }
 
-    /// Sends queued puts through a hub that is online (the mailbox's own, else any). Returns whether one went out.
+    /// Sends queued puts once a relay is online. Returns whether one went out.
     fn flush_puts(&mut self) -> bool {
         let mut sent = false;
         let mut keep = Vec::new();
         for p in std::mem::take(&mut self.puts) {
-            let hub_key = if self
-                .hubs
-                .get(&p.mailbox)
-                .is_some_and(|h| h.hub.status() == SignalingStatus::Online)
-            {
-                Some(p.mailbox.clone())
-            } else {
-                self.hubs
-                    .iter()
-                    .find(|(_, h)| h.hub.status() == SignalingStatus::Online)
-                    .map(|(k, _)| k.clone())
-            };
-            let Some(key) = hub_key else {
+            if self.mux.status() != SignalingStatus::Online {
                 if Instant::now() < p.until {
                     keep.push(p);
                 }
                 continue;
-            };
+            }
             self.put_seq += 1;
             let put_id = format!("n{}", self.put_seq);
             let now = self.now();
-            let Some(h) = self.hubs.get_mut(&key) else {
-                continue;
-            };
             let req = PutRequest {
                 mailbox: &p.mailbox,
                 blob: &p.blob,
@@ -555,20 +490,18 @@ impl Worker {
                 ttl_sec: p.ttl_sec,
                 put_id: &put_id,
             };
-            if let Ok(out) = h.hub.put(req, now, &mut OsEntropy) {
-                self.apply(&key, out);
+            if let Ok(out) = self.mux.put(req, now, &mut OsEntropy) {
+                self.in_flight.insert(put_id, p);
+                self.apply(out);
                 sent = true;
             }
         }
-        self.puts = keep;
+        self.puts.append(&mut keep);
         sent
     }
 
     fn report(&mut self) {
-        let online = self
-            .hubs
-            .values()
-            .any(|h| h.hub.status() == SignalingStatus::Online);
+        let online = self.mux.status() == SignalingStatus::Online;
         if self.online.swap(online, Ordering::SeqCst) != online {
             (self.status)(online);
         }

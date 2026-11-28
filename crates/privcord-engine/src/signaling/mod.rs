@@ -7,6 +7,7 @@
 //! leaves the platform only the part that has to be platform code.
 
 pub mod hub;
+pub mod mux;
 pub mod nostr;
 pub mod relay;
 
@@ -25,6 +26,10 @@ pub enum Action {
         text: String,
     },
     Close {
+        url: String,
+    },
+    /// Send a WebSocket ping (any answer, a pong included, counts as the link being alive).
+    Ping {
         url: String,
     },
 }

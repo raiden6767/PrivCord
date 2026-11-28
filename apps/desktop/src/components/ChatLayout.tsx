@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PANIC_PRESSES, PANIC_WINDOW_MS } from '../lib/limits';
-import type { ChatState, UiMessage } from '../lib/engine';
+import type { ChatState, UiMessage } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import type { AppSettings } from '../lib/settings';
 import { withPinsFirst } from '../lib/pins';
-import { MUTE_FOREVER, NO_PREFS } from '../lib/engine';
+import { MUTE_FOREVER, NO_PREFS } from '../lib/chatTypes';
 import { deliveryRows } from '../lib/deliveryDetails';
 import { config } from '../config';
 import { Modal } from './Modal';

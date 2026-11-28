@@ -68,6 +68,17 @@ describe('shapeState details', () => {
     expect(withFacts.contacts[0]!.diagnosis).toBeDefined();
   });
 
+  it('says it is waiting for a friend who has not added us back yet, and only while not connected', () => {
+    const s = base();
+    s.contacts[0]!.link = 'Offline';
+    s.contacts[0]!.awaiting_acceptance = true;
+    const d = shapeState(s, ctx()).contacts[0]!.diagnosis;
+    expect(d?.code).toBe('awaiting-acceptance');
+    expect(d?.message).toContain('Waiting for Ann to add you back');
+    s.contacts[0]!.awaiting_acceptance = false;
+    expect(shapeState(s, ctx()).contacts[0]!.diagnosis).toBeUndefined();
+  });
+
   it('shows a file that is still arriving as a bubble with its progress, and drops it once the real message is there', () => {
     const s = base();
     const conv = s.contacts[0]!.uid;

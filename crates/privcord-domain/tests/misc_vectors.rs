@@ -456,7 +456,17 @@ fn signaling_rules_match_the_apps() {
         Some(Incoming::Event {
             id: "i".into(),
             blob: "b".into(),
-            ts: Some(7)
+            ts: Some(7),
+            mailbox: None
+        })
+    );
+    assert_eq!(
+        relay::parse_incoming(r#"{"op":"event","mailbox":"m","id":"i","blob":"b","ts":7}"#),
+        Some(Incoming::Event {
+            id: "i".into(),
+            blob: "b".into(),
+            ts: Some(7),
+            mailbox: Some("m".into())
         })
     );
     assert_eq!(

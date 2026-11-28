@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import { MAX_TEXT_LENGTH, countCodePoints } from '@duochat/protocol';
 import { ClockIcon, MicIcon, PaperclipIcon, SendIcon, XIcon } from './Icons';
-import type { ScheduledMessage } from '../lib/engine';
+import type { ScheduledMessage } from '../lib/chatTypes';
 
 export function Composer({
   onSend,

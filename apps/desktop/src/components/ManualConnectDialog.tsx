@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ChatState } from '../lib/engine';
+import type { ChatState } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { copySensitive } from '../lib/clipboard';
 import { Modal } from './Modal';

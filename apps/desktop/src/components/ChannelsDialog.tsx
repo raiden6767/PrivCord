@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ChannelView } from '../lib/engine';
+import type { ChannelView } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { Modal } from './Modal';
 

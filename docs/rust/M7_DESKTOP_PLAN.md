@@ -1,5 +1,7 @@
 # M7 (Windows desktop) and M9 (retirement): plan and exit criteria
 
+**Update:** the TypeScript desktop engine (`engine.ts`, `localDb.ts`, `peerLink.ts`, the browser end-to-end suite) has been deleted; the page runs only the hosted Rust engine, and the screens are tested against a fake of `ChatEngineApi` (`src/components/screens.test.tsx`). The text below is the history of how it got there.
+
 Status of the port on 11 Nov 2026: the Rust engine exists and is tested; the Android **rust** build flavor runs on it as a
 preview; the **Windows app still runs on its own TypeScript engine** (`apps/desktop/src/lib/engine.ts`, 2,161 lines, marked
 "partly ported" in [MIGRATION_MAP.md](MIGRATION_MAP.md)). This file says what moving the desktop onto the engine involves,

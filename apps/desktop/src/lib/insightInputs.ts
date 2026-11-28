@@ -1,6 +1,6 @@
 /** Small pure helpers that shape app state into the inputs of the shared engine's insights. The rules themselves live in the engine. */
-import type { ChatState, PrefsView } from './engine';
-import type { SignalingStatus } from './signaling/types';
+import type { ChatState, PrefsView } from './chatTypes';
+import type { SignalingStatus } from './signalingStatus';
 
 /** The app's signaling status in the words the engine's `health` insight uses. */
 export function engineSignaling(s: SignalingStatus): 'online' | 'connecting' | 'offline' | 'unconfigured' {

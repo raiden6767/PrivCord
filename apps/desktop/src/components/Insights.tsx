@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { ChatState } from '../lib/engine';
-import { NO_PREFS } from '../lib/engine';
+import type { ChatState } from '../lib/chatTypes';
+import { NO_PREFS } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { activeMutes, engineSignaling, markWhatsNewSeen, quietNow } from '../lib/insightInputs';
 import { loadNetworkConfig, torModeActive } from '../lib/network';

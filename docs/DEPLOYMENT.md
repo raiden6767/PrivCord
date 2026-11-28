@@ -19,11 +19,10 @@ Be clear with users about what they are trusting: see [CONNECTIVITY.md](CONNECTI
    in-app version), `apps/desktop/src-tauri/tauri.conf.json`, `apps/desktop/src-tauri/Cargo.toml`,
    `apps/android/app/build.gradle.kts` (`versionName`, **and increase `versionCode`**).
 3. `npm ci && npm run typecheck && npm test && npm run build:desktop`
-4. `npm run e2e --workspace @duochat/desktop` (needs Playwright, see README).
-5. Android: `cd apps/android && ./gradlew :app:testDebugUnitTest :app:assembleRelease -Pduochat.ciSign=true`
-6. Tag `vX.Y.Z` and push the tag: `.github/workflows/release.yml` builds the installer,
+4. Android: `cd apps/android && ./gradlew :app:testDebugUnitTest :app:assembleRelease -Pduochat.ciSign=true`
+5. Tag `vX.Y.Z` and push the tag: `.github/workflows/release.yml` builds the installer,
    the Android bundle, and the relay image.
-7. **Test the signed artifacts on real machines** before announcing (see section 6).
+6. **Test the signed artifacts on real machines** before announcing (see section 6).
 
 CI (`.github/workflows/ci.yml`) runs steps 3 to 5 on every pull request, plus a Windows
 `cargo check` of the Tauri crate.

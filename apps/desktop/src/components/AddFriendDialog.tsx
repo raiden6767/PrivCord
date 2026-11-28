@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { InviteAnswer } from '../lib/engine';
+import type { InviteAnswer } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { parseInviteWords } from '@duochat/protocol';
 import { copySensitive } from '../lib/clipboard';

@@ -506,6 +506,8 @@ pub struct ContactDto {
     pub safety_number: String,
     pub link: LinkState,
     pub can_message: bool,
+    /// We added them from their card and they have not added us back yet.
+    pub awaiting_acceptance: bool,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -2134,6 +2136,7 @@ fn snapshot_dto(s: privcord_engine::Snapshot) -> SnapshotDto {
                 safety_number: c.safety_number,
                 link: c.connection.into(),
                 can_message: c.can_message,
+                awaiting_acceptance: c.awaiting_acceptance,
             })
             .collect(),
         channels: s.channels,
@@ -2390,5 +2393,231 @@ pub fn background_plan(state: DeviceStateDto) -> BackgroundPlanDto {
             BleScan::LowPower => BleScanDto::LowPower,
             BleScan::Balanced => BleScanDto::Balanced,
         },
+    }
+}
+
+// ----------------------------------------------------------------------------------------------------------- signaling
+
+/// Something the platform must do with a WebSocket (the same few things on every platform).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum SocketAction {
+    Connect {
+        url: String,
+    },
+    Send {
+        url: String,
+        text: String,
+    },
+    Close {
+        url: String,
+    },
+    /// Send a WebSocket ping (any answer, a pong included, counts as the link being alive).
+    Ping {
+        url: String,
+    },
+}
+
+/// What the signaling layer tells its owner.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum SignalingNews {
+    /// A sealed blob (encoded) that arrived for `mailbox`; hand it to the engine's `signal_blob`.
+    Blob {
+        mailbox: String,
+        blob: String,
+        id: String,
+    },
+    PutOk {
+        put_id: String,
+    },
+    PutFailed {
+        put_id: String,
+        reason: String,
+    },
+}
+
+/// One call's result: sockets to drive, and news.
+#[derive(Debug, Clone, Default, PartialEq, Eq, uniffi::Record)]
+pub struct SignalingStep {
+    pub actions: Vec<SocketAction>,
+    pub news: Vec<SignalingNews>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum RelayStatus {
+    Idle,
+    Connecting,
+    Online,
+    Error,
+}
+
+fn step_of(out: privcord_engine::signaling::mux::MuxOut) -> SignalingStep {
+    use privcord_engine::signaling::{mux::MuxEvent, Action};
+    SignalingStep {
+        actions: out
+            .actions
+            .into_iter()
+            .map(|a| match a {
+                Action::Connect { url } => SocketAction::Connect { url },
+                Action::Send { url, text } => SocketAction::Send { url, text },
+                Action::Close { url } => SocketAction::Close { url },
+                Action::Ping { url } => SocketAction::Ping { url },
+            })
+            .collect(),
+        news: out
+            .events
+            .into_iter()
+            .map(|e| match e {
+                MuxEvent::Blob { mailbox, blob, id } => SignalingNews::Blob {
+                    mailbox,
+                    blob: blob.encode(),
+                    id,
+                },
+                MuxEvent::PutOk { put_id } => SignalingNews::PutOk { put_id },
+                MuxEvent::PutFailed { put_id, reason } => {
+                    SignalingNews::PutFailed { put_id, reason }
+                }
+            })
+            .collect(),
+    }
+}
+
+/// The relay connections of one install: one socket per relay for every mailbox, the same Rust code on every platform. The
+/// platform only opens WebSockets and reports what happens on them.
+#[derive(Debug, uniffi::Object)]
+pub struct SignalingClient {
+    mux: std::sync::Mutex<privcord_engine::signaling::mux::SignalingMux>,
+}
+
+fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[uniffi::export]
+impl SignalingClient {
+    /// `nostr_relays` are public Nostr relays; `relays` are PrivCord relays (with `?token=` when one is needed).
+    /// `transport_keeps_alive`: the platform's WebSocket library already pings and closes a socket that stops answering,
+    /// so this layer leaves that to it.
+    #[uniffi::constructor]
+    pub fn new(
+        nostr_relays: Vec<String>,
+        relays: Vec<String>,
+        transport_keeps_alive: bool,
+    ) -> std::sync::Arc<Self> {
+        let mux = privcord_engine::signaling::mux::SignalingMux::new(
+            &privcord_engine::signaling::mux::MuxConfig {
+                nostr: nostr_relays,
+                relays,
+            },
+        );
+        std::sync::Arc::new(Self {
+            mux: std::sync::Mutex::new(if transport_keeps_alive {
+                mux.with_transport_liveness()
+            } else {
+                mux
+            }),
+        })
+    }
+
+    pub fn subscribe(&self, mailbox: String, now_ms: i64) -> SignalingStep {
+        step_of(lock(&self.mux).subscribe(&mailbox, now_ms))
+    }
+
+    pub fn unsubscribe(&self, mailbox: String) -> SignalingStep {
+        step_of(lock(&self.mux).unsubscribe(&mailbox))
+    }
+
+    /// Publish an encoded sealed blob. `live` is a short-lived signal; otherwise it is kept for an offline friend. The
+    /// answer comes later as `PutOk` or `PutFailed` with this `put_id`.
+    pub fn put(
+        &self,
+        mailbox: String,
+        blob: String,
+        live: bool,
+        ttl_sec: u32,
+        put_id: String,
+        now_ms: i64,
+    ) -> SignalingStep {
+        let Some(sealed) = privcord_domain::blob::SealedBlob::decode(&blob) else {
+            return SignalingStep {
+                actions: vec![],
+                news: vec![SignalingNews::PutFailed {
+                    put_id,
+                    reason: "Not a sealed message.".into(),
+                }],
+            };
+        };
+        let kind = if live {
+            privcord_domain::signaling::PutKind::Sig
+        } else {
+            privcord_domain::signaling::PutKind::Msg
+        };
+        let req = privcord_engine::signaling::PutRequest {
+            mailbox: &mailbox,
+            blob: &sealed,
+            kind,
+            ttl_sec,
+            put_id: &put_id,
+        };
+        match lock(&self.mux).put(req, now_ms, &mut OsEntropy) {
+            Ok(out) => step_of(out),
+            Err(_) => SignalingStep {
+                actions: vec![],
+                news: vec![SignalingNews::PutFailed {
+                    put_id,
+                    reason: "Could not prepare the message.".into(),
+                }],
+            },
+        }
+    }
+
+    /// Tell the relays a stored item was handled.
+    pub fn remove(&self, mailbox: String, id: String) -> SignalingStep {
+        step_of(lock(&self.mux).remove(&mailbox, &id))
+    }
+
+    pub fn socket_opened(&self, url: String, now_ms: i64) -> SignalingStep {
+        step_of(lock(&self.mux).socket_opened(&url, now_ms))
+    }
+
+    pub fn socket_message(&self, url: String, text: String, now_ms: i64) -> SignalingStep {
+        step_of(lock(&self.mux).socket_message(&url, &text, now_ms))
+    }
+
+    pub fn socket_closed(&self, url: String, now_ms: i64) -> SignalingStep {
+        step_of(lock(&self.mux).socket_closed(&url, now_ms))
+    }
+
+    /// Anything came from the socket (a pong, a ping): it is alive.
+    pub fn socket_alive(&self, url: String, now_ms: i64) {
+        lock(&self.mux).socket_alive(&url, now_ms);
+    }
+
+    /// The phone woke up or the network changed: replace every connection now.
+    pub fn suspect_all(&self, now_ms: i64) -> SignalingStep {
+        step_of(lock(&self.mux).suspect_all(now_ms))
+    }
+
+    /// Call about twice a second.
+    pub fn tick(&self, now_ms: i64) -> SignalingStep {
+        step_of(lock(&self.mux).tick(now_ms))
+    }
+
+    pub fn stop(&self) -> SignalingStep {
+        step_of(lock(&self.mux).stop())
+    }
+
+    pub fn status(&self) -> RelayStatus {
+        use privcord_domain::signaling::SignalingStatus as S;
+        match lock(&self.mux).status() {
+            S::Idle => RelayStatus::Idle,
+            S::Connecting => RelayStatus::Connecting,
+            S::Online => RelayStatus::Online,
+            S::Error => RelayStatus::Error,
+        }
+    }
+
+    /// How many connections are open (for the connection stage shown to the person).
+    pub fn open_links(&self) -> u32 {
+        u32::try_from(lock(&self.mux).open_links()).unwrap_or(u32::MAX)
     }
 }

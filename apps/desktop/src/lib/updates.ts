@@ -40,3 +40,17 @@ export function dueForCheck(lastDoneAt: number, now: number = Date.now()): boole
 export function snoozeActive(snoozedUntil: number, now: number = Date.now()): boolean {
   return now < snoozedUntil;
 }
+
+/** The build number in "0.1.39" (the last part), or 0 when it cannot be read. */
+export function buildOf(version: string): number {
+  const n = Number(version.split('.').pop());
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Whether to show an update that was found. "Later" puts off the build that was shown, not every build after it: a newer
+ * one is offered at once, whatever is left of the snooze.
+ */
+export function shouldOffer(found: FoundUpdate, snoozedUntil: number, snoozedFor: number, now: number = Date.now()): boolean {
+  return !snoozeActive(snoozedUntil, now) || buildOf(found.version) > snoozedFor;
+}

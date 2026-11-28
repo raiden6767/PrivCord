@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ChatState } from '../lib/engine';
+import type { ChatState } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { formatBytes } from '../lib/format';
 import { storageByChat, type ChatStorage } from '../lib/storage';

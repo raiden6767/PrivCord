@@ -21,7 +21,7 @@ export interface ConnectionFacts {
 export type DiagnosisAction = 'enable-store-forward' | 'add-turn' | 'open-connection-settings';
 
 export interface Diagnosis {
-  code: 'no-signaling' | 'signaling-down' | 'no-answer' | 'no-public-address' | 'blocked-networks';
+  code: 'no-signaling' | 'signaling-down' | 'no-answer' | 'no-public-address' | 'blocked-networks' | 'awaiting-acceptance';
   message: string;
   actions: DiagnosisAction[];
 }

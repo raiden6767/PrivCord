@@ -80,7 +80,7 @@ The Nostr client is also run against a real, independent relay (Python `nostr-re
 ## Not yet compatible (not ported)
 
 * Disappearing messages and translations were removed from the apps and are not in the engine.
-* The WebRTC session, the raw sockets, the Bluetooth radio, the keychain and all UI stay in the platform adapters by design. The only application files still marked partly ported are `engine.ts` and `ChatEngine.kt`, which still start and drive the WebRTC and Bluetooth links, turn events into screen state, and show notices.
+* The WebRTC session, the raw sockets, the Bluetooth radio, the keychain and all UI stay in the platform adapters by design. The only application file still marked partly ported is `ChatEngine.kt` (the desktop's `engine.ts` has been removed), which still starts and drives the WebRTC and Bluetooth links, turns events into screen state, and shows notices.
 
 **What this means for talking to the existing apps.** The engine can authenticate with the existing apps over a WebRTC data channel (`LinkSecurity::TransportEncrypted`) and over Bluetooth (`LinkSecurity::Layered`: the secure-channel handshake, then the legacy peer handshake inside it, then encrypted frames; Bluetooth is what the TypeScript and Kotlin apps do today). `EngineEncrypted` (secure channel only) is not what the existing apps speak and is for engine-to-engine links.
 

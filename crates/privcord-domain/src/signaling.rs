@@ -249,6 +249,8 @@ pub mod relay {
             id: String,
             blob: String,
             ts: Option<i64>,
+            /// The mailbox it is for (a relay says, so one connection can carry several).
+            mailbox: Option<String>,
         },
         Ok {
             id: String,
@@ -269,6 +271,7 @@ pub mod relay {
                 id,
                 blob: o.get("blob")?.as_str()?.to_owned(),
                 ts: o.get("ts").and_then(Value::as_f64).map(|t| t as i64),
+                mailbox: o.get("mailbox").and_then(Value::as_str).map(str::to_owned),
             }),
             "ok" => Some(Incoming::Ok { id }),
             "err" => Some(Incoming::Err {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { DeviceInfo } from '../lib/engine';
+import type { DeviceInfo } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 
 function when(ms: number): string {

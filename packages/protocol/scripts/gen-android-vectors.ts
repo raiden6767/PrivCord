@@ -6,7 +6,6 @@
 import { writeFileSync } from 'node:fs';
 import { entropyToMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { schnorr } from '@noble/curves/secp256k1.js';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import {
   SecureChannel,
@@ -29,7 +28,6 @@ import {
   uidFromKeys,
   validateRecoveryPhrase,
 } from '../src';
-import { eventId, makeEvent, verifyEvent } from '../../../apps/desktop/src/lib/signaling/nostr';
 
 const PHRASES = [
   { phrase: 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about', passphrase: '' },
@@ -173,31 +171,6 @@ async function main() {
   ];
   const network = networkInputs.map((raw) => ({ raw, expected: parseNetworkConfig(raw) }));
 
-  // Nostr / BIP-340. Aux randomness is fixed so the TypeScript signature is reproducible.
-  const sk = hexToBytes('b7e151628aed2a6abf7158809cf4f3c762e7160f38b4da56a784d9045190cfef');
-  const base = {
-    pubkey: hex(schnorr.getPublicKey(sk)),
-    created_at: 1_700_000_000,
-    kind: 21733,
-    tags: [['t', 'mailbox-x'], ['d', 'fixed-d'], ['expiration', '1700000120']],
-    content: sealed[0]!.wire,
-  };
-  const id = eventId(base);
-  const fixedEvent = { ...base, id, sig: hex(schnorr.sign(hexToBytes(id), sk, new Uint8Array(32))) };
-  const blobForEvent = sealed[0]!.wire;
-  const randomEvent = makeEvent('mailbox-y', { v: 1 } as never, { kind: 'msg', ttlSec: 3600 }, 1_700_000_000);
-  const nostr = {
-    secretKeyHex: hex(sk),
-    publicKeyHex: base.pubkey,
-    fixedEvent,
-    fixedEventValid: verifyEvent(fixedEvent),
-    randomEvent,
-    randomEventValid: verifyEvent(randomEvent),
-    tamperedEvent: { ...fixedEvent, content: fixedEvent.content + 'x' },
-    tamperedEventValid: verifyEvent({ ...fixedEvent, content: fixedEvent.content + 'x' }),
-    note: `content of fixedEvent is the wire blob ${blobForEvent.length} chars`,
-  };
-
   const livenessInputs: unknown[] = [
     { v: 1, kind: 'ping', at: 1700000000123 },
     { v: 1, kind: 'pong', at: 0 },
@@ -221,7 +194,7 @@ async function main() {
 
   writeFileSync(
     new URL('../../../docs/android-vectors.json', import.meta.url),
-    JSON.stringify({ generatedBy: 'packages/protocol/scripts/gen-android-vectors.ts', recovery, entropy, invalidPhrases, cards, sealed, flippedWire: flipped, canonical, network, nostr, secureChannel, liveness, reconnect, uids: { ann: ann.uid, bob: bob.uid, cat: cat.uid }, safety, toB64Url: toB64Url(new Uint8Array([251, 255, 254])) }, null, 2) + '\n',
+    JSON.stringify({ generatedBy: 'packages/protocol/scripts/gen-android-vectors.ts', recovery, entropy, invalidPhrases, cards, sealed, flippedWire: flipped, canonical, network, secureChannel, liveness, reconnect, uids: { ann: ann.uid, bob: bob.uid, cat: cat.uid }, safety, toB64Url: toB64Url(new Uint8Array([251, 255, 254])) }, null, 2) + '\n',
   );
   console.log('wrote docs/android-vectors.json');
 }

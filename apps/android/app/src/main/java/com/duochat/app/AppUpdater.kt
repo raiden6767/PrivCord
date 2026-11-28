@@ -38,7 +38,9 @@ object AppUpdater {
         runCatching {
             // Only the 64-bit APK is published; a 32-bit phone cannot install it, so it is not offered.
             if (!Build.SUPPORTED_ABIS.contains("arm64-v8a")) return@runCatching null
-            val conn = open(AppUpdate.INFO_URL)
+            // Not from a cache: GitHub's download address can be served stale for minutes, and "is there a newer build" must
+            // be answered with the latest file (the changing query makes a shared cache fetch it again).
+            val conn = open(AppUpdate.INFO_URL + "?t=" + System.currentTimeMillis() / 60_000)
             val body = conn.inputStream.use { it.readBytes().decodeToString() }
             val info = AppUpdate.parse(body) ?: error("The update information is not valid.")
             info.takeIf { AppUpdate.isNewer(it, BuildConfig.VERSION_CODE) }
@@ -91,6 +93,8 @@ object AppUpdater {
             connectTimeout = 15_000
             readTimeout = 30_000
             instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Cache-Control", "no-cache")
             setRequestProperty("User-Agent", "PrivCord")
         }
 }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { MAX_FILE_BYTES, formatBytes } from '@duochat/protocol';
-import type { ChatState } from '../lib/engine';
+import type { ChatState } from '../lib/chatTypes';
 import type { ChatEngineApi } from '../lib/engineApi';
 import { filterTargets, sendTargets } from '../lib/quickSend';
 import { Avatar } from './Avatar';
