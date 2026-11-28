@@ -682,9 +682,20 @@ impl Core {
         // through the same checks as any other message.
         if blob.v == 3 {
             if self.own_mailboxes().iter().any(|m| m == mailbox) {
-                if let Some(inner) = self.open_anon_blob(&blob) {
-                    self.signal_blob(mailbox, &inner.encode());
+                match self.open_anon_blob(&blob) {
+                    Some(inner) => self.signal_blob(mailbox, &inner.encode()),
+                    None => self.diag(
+                        "relay",
+                        "an envelope on our mailbox could not be opened",
+                        "",
+                    ),
                 }
+            } else {
+                self.diag(
+                    "relay",
+                    "an envelope came on a mailbox that is not ours",
+                    "",
+                );
             }
             return;
         }

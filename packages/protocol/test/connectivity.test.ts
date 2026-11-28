@@ -3,6 +3,7 @@ import {
   DEFAULT_NETWORK_CONFIG,
   classifyPath,
   decodeBlob,
+  validateBlob,
   decodeContactCard,
   deriveIdentityFromPhrase,
   encodeBlob,
@@ -124,6 +125,18 @@ describe('sealed blobs', () => {
 });
 
 describe('network config', () => {
+  it('carries every kind of sealed blob between the relay and the engine, and nothing that is not one', () => {
+    // The engine seals to the account key (1), to a one-time key (2) and in an anonymous envelope (3). The page only passes
+    // them along: dropping the newer kinds made reconnecting impossible once keys had been exchanged.
+    const jwk = { kty: 'EC', crv: 'P-256', x: 'a'.repeat(43), y: 'b'.repeat(43) };
+    const base = { to: '', from: '', epk: jwk, iv: 'x', ct: 'y', sig: '' };
+    for (const v of [1, 2, 3]) expect(validateBlob({ v, ...base })).toBe(true);
+    expect(validateBlob({ v: 4, ...base })).toBe(false);
+    expect(validateBlob({ v: 3, ...base, to: 5 })).toBe(false);
+    const wire = encodeBlob({ v: 3, ...base } as never);
+    expect(decodeBlob(wire)?.v).toBe(3);
+  });
+
   it('defaults to public STUN and Nostr signaling, no TURN, and messages waiting on the relay', () => {
     const c = parseNetworkConfig(null);
     expect(c).toEqual(DEFAULT_NETWORK_CONFIG);
