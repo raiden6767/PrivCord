@@ -591,6 +591,8 @@ fn friends_hear_of_a_linked_device_once_and_keep_the_newest_list() {
     phone.core.create_identity().unwrap();
     let mut fran = Device::new("fran", &clock);
     fran.core.create_identity().unwrap();
+    phone.core.set_store_forward(false).unwrap();
+    fran.core.set_store_forward(false).unwrap();
     let fran_uid = fran.core.own_uid().unwrap().clone();
     let phone_uid = phone.core.own_uid().unwrap().clone();
     phone
@@ -615,6 +617,7 @@ fn friends_hear_of_a_linked_device_once_and_keep_the_newest_list() {
     assert_eq!(posted_before, 0);
 
     let mut laptop = Device::new("laptop", &clock);
+    laptop.core.set_store_forward(false).unwrap();
     let mut laptop_events = laptop.core.subscribe();
     let code = phone.core.start_device_link().unwrap();
     laptop.core.join_device_link(&code, "Laptop").unwrap();

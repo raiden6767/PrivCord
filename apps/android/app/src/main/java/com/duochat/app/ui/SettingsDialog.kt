@@ -750,7 +750,7 @@ SectionTitle("Appearance")
                 ToggleRow(
                     "Store-and-forward (messages while your friend is offline)",
                     "Sends each message, encrypted for your friend, to the relays above so it arrives when they come " +
-                        "online. Off by default. Each message is sealed to a one-time key your friend's device erases after opening it, " +
+                        "online. On by default, so messages and new friends arrive even when the two phones are never online together. Each message is sealed to a one-time key your friend's device erases after opening it, " +
                         "so a stolen phone cannot open it later; when those keys run out a standing key (replaced weekly) is used. " +
                         "The relays see that a sealed message for a mailbox arrived, not what it says.",
                     settings.network.storeForward,

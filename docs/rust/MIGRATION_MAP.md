@@ -8,13 +8,13 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 
 | Status | Files | Lines |
 |---|---:|---:|
-| Ported, tested | 54 | 8375 |
+| Ported, tested | 54 | 8376 |
 | Partly ported | 0 | 0 |
 | Not yet ported | 0 | 0 |
 | Stays (UI) | 106 | 19429 |
 | Stays (platform adapter) | 80 | 14332 |
 | Replaced by a library | 3 | 208 |
-| **All mapped files** | **243** | **42344** |
+| **All mapped files** | **243** | **42345** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -27,7 +27,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `packages/protocol/src/connectivity/contactCard.ts` | 76 | `CONTACT_CARD_PREFIX`, `ContactCard`, `Contact`, `uidFromKeys`, `encodeContactCard`, `decodeContactCard` | Contact card encode, decode, verify | crypto::card | Crypto | Ported, tested | M7/M8 | vectors byte-identical |
 | `packages/protocol/src/connectivity/diagnosis.ts` | 84 | `ConnectionFacts`, `DiagnosisAction`, `Diagnosis`, `diagnoseConnection`, `countSdpCandidates` | Why isn't it connecting | domain::diagnosis | Domain | Ported, tested | M7/M8 | domain unit |
 | `packages/protocol/src/connectivity/inviteCode.ts` | 118 | `INVITE_WORDS`, `INVITE_TTL_SEC`, `newInviteWords`, `parseInviteWords`, `InviteRendezvous`, `deriveInvite` +4 | Six-word invites | crypto::invite | Crypto | Ported, tested | M7/M8 | vectors both ways |
-| `packages/protocol/src/connectivity/networkConfig.ts` | 122 | `TransportMode`, `TurnServer`, `SignalingConfig`, `NetworkConfig`, `DEFAULT_NOSTR_RELAYS`, `DEFAULT_NETWORK_CONFIG` +4 | Network settings parsing | domain::network | Domain | Ported, tested | M7/M8 | domain unit |
+| `packages/protocol/src/connectivity/networkConfig.ts` | 123 | `TransportMode`, `TurnServer`, `SignalingConfig`, `NetworkConfig`, `DEFAULT_NOSTR_RELAYS`, `DEFAULT_NETWORK_CONFIG` +4 | Network settings parsing | domain::network | Domain | Ported, tested | M7/M8 | domain unit |
 | `packages/protocol/src/connectivity/seal.ts` | 156 | `SealedBlob`, `MAX_SEALED_BLOB_BYTES`, `mailboxFor`, `SealInput`, `seal`, `signBlob` +6 | Sealed blobs, mailbox ids | crypto::seal, domain::blob | Crypto | Ported, tested | M7/M8 | vectors both ways |
 | `packages/protocol/src/connectivity/secureChannel.ts` | 145 | `ScHello`, `ScData`, `isScHello`, `isScData`, `SecureChannel` | Link encryption handshake and frames | crypto::secure_channel | Crypto | Ported, tested | M7/M8 | byte-for-byte frame vectors |
 | `packages/protocol/src/connectivity/turnShare.ts` | 29 | `TURN_SHARE_PREFIX`, `encodeTurnShare`, `parseTurnShare` | Relay setup line | domain::network | Domain | Ported, tested | M7/M8 | vector |

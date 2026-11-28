@@ -256,7 +256,7 @@ export function NetworkSettings({ engine, state }: { engine: ChatEngineApi | nul
       />
       <Toggle
         label="Store-and-forward relay (messages while your friend is offline)"
-        hint="Sends each message, encrypted for your friend, to the relays above so it arrives when they come online."
+        hint="Sends each message, encrypted for your friend, to the relays above so it arrives when they come online. On by default: without it a message only arrives while both of you are online at once."
         checked={storeForward}
         onChange={setStoreForward}
       />

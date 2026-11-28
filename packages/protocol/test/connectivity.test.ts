@@ -124,11 +124,13 @@ describe('sealed blobs', () => {
 });
 
 describe('network config', () => {
-  it('defaults to public STUN and Nostr signaling, no TURN, no store-and-forward', () => {
+  it('defaults to public STUN and Nostr signaling, no TURN, and messages waiting on the relay', () => {
     const c = parseNetworkConfig(null);
     expect(c).toEqual(DEFAULT_NETWORK_CONFIG);
     expect(c.turn).toEqual([]);
-    expect(c.storeForward).toBe(false);
+    expect(c.storeForward).toBe(true);
+    // Switched off by choice, it stays off.
+    expect(parseNetworkConfig(JSON.stringify({ storeForward: false })).storeForward).toBe(false);
   });
 
   it('keeps valid entries and drops bad ones', () => {
