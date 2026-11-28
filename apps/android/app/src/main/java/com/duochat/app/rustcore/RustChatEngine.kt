@@ -549,6 +549,7 @@ class RustChatEngine(
         when (event) {
             is EventDto.DialRequested -> {
                 android.util.Log.i("RustEngine", "dial initiator=${event.initiator} signaling=${hubStatus()}")
+                initiatorOf[event.peer] = event.initiator
                 dial(event.peer, event.initiator)
             }
             is EventDto.SignalReceived -> {
@@ -610,7 +611,14 @@ class RustChatEngine(
 
     // ------------------------------------------------------------------ WebRTC links (platform adapter)
 
-    private fun isInitiator(peer: String): Boolean = (last?.ownUid ?: "") < peer
+    /**
+     * Who sends the offer on a link is the engine's decision (it knows which of our addresses this link is on, so a device
+     * of the same account gets it right). The adapter keeps the engine's last answer for each friend and uses it; only
+     * before the engine has said anything does it fall back to comparing ids.
+     */
+    private val initiatorOf = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    private fun isInitiator(peer: String): Boolean = initiatorOf[peer] ?: ((last?.ownUid ?: "") < peer)
 
     private suspend fun dial(peer: String, initiator: Boolean) {
         val mode = networkConfig().transportMode

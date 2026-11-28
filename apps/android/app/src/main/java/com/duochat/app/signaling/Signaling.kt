@@ -161,7 +161,9 @@ class SignalingHub(private val transports: List<SignalingTransport>) {
         for (transport in transports) {
             transport.start(mailbox) { blob, id ->
                 val fresh = synchronized(seen) {
-                    val added = seen.add(blob.sig)
+                    // Not the signature alone: an anonymous envelope has none (it is empty), so every one after the first
+                    // would have counted as a copy and been dropped. The iv is random and unique to each blob.
+                    val added = seen.add(blob.iv + "|" + blob.sig + "|" + blob.ct.take(24))
                     if (seen.size > 2000) seen.remove(seen.first())
                     added
                 }

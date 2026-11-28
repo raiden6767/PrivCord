@@ -22,8 +22,10 @@ export class SignalingHub {
   start(mailbox: string, onBlob: (blob: SealedBlob, id: string, via: SignalingTransport) => void): void {
     for (const transport of this.transports) {
       transport.start(mailbox, (blob, id) => {
-        if (this.seen.has(blob.sig)) return;
-        this.seen.add(blob.sig);
+        // Not the signature alone: an anonymous envelope has none (it is empty), so every one after the first would be dropped.
+        const key = `${blob.iv}|${blob.sig}|${blob.ct.slice(0, 24)}`;
+        if (this.seen.has(key)) return;
+        this.seen.add(key);
         if (this.seen.size > 2000) this.seen.delete(this.seen.values().next().value as string);
         onBlob(blob, id, transport);
       });

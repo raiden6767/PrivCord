@@ -317,7 +317,10 @@ export class HostedRuntime {
   private onEngineEvent(event: unknown): void {
     if (typeof event === 'object' && event !== null) {
       const e = event as Record<string, Record<string, unknown>>;
-      if (e.DialRequested) void this.dial(String(e.DialRequested.peer), e.DialRequested.initiator === true);
+      if (e.DialRequested) {
+        this.initiatorOf.set(String(e.DialRequested.peer), e.DialRequested.initiator === true);
+        void this.dial(String(e.DialRequested.peer), e.DialRequested.initiator === true);
+      }
       else if (e.SignalReceived) void this.onSignal(String(e.SignalReceived.peer), String(e.SignalReceived.kind), (e.SignalReceived.sdp as string | null) ?? null);
       else if (e.FileProgress) {
         const id = String(e.FileProgress.message_id);
@@ -360,8 +363,15 @@ export class HostedRuntime {
 
   /* ------------------------------------------------------------------ WebRTC links */
 
+  /**
+   * Who sends the offer on a link is the engine's decision (it knows which of our addresses the link is on, so another
+   * device of the same account gets it right). We keep its last answer for each friend; only before it has spoken do we
+   * compare ids.
+   */
+  private readonly initiatorOf = new Map<string, boolean>();
+
   private isInitiator(peer: string): boolean {
-    return this.ownUid < peer;
+    return this.initiatorOf.get(peer) ?? this.ownUid < peer;
   }
 
   private hubsOnline(): boolean {

@@ -411,6 +411,7 @@ impl Core {
             .seen
             .first_time(&privcord_crypto::seal::replay_id(&blob))
         {
+            self.diag("relay", "message seen before, dropped", blob.from.as_str());
             return;
         }
         self.sealed.seen_dirty = true;
@@ -447,9 +448,19 @@ impl Core {
             return;
         };
         let Some((Value::Object(payload), from)) = self.open_from_contact(&blob, &keys) else {
+            self.diag(
+                "relay",
+                "message from a friend could not be opened or its signature did not match",
+                person.as_str(),
+            );
             return;
         };
         if !self.known_address(&from) {
+            self.diag(
+                "relay",
+                "message from an address not in their device list",
+                from.as_str(),
+            );
             return;
         }
         self.note_devices(&from, &Value::Object(payload.clone()));
