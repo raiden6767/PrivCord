@@ -10,6 +10,7 @@ import {
   summarizeReactions,
   type ConnectionPath,
   type DeliveryState,
+  type Diagnosis,
 } from '@duochat/protocol';
 import type {
   ChannelView,
@@ -23,7 +24,7 @@ import type {
   UiMessage,
 } from '../chatTypes';
 import type { StoredMessage } from '../chatTypes';
-import type { SignalingStatus } from '../signaling/types';
+import type { SignalingStatus } from '../signalingStatus';
 
 /* ---- the engine's JSON (serde output of the FFI types) ---- */
 
@@ -46,6 +47,8 @@ export interface ContactJson {
   safety_number: string;
   link: LinkStateJson;
   can_message: boolean;
+  /** We added them from their card and they have not added us back yet. */
+  awaiting_acceptance?: boolean;
 }
 
 export interface MessageJson {
@@ -221,8 +224,18 @@ export function shapeState(s: SnapshotJson, ctx: ShapeContext): ChatState {
   const contacts: ContactView[] = s.contacts.map((c) => {
     const conn = connOf(c.link);
     const facts = ctx.facts(c.uid);
+    // Added from their card and not added back yet: nothing can connect until they accept, so say that.
+    const waiting: Diagnosis | null =
+      conn !== 'connected' && c.awaiting_acceptance === true
+        ? {
+            code: 'awaiting-acceptance',
+            message: `Waiting for ${c.display_name} to add you back. They will see a request in PrivCord and need to tap Accept; once they do, you connect. If they have not seen it, ask them to open the app.`,
+            actions: [],
+          }
+        : null;
     const diagnosis =
-      conn !== 'connected' && facts
+      waiting ??
+      (conn !== 'connected' && facts
         ? diagnoseConnection(
             {
               signaling: ctx.signaling,
@@ -235,7 +248,7 @@ export function shapeState(s: SnapshotJson, ctx: ShapeContext): ChatState {
             },
             c.display_name,
           )
-        : null;
+        : null);
     return {
       uid: c.uid,
       name: c.display_name,

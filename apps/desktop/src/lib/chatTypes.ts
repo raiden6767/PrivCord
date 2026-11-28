@@ -3,7 +3,7 @@
  * is the Rust one, hosted in the shell (`hosted/`); this file holds only types and two constants.
  */
 import type { ChatMessage, ConnectionPath, ContactCard, DeliveryState, Diagnosis, ReplyRef } from '@duochat/protocol';
-import type { SignalingStatus } from './signaling/types';
+import type { SignalingStatus } from './signalingStatus';
 
 export interface FileMeta {
   name: string;

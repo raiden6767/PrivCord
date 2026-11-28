@@ -21,8 +21,7 @@ import { HostedEngine, type PathName } from '../engineBridge';
 import { BleTransport, type BleHandlers } from '../ble';
 import { getBleBridge } from '../bleLink';
 import { PeerTransport, type PeerTransportHandlers } from '../p2p';
-import { SignalingHub, transportsFor } from '../signaling/hub';
-import type { SignalingStatus } from '../signaling/types';
+import type { SignalingStatus } from '../signalingStatus';
 import type { LinkFacts } from './shape';
 
 /** What the runtime needs from a WebRTC link (`PeerTransport` is one; tests use a fake). */
@@ -47,7 +46,8 @@ export interface BleLike {
   close(): void;
 }
 
-/** What the runtime needs from the relay sockets of one mailbox (`SignalingHub` is one). */
+/** What the runtime needs from the relay sockets of one mailbox. In the app the native Rust socket worker owns them (see
+ * `nativeSignaling`); this is the seam the tests fill with a fake. */
 export interface RelayHub {
   start(mailbox: string, onBlob: (blob: ReturnType<typeof decodeBlob> & object) => void): void;
   put(mailbox: string, blob: ReturnType<typeof decodeBlob> & object, opts: { kind: 'sig' | 'msg'; ttlSec: number }): Promise<void>;
@@ -553,7 +553,9 @@ export class HostedRuntime {
   private subscribe(mailbox: string): void {
     this.hubs.get(mailbox)?.stop();
     const net = this.o.network();
-    const hub = this.o.createHub ? this.o.createHub(net) : (new SignalingHub(transportsFor(net)) as unknown as RelayHub);
+    const hub = this.o.createHub?.(net);
+    // In the app the relay sockets are the native Rust worker's; there is no page-side fallback any more.
+    if (!hub) return;
     this.hubs.set(mailbox, hub);
     hub.start(mailbox, (blob) => void this.o.engine.signalBlob(mailbox, encodeBlob(blob as never)).catch(() => undefined));
     this.o.changed();

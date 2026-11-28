@@ -70,6 +70,7 @@ rule(r"desktop/src/lib/(secureStore|sealedSettings)(\.test)?\.ts", "Secure stora
 rule(r"desktop/src/lib/identity\.ts", "Identity load and create", "crypto::identity + engine", "Engine", PORTED, "M7")
 rule(r"desktop/src/lib/insightInputs(\.test)?\.ts", "Shapes app state into inputs of the engine insights (signaling words, quiet-now, unread sum, window title)", "UI glue (stays); the rules live in engine::insights", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/myServer(Loop|\.test)?\.ts", "\"Use my server\": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login", "UI/settings glue (stays); the server side is crates/privcord-server", "Adapter", ADAPTER, "Stays")
+rule(r"desktop/src/lib/signalingStatus\.ts", "The name of the relays' overall state (the Rust signaling layer decides it)", "UI state (stays)", "UI", UI, "Stays")
 rule(r"android/.*/data/MyServer(Test)?\.kt", "\"Use my server\": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login", "UI/settings glue (stays); the server side is crates/privcord-server", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/appLock\.ts", "WebAuthn app lock", "UI/adapter (stays)", "Adapter", ADAPTER, "Stays")
 rule(r"desktop/src/lib/(appVersion|limits)\.ts", "The installed app version, and the connection limit the screens state (checked against the engine)", "Desktop adapter + engine host", "Adapter", ADAPTER, "Stays")
