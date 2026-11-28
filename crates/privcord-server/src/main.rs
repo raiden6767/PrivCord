@@ -45,6 +45,31 @@ enum Cmd {
     },
     /// Make a one-time setup code for another admin (works while the server runs). They enter it on the panel's login page
     /// and get their own token there; nothing long-lived is printed.
+    /// Save everything in the data folder (messages waiting, Nostr events, admins, TURN secret) to one file. Stop the server
+    /// first if it uses the disk store. To move to another server: back up, copy the file there, `restore`.
+    Backup {
+        /// The file to create (it must not exist).
+        #[arg(long)]
+        out: PathBuf,
+        /// Also keep the settings file in the backup.
+        #[arg(long)]
+        with_config: bool,
+        /// Encrypt the backup with the passphrase held in this environment variable.
+        #[arg(long, value_name = "NAME")]
+        passphrase_env: Option<String>,
+    },
+    /// Put a backup back into the data folder, after checking all of it. Run it before the server's first start there.
+    Restore {
+        /// The backup file.
+        #[arg(long = "in")]
+        input: PathBuf,
+        /// The passphrase's environment variable, if the backup is encrypted.
+        #[arg(long, value_name = "NAME")]
+        passphrase_env: Option<String>,
+        /// The data folder already holds data: move it aside (to `<folder>.before-restore`) and restore.
+        #[arg(long)]
+        replace: bool,
+    },
     AdminInvite {
         /// A name for this admin.
         #[arg(long, default_value = "admin")]
@@ -155,12 +180,88 @@ fn main() -> std::process::ExitCode {
         Cmd::Serve => rt.block_on(serve(&cli.config)),
         Cmd::Doctor => rt.block_on(doctor(&cli.config)),
         Cmd::StoreKey { out } => store_key(&out),
+        Cmd::Backup {
+            out,
+            with_config,
+            passphrase_env,
+        } => backup(&cli.config, &out, with_config, passphrase_env.as_deref()),
+        Cmd::Restore {
+            input,
+            passphrase_env,
+            replace,
+        } => restore(&cli.config, &input, passphrase_env.as_deref(), replace),
         Cmd::AdminInvite { name, role } => admin_invite(&cli.config, &name, &role),
     };
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => fail(&e),
     }
+}
+
+fn passphrase(var: Option<&str>) -> Result<Option<String>, String> {
+    var.map(|v| {
+        std::env::var(v)
+            .ok()
+            .filter(|p| !p.is_empty())
+            .ok_or_else(|| format!("the environment variable {v} is empty or not set"))
+    })
+    .transpose()
+}
+
+fn backup(
+    cfg: &std::path::Path,
+    out: &std::path::Path,
+    with_config: bool,
+    pass: Option<&str>,
+) -> Result<(), String> {
+    let c = load(cfg)?;
+    let pass = passphrase(pass)?;
+    let s = privcord_server::backup::create(
+        &c.server.data_dir,
+        with_config.then_some(cfg),
+        out,
+        pass.as_deref(),
+    )?;
+    println!(
+        "saved {} files ({} bytes) to {}{}",
+        s.files,
+        s.bytes,
+        out.display(),
+        if pass.is_some() { ", encrypted" } else { "" }
+    );
+    if pass.is_none() {
+        println!("this file is not encrypted: it holds your admins' access and the TURN secret. Keep it private, or add --passphrase-env.");
+    }
+    if c.storage.encrypt {
+        println!("storage.encrypt is on: the storage key is NOT in this file. Copy it separately, or the data cannot be read.");
+    }
+    Ok(())
+}
+
+fn restore(
+    cfg: &std::path::Path,
+    input: &std::path::Path,
+    pass: Option<&str>,
+    replace: bool,
+) -> Result<(), String> {
+    let c = load(cfg)?;
+    let pass = passphrase(pass)?;
+    let (s, conf) =
+        privcord_server::backup::restore(input, &c.server.data_dir, pass.as_deref(), replace)?;
+    println!(
+        "restored {} files ({} bytes) into {}",
+        s.files,
+        s.bytes,
+        c.server.data_dir.display()
+    );
+    if let Some(p) = conf {
+        println!(
+            "the old settings are in {} for you to look at; they were not applied.",
+            p.display()
+        );
+    }
+    println!("start the server as usual. If its address changed, tell your people the new one.");
+    Ok(())
 }
 
 fn fail(msg: &str) -> std::process::ExitCode {

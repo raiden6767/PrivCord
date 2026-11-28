@@ -205,6 +205,30 @@ I read its source (event handling, storage, limits, configuration) and adopted w
 Left out on purpose: NIP-05 write verification (needs outbound web requests from the server), pay-to-relay, an external
 admission service, and logging each client's address and browser (this server keeps no such log).
 
+## Backup, restore, and moving to another server
+
+One command saves everything the server keeps (people's waiting messages, Nostr events, admins, the TURN secret, the TLS
+account) into one file, and one command puts it back:
+
+```
+privcord-server backup  --out saved.pcbk --passphrase-env BACKUP_PASSPHRASE   # on the old server
+privcord-server restore --in  saved.pcbk --passphrase-env BACKUP_PASSPHRASE   # on the new one, before it first starts
+```
+
+- **Moving:** make the backup, copy the file to the new machine, install the server there, run `restore`, start it. Point your
+  name (DNS) at the new address; people's apps follow the name. Add `--with-config` to carry the settings file too (it is
+  put beside the data as `restored-config.toml`, not applied over yours).
+- **Safe by default:** the file is created private (0600) and never overwrites another. It is checked whole before a single
+  file is written, so a cut-off, edited or wrong-passphrase backup is refused and nothing changes. `restore` will not mix into
+  a folder that already has data; add `--replace` and the old data is moved aside to `<folder>.before-restore`, not deleted.
+- **Passphrase:** give the name of an environment variable, never the passphrase itself (it would show in the process list).
+  Without one the file is not encrypted; it holds your admins' access and the TURN secret, so keep it private. It is
+  encrypted with AES-256-GCM under an Argon2id key.
+- **Disk store:** with `nostr.backend = "disk"` stop the server first (the command tells you if it is running); the memory
+  store can be backed up while running.
+- **Not in the file:** the storage key (`storage.encrypt`) lives outside the data folder on purpose; copy it yourself.
+- The health report on the admin panel shows when the last backup was made and turns amber when there is none.
+
 ## Certificates that renew themselves
 
 ```toml

@@ -4,6 +4,7 @@
 
 pub mod acme;
 pub mod admin;
+pub mod backup;
 pub mod config;
 pub mod fsutil;
 pub mod health;
