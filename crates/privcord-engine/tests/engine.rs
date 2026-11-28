@@ -1182,3 +1182,28 @@ fn the_chat_list_and_history_group_interleaved_chats_correctly() {
             })));
     }
 }
+
+#[test]
+fn a_link_that_never_finishes_its_handshake_is_dropped_and_frees_its_dial_slot() {
+    let (mut a, b, au, bu) = pair();
+    a.transport.set_connected(&bu, true);
+    b.transport.set_connected(&au, true);
+    // A's link is up, but nothing A sends ever reaches B (it froze or lost the hello): A waits for an answer.
+    a.core.link_up(&bu, ConnectionPath::DirectLan).unwrap();
+    let _ = a.transport.drain();
+    assert_eq!(state_of(&a, &bu), ConnectionState::Connecting);
+    a.clock.advance(10_000);
+    a.core.tick();
+    assert_eq!(
+        state_of(&a, &bu),
+        ConnectionState::Connecting,
+        "still within its time"
+    );
+    a.clock.advance(15_000);
+    a.core.tick();
+    assert_ne!(
+        state_of(&a, &bu),
+        ConnectionState::Connecting,
+        "after 20 seconds with no handshake the link is dropped, so it no longer occupies a dial slot"
+    );
+}

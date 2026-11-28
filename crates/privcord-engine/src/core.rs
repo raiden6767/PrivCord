@@ -94,6 +94,9 @@ pub const MAX_FRAME_BYTES: usize = 128 * 1024;
 /// The most that files received and sent keep on one device (2 GiB); more are declined until some are deleted.
 const MAX_STORED_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const PQ_SETUP_MS: i64 = 10_000;
+/// A link that is open but whose own handshake never finishes (the other side froze, does not know us, or dropped our hello)
+/// is dropped after this long, so it cannot hold one of the few dial slots for ever.
+const LINK_HANDSHAKE_MS: i64 = 20_000;
 /// How long to wait for a delivery receipt before sending a message again.
 pub const RETRY_AFTER_MS: i64 = 20_000;
 /// How long a file is left to arrive (and be acknowledged) before it is sent again.
@@ -188,6 +191,8 @@ struct Peer {
     pq: Option<Box<PqChannel>>,
     /// The handshake above must be done by this time, or the link is dropped and made again.
     pq_deadline: i64,
+    /// When the platform said the link was up: its own handshake (hello) must finish within `LINK_HANDSHAKE_MS`.
+    linked_at: i64,
     /// Which of our addresses this link is with (how they reached us); `None` means our default (`own_address`).
     as_me: Option<UserId>,
 }
@@ -209,6 +214,7 @@ impl Peer {
             offer_out: None,
             pq: None,
             pq_deadline: 0,
+            linked_at: 0,
             offer_in: None,
             offer_in_at: 0,
             as_me: None,
@@ -868,11 +874,13 @@ impl Core {
                 (Session::Legacy(Box::new(auth)), hello)
             }
         };
+        let linked_now = self.now();
         {
             let p = self.peers.entry(peer.clone()).or_insert_with(Peer::offline);
             p.session = Some(session);
             p.path = path;
             p.as_me = Some(own);
+            p.linked_at = linked_now;
         }
         self.step(peer, ConnectionEvent::Dial);
         // The handshake travels in the clear by design: it is signed, and carries only keys and a nonce.
@@ -1858,6 +1866,22 @@ impl Core {
             .collect();
         for peer in stalled {
             self.pq_failed(&peer);
+        }
+        // A link that never finished its own handshake is dropped too (it still counts as a dial in progress otherwise).
+        let unanswered: Vec<UserId> = self
+            .peers
+            .iter()
+            .filter(|(_, p)| {
+                p.session.is_some()
+                    && !p.outer_ready()
+                    && p.state == ConnectionState::Connecting
+                    && now - p.linked_at > LINK_HANDSHAKE_MS
+            })
+            .map(|(u, _)| u.clone())
+            .collect();
+        for peer in unanswered {
+            self.fail(&peer, ConnectionFailure::Timeout);
+            self.ports.transport.close(&peer);
         }
         let ready: Vec<UserId> = self
             .peers
