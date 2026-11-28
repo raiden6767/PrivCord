@@ -950,6 +950,68 @@ async fn overview(
     .into_response()
 }
 
+/// What is wrong or at risk, in plain words (the Home page's health card).
+async fn health_checks(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    let app = &a.state.app;
+    let list = crate::health::checks(app, &app.cfg.server.data_dir, a.state.tls_self_signed);
+    Json(crate::health::checks_json(&list)).into_response()
+}
+
+/// The same, as a text file to download and send to whoever is helping.
+async fn health_report(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    let app = &a.state.app;
+    let body = crate::health::report_text(app, &app.cfg.server.data_dir, a.state.tls_self_signed);
+    let name = format!(
+        "privcord-health-{}.txt",
+        crate::health::civil(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        )
+        .0
+    );
+    (
+        [
+            ("content-type", "text/plain; charset=utf-8".to_owned()),
+            (
+                "content-disposition",
+                format!("attachment; filename=\"{name}\""),
+            ),
+            ("cache-control", "no-store".to_owned()),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+/// Live numbers (memory, disk, connections, events), read every few seconds by the panel if the person turned them on.
+async fn live_numbers(
+    State(a): State<AdminApp>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response {
+    let _ = admin_or_return!(a, headers, addr, Need::Read);
+    let app = &a.state.app;
+    let mut resp = Json(crate::health::live(app, &app.cfg.server.data_dir)).into_response();
+    resp.headers_mut().insert(
+        "cache-control",
+        "no-store"
+            .parse()
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("no-store")),
+    );
+    resp
+}
+
 fn nostr_of(a: &AdminApp) -> Option<&Arc<crate::nostr::Nostr>> {
     a.state.app.relay.as_ref().and_then(|r| r.nostr())
 }
@@ -1448,6 +1510,9 @@ pub fn router(state: Arc<AdminState>) -> Router {
         .route("/admin/api/me", get(me))
         .route("/admin/api/me/token", post(rotate_me))
         .route("/admin/api/overview", get(overview))
+        .route("/admin/api/health", get(health_checks))
+        .route("/admin/api/health/report", get(health_report))
+        .route("/admin/api/live", get(live_numbers))
         .route("/admin/api/settings", get(get_settings).put(put_settings))
         .route("/admin/api/clear/messages", post(clear_messages))
         .route("/admin/api/clear/nostr", post(clear_nostr))
