@@ -177,3 +177,6 @@ fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; }
 .lvl.watch { border-style: dashed; }
 .lvl.fix { border-color: var(--danger); color: var(--danger); }
 .item .detail.todo { color: var(--text); }
+
+.row { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; }
+.row select { flex: 1 1 240px; width: auto; }

@@ -34,7 +34,10 @@ The TURN port also answers STUN Binding requests, over UDP and over TCP, without
 "what address do you see me at?" before it asks for a relay). So a server with `[turn] enabled = true` is also a STUN server:
 list `stun:YOUR-IP:3478` in the apps (Settings, Connection, STUN servers) next to the public ones, or instead of them to keep
 your friends' addresses off third-party servers. The panel's Home page shows the address with a Copy button, and
-`tests/turn_stream.rs` checks the answer on both transports. A STUN-only mode (no relay, no ports to open beyond one) is not built.
+`tests/turn_stream.rs` checks the answer on both transports. With `[turn] stun_only = true` (or "Only answer address lookups" in the panel) the server answers STUN
+and nothing else: no logins, no relaying, no port range to open, no public address to configure, and almost no bandwidth. It is the
+cheapest thing to host for people who only want their friends' addresses kept off third-party STUN servers. Binding requests are
+answered; every allocation is refused even with a valid fixed login (`tests/turn_stream.rs`).
 
 ### Several servers (for example one per continent)
 
@@ -204,6 +207,30 @@ I read its source (event handling, storage, limits, configuration) and adopted w
 
 Left out on purpose: NIP-05 write verification (needs outbound web requests from the server), pay-to-relay, an external
 admission service, and logging each client's address and browser (this server keeps no such log).
+
+## What the server runs, and how much it may use
+
+The panel's Settings page shows each protocol the server runs (the PrivCord relay, Nostr, and TURN/STUN) with the ports it uses and
+whether the setting comes from the panel or from your settings file. An owner can add a protocol from the "Add a protocol" menu,
+turn one off, or switch calls between "address lookup only" and "calls and files". Several can run at once. The relay and Nostr share
+one web port (they are both WebSockets, told apart by the request); TURN and STUN use their own UDP port (and TCP or TLS ports if you set them).
+
+Saving a change restarts the server for a few seconds with the new choices. If they cannot start (a port is taken, a setting is
+refused), the server goes back to the last choices that worked, and the panel says why. The panel's choices are kept in
+`data_dir/panel.json` and are laid over the settings file when the server starts.
+
+Limits, in the `[limits]` section or on the panel (Advanced), each 0 for "no limit":
+
+```
+[limits]
+monthly_traffic_gb = 500    # relay, Nostr and TURN together; at the cap new connections get 503 with a long Retry-After
+connection_kbps = 2000      # each relay/Nostr connection, each way
+disk_quota_mb = 20000       # shared out as the Nostr and waiting-message caps
+```
+
+The month's traffic is counted in `data_dir/usage.json` (saved about once a minute; a crash can lose up to a minute of counts)
+and shown on the panel and in the health report, which warns at 80% and turns red at the cap. The counters split the relay and
+Nostr together from TURN for now; they will be split further when each protocol is its own module.
 
 ## Backup, restore, and moving to another server
 

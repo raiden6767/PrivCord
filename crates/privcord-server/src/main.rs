@@ -134,6 +134,12 @@ public_ip = "auto"              # "auto" asks a public STUN server; or write the
 min_port = 49152                # open this UDP range in your firewall / forward it on your router
 max_port = 49400
 max_kbps = 0                    # per relayed connection, 0 = no limit
+# stun_only = true              # only answer STUN: no relaying, no logins, no port range to open
+
+# [limits]                      # all 0 = no limit
+# monthly_traffic_gb = 500
+# connection_kbps = 2000
+# disk_quota_mb = 20000
 "#;
 
 /// A minimal logger to stderr. Quiet by default (warnings and errors only); `PRIVCORD_LOG=info|debug|trace` turns it up. At
@@ -352,27 +358,35 @@ fn admin_invite(path: &std::path::Path, name: &str, role: &str) -> Result<(), St
 
 async fn serve(path: &std::path::Path) -> Result<(), String> {
     let cfg = load(path)?;
-    let (relay, turn) = (cfg.relay.enabled, cfg.turn.enabled);
-    let admin_tls = cfg.admin.tls;
-    let running = privcord_server::start(cfg).await?;
-    println!(
-        "privcord-server {} listening on {} (relay: {relay}, turn: {turn}). Ctrl-C to stop.",
-        env!("CARGO_PKG_VERSION"),
-        running.addr
-    );
-    if let Some(a) = running.admin_addr() {
-        println!(
-            "admin panel: {}://{a}/admin",
-            if admin_tls { "https" } else { "http" }
-        );
-        if let Some(code) = running.admin_setup_code() {
-            // Not a token: it works once and stops after 15 minutes, so a terminal log that keeps it is worth nothing later.
-            println!("first time here? open the page and enter this setup code (works once, for 15 minutes): {code}");
-        }
-    }
-    tokio::signal::ctrl_c().await.map_err(|e| e.to_string())?;
-    running.stop().await;
-    Ok(())
+    privcord_server::supervise(
+        cfg,
+        async {
+            let _ = tokio::signal::ctrl_c().await;
+        },
+        |running| {
+            // What is on may change while the server runs (the panel can restart it with other choices).
+            let c = running.config();
+            println!(
+                "privcord-server {} listening on {} (relay: {}, nostr: {}, turn: {}). Ctrl-C to stop.",
+                env!("CARGO_PKG_VERSION"),
+                running.addr,
+                c.relay.enabled,
+                c.nostr.enabled,
+                if !c.turn.enabled { "off" } else if c.turn.stun_only { "stun only" } else { "on" },
+            );
+            if let Some(a) = running.admin_addr() {
+                println!(
+                    "admin panel: {}://{a}/admin",
+                    if c.admin.tls { "https" } else { "http" }
+                );
+                if let Some(code) = running.admin_setup_code() {
+                    // Not a token: it works once and stops after 15 minutes, so a terminal log that keeps it is worth nothing later.
+                    println!("first time here? open the page and enter this setup code (works once, for 15 minutes): {code}");
+                }
+            }
+        },
+    )
+    .await
 }
 
 async fn doctor(path: &std::path::Path) -> Result<(), String> {
@@ -384,7 +398,7 @@ async fn doctor(path: &std::path::Path) -> Result<(), String> {
             bad += 1;
         }
     };
-    if matches!(cfg.turn.public_ip.trim(), "" | "auto") && cfg.turn.enabled {
+    if matches!(cfg.turn.public_ip.trim(), "" | "auto") && cfg.turn.enabled && !cfg.turn.stun_only {
         match nat::public_ip().await {
             Ok(ip) => {
                 say(true, format!("public address seen from the internet: {ip}"));
@@ -410,8 +424,15 @@ async fn doctor(path: &std::path::Path) -> Result<(), String> {
             tokio::net::UdpSocket::bind(&cfg.turn.listen).await.is_ok(),
             format!("TURN can listen on {} (UDP)", cfg.turn.listen),
         );
-        let n = u32::from(cfg.turn.max_port.saturating_sub(cfg.turn.min_port)) + 1;
-        println!("note: forward UDP {} and UDP {}-{} to this machine ({n} simultaneous relayed connections).", cfg.turn.listen, cfg.turn.min_port, cfg.turn.max_port);
+        if cfg.turn.stun_only {
+            println!(
+                "note: STUN only: forward just UDP {} to this machine (no relay ports are used).",
+                cfg.turn.listen
+            );
+        } else {
+            let n = u32::from(cfg.turn.max_port.saturating_sub(cfg.turn.min_port)) + 1;
+            println!("note: forward UDP {} and UDP {}-{} to this machine ({n} simultaneous relayed connections).", cfg.turn.listen, cfg.turn.min_port, cfg.turn.max_port);
+        }
         if !cfg.turn.tcp_listen.is_empty() || !cfg.turn.tls_listen.is_empty() {
             println!("note: also forward the TCP port(s) you set for TURN over TCP / TLS; relayed traffic still leaves over UDP.");
         }

@@ -178,6 +178,9 @@ pub mod server {
     use webrtc_util::Conn;
 
     struct Auth {
+        usage: Arc<crate::limits::Usage>,
+        /// STUN-only: nobody gets a login, so nobody can allocate a relay (Binding needs none).
+        stun_only: bool,
         secret: Vec<u8>,
         users: HashMap<String, String>,
     }
@@ -189,6 +192,12 @@ pub mod server {
             realm: &str,
             _src: SocketAddr,
         ) -> Result<Vec<u8>, turn::Error> {
+            if self.stun_only {
+                return Err(turn::Error::Other("this server only answers STUN".into()));
+            }
+            if self.usage.over_cap() {
+                return Err(turn::Error::Other("traffic allowance used up".into()));
+            }
             if let Some(password) = self.users.get(username) {
                 return Ok(generate_auth_key(username, realm, password));
             }
@@ -213,6 +222,7 @@ pub mod server {
         public_ip: std::net::IpAddr,
         allow_private: bool,
         bucket: Option<Mutex<Bucket>>,
+        usage: Arc<crate::limits::Usage>,
     }
 
     struct Bucket {
@@ -271,13 +281,14 @@ pub mod server {
         }
         async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
             let (n, from) = self.inner.recv_from(buf).await?;
+            self.usage.turn(n, 0);
             Ok((n, self.as_seen_from_outside(from)))
         }
         async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
             self.inner.send(buf).await
         }
         async fn send_to(&self, buf: &[u8], target: SocketAddr) -> webrtc_util::Result<usize> {
-            if !self.allows(target, buf.len()) {
+            if self.usage.over_cap() || !self.allows(target, buf.len()) {
                 // Dropped, as a congested network would: the sender is told it went.
                 return Ok(buf.len());
             }
@@ -290,6 +301,7 @@ pub mod server {
                 }
                 _ => target,
             };
+            self.usage.turn(0, buf.len());
             self.inner.send_to(buf, target).await
         }
         fn local_addr(&self) -> webrtc_util::Result<SocketAddr> {
@@ -314,6 +326,7 @@ pub mod server {
         allow_private: bool,
         kbps: u64,
         live: LivePorts,
+        usage: Arc<crate::limits::Usage>,
     }
 
     #[async_trait]
@@ -349,6 +362,7 @@ pub mod server {
                     public_ip: self.inner.relay_address,
                     allow_private: self.allow_private,
                     bucket,
+                    usage: self.usage.clone(),
                 }),
                 addr,
             ))
@@ -431,6 +445,7 @@ pub mod server {
             public_ip: public_ip.parse().unwrap(),
             allow_private: false,
             bucket: None,
+            usage: crate::limits::Usage::unlimited(),
         }
     }
 
@@ -472,6 +487,7 @@ pub mod server {
         secret: Vec<u8>,
         public_ip: std::net::IpAddr,
         tls: Option<&crate::tls::Tls>,
+        usage: Arc<crate::limits::Usage>,
     ) -> Result<TurnServer, String> {
         let socket = tokio::net::UdpSocket::bind(&cfg.listen)
             .await
@@ -488,8 +504,9 @@ pub mod server {
             Box::new(Gen {
                 inner: RelayAddressGeneratorRanges {
                     relay_address: public_ip,
-                    min_port: cfg.min_port,
-                    max_port: cfg.max_port,
+                    // STUN-only never allocates, but the library wants a range.
+                    min_port: if cfg.stun_only { 49152 } else { cfg.min_port },
+                    max_port: if cfg.stun_only { 49152 } else { cfg.max_port },
                     max_retries: 20,
                     address: "0.0.0.0".into(),
                     net: Arc::new(Net::new(None)),
@@ -497,6 +514,7 @@ pub mod server {
                 allow_private: cfg.allow_private_peers,
                 kbps: cfg.max_kbps,
                 live: live.clone(),
+                usage: usage.clone(),
             })
         };
         let mut conn_configs = vec![ConnConfig {
@@ -542,7 +560,12 @@ pub mod server {
         let server = Server::new(ServerConfig {
             conn_configs,
             realm: cfg.realm.clone(),
-            auth_handler: Arc::new(Auth { secret, users }),
+            auth_handler: Arc::new(Auth {
+                usage: usage.clone(),
+                stun_only: cfg.stun_only,
+                secret,
+                users,
+            }),
             channel_bind_timeout: Duration::from_secs(0),
             alloc_close_notify: None,
         })

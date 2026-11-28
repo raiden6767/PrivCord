@@ -14,6 +14,20 @@ pub struct Config {
     pub server: ServerConfig,
     pub relay: RelayConfig,
     pub turn: TurnConfig,
+    pub limits: LimitsConfig,
+}
+
+/// What this server may use. Each is 0 (no limit) unless set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LimitsConfig {
+    /// Gigabytes the server may send and receive in a calendar month (relay, Nostr and TURN together). At the cap new
+    /// connections are refused until the month changes.
+    pub monthly_traffic_gb: u64,
+    /// A speed limit for each relay/Nostr connection, in kilobits per second, in both directions.
+    pub connection_kbps: u64,
+    /// Megabytes of disk the server may fill with what it stores; it is shared out as the Nostr and waiting-message caps.
+    pub disk_quota_mb: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +115,8 @@ pub struct TurnConfig {
     pub allow_private_peers: bool,
     /// A speed limit for each relayed connection, in kilobits per second. 0: none.
     pub max_kbps: u64,
+    /// Only answer STUN ("what address do you see me at?"): no relaying, no logins, no port range to open, almost no traffic.
+    pub stun_only: bool,
 }
 
 impl Default for ServerConfig {
@@ -155,6 +171,7 @@ impl Default for TurnConfig {
             users: Vec::new(),
             allow_private_peers: false,
             max_kbps: 0,
+            stun_only: false,
         }
     }
 }
@@ -273,7 +290,7 @@ impl Config {
             }
         }
         if self.turn.enabled {
-            if self.turn.public_ip.parse::<std::net::IpAddr>().is_err() {
+            if !self.turn.stun_only && self.turn.public_ip.parse::<std::net::IpAddr>().is_err() {
                 out.push("turn.public_ip must be this machine's public IP address (phones are told to send traffic there)".into());
             }
             if self.turn.listen.parse::<std::net::SocketAddr>().is_err() {
@@ -282,7 +299,9 @@ impl Config {
                     self.turn.listen
                 ));
             }
-            if self.turn.min_port == 0 || self.turn.max_port < self.turn.min_port {
+            if !self.turn.stun_only
+                && (self.turn.min_port == 0 || self.turn.max_port < self.turn.min_port)
+            {
                 out.push(
                     "turn.min_port and turn.max_port must be a range of ports, lowest first".into(),
                 );

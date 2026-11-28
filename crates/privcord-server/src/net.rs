@@ -41,6 +41,10 @@ pub struct App {
     blocked_ips: std::sync::RwLock<std::collections::HashSet<std::net::IpAddr>>,
     /// The admin state, once it exists: the management API changes what the panel saves.
     pub admin: std::sync::OnceLock<std::sync::Weak<crate::admin::AdminState>>,
+    /// Traffic counted this month (and its cap).
+    pub usage: Arc<crate::limits::Usage>,
+    /// Set when the panel asks for a restart with new choices (see `supervise`).
+    pub restart: tokio::sync::Notify,
 }
 
 impl App {
@@ -48,6 +52,7 @@ impl App {
         cfg: Config,
         relay: Option<Arc<Relay>>,
         turn: Option<(Vec<u8>, Vec<String>)>,
+        usage: Arc<crate::limits::Usage>,
     ) -> Self {
         let cfg_trusted: Vec<std::net::IpAddr> = cfg
             .server
@@ -74,6 +79,8 @@ impl App {
             mgmt_asks: Mutex::new(HashMap::new()),
             blocked_ips: std::sync::RwLock::new(std::collections::HashSet::new()),
             admin: std::sync::OnceLock::new(),
+            usage,
+            restart: tokio::sync::Notify::new(),
         }
     }
 
@@ -515,6 +522,15 @@ async fn socket(
     if app.ip_blocked(addr.ip()) || ip.parse().is_ok_and(|a| app.ip_blocked(a)) {
         return StatusCode::FORBIDDEN.into_response();
     }
+    // At the monthly traffic cap: not now. A long Retry-After keeps clients from retrying in a loop.
+    if app.usage.over_cap() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [("retry-after", crate::limits::RETRY_AFTER_SECS.to_string())],
+            "this server has used its traffic allowance for the month",
+        )
+            .into_response();
+    }
     let biggest = if app.cfg.nostr.enabled {
         app.cfg.nostr.max_message_bytes
     } else {
@@ -555,6 +571,8 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
     // When the last write to this client completed: a client that takes nothing for a long time is cut off.
     let progress = Arc::new(AtomicU64::new(now_ms().unsigned_abs()));
     let writer_progress = progress.clone();
+    let usage_w = app.usage.clone();
+    let mut pace_out = crate::limits::Pace::new(app.cfg.limits.connection_kbps);
     let writer = tokio::spawn(async move {
         let pending = writer_pending;
         let progress = writer_progress;
@@ -563,6 +581,10 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
                 Out::Text(t) => {
                     let n = t.len();
                     let sent = sink.send(Message::Text(t.as_ref().into())).await;
+                    usage_w.web(0, n);
+                    if let Some(p) = pace_out.as_mut() {
+                        p.wait(n).await;
+                    }
                     progress.store(now_ms().unsigned_abs(), Ordering::Relaxed);
                     pending.fetch_sub(n.min(pending.load(Ordering::Relaxed)), Ordering::Relaxed);
                     total.fetch_sub(n.min(total.load(Ordering::Relaxed)), Ordering::Relaxed);
@@ -593,6 +615,7 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
     let mut beat = tokio::time::interval(HEARTBEAT);
     beat.tick().await;
     let soft = relay.out_limit().1;
+    let mut pace_in = crate::limits::Pace::new(app.cfg.limits.connection_kbps);
     let stall_ms = relay.stall_ms();
     let mut reaper = tokio::time::interval(Duration::from_millis((stall_ms / 3).clamp(250, 5000)));
     reaper.tick().await;
@@ -616,6 +639,10 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
                     Message::Close(_) => break,
                     _ => continue,
                 };
+                app.usage.web(text.len(), 0);
+                if let Some(p) = pace_in.as_mut() {
+                    p.wait(text.len()).await;
+                }
                 relay.frame(&conn, &mut session, &ip, &text, now_ms());
             }
             _ = reaper.tick() => {

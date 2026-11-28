@@ -1087,3 +1087,105 @@ async fn the_live_numbers_move_when_things_happen_and_a_backup_marker_is_noticed
     assert_eq!(backups["level"], "good", "{backups}");
     r.stop().await;
 }
+
+#[tokio::test]
+async fn the_protocols_card_lists_what_runs_and_only_an_owner_can_change_it_after_the_same_checks_as_start_up(
+) {
+    let (r, dir, owner) = boot().await;
+    let (code, v) = api(&r, "GET", "/protocols", &owner, None).await;
+    assert_eq!(code, 200);
+    let ids: Vec<&str> = v["protocols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["relay", "nostr", "turn"]);
+    assert_eq!(v["usage"]["over_cap"], false);
+
+    // a viewer can look but not change
+    let (c, made) = api(
+        &r,
+        "POST",
+        "/admins",
+        &owner,
+        Some(json!({ "name": "Vi", "role": "viewer" })),
+    )
+    .await;
+    assert_eq!(c, 200, "{made}");
+    let vt = made["token"].as_str().unwrap();
+    assert_eq!(api(&r, "GET", "/protocols", vt, None).await.0, 200);
+    assert_eq!(
+        api(&r, "PUT", "/protocols", vt, Some(json!({ "turn": "stun" })))
+            .await
+            .0,
+        403
+    );
+
+    // refused: nonsense, and turning everything off
+    assert_eq!(
+        api(
+            &r,
+            "PUT",
+            "/protocols",
+            &owner,
+            Some(json!({ "turn": "all" }))
+        )
+        .await
+        .0,
+        400
+    );
+    assert_eq!(
+        api(
+            &r,
+            "PUT",
+            "/protocols",
+            &owner,
+            Some(json!({ "relay": false, "nostr": false, "turn": "off" }))
+        )
+        .await
+        .0,
+        400
+    );
+    assert!(
+        !dir.path().join("panel.json").exists(),
+        "a refused change is not saved"
+    );
+
+    // accepted: saved, and the server will restart with it
+    let (code, v) = api(
+        &r,
+        "PUT",
+        "/protocols",
+        &owner,
+        Some(json!({ "turn": "stun", "monthly_traffic_gb": 100 })),
+    )
+    .await;
+    assert_eq!(code, 202, "{v}");
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("panel.json")).unwrap())
+            .unwrap();
+    assert_eq!(saved["turn"], "stun");
+    assert_eq!(saved["monthly_traffic_gb"], 100);
+    // and a later change keeps what was chosen before
+    assert_eq!(
+        api(
+            &r,
+            "PUT",
+            "/protocols",
+            &owner,
+            Some(json!({ "nostr": false }))
+        )
+        .await
+        .0,
+        202
+    );
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("panel.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        (saved["turn"].as_str(), saved["nostr"].as_bool()),
+        (Some("stun"), Some(false))
+    );
+    r.stop().await;
+}

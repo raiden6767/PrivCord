@@ -119,7 +119,7 @@ pub fn disk(path: &Path) -> Option<(u64, u64)> {
 }
 
 /// The size of everything in the data folder (it is flat, with a few small folders).
-fn data_bytes(dir: &Path) -> u64 {
+pub fn data_bytes(dir: &Path) -> u64 {
     fn walk(dir: &Path, depth: u8) -> u64 {
         let Ok(rd) = std::fs::read_dir(dir) else {
             return 0;
@@ -318,7 +318,14 @@ pub fn checks(app: &App, data_dir: &Path, self_signed: bool) -> Vec<Check> {
     }
 
     // Calls.
-    if c.turn.enabled {
+    if c.turn.enabled && c.turn.stun_only {
+        out.push(check(
+            Level::Good,
+            "Address lookup",
+            "The server answers STUN only (it tells a phone which address it is seen at, and relays nothing), so it uses almost no bandwidth.",
+            "",
+        ));
+    } else if c.turn.enabled {
         if c.turn.tcp_listen.is_empty() && c.turn.tls_listen.is_empty() {
             out.push(check(Level::Watch, "Calls and files", "The call server accepts UDP only, so phones on networks that block UDP cannot use it.", "Set turn.tcp_listen and turn.tls_listen."));
         } else {
@@ -329,6 +336,62 @@ pub fn checks(app: &App, data_dir: &Path, self_signed: bool) -> Vec<Check> {
                 "",
             ));
         }
+    }
+
+    // Traffic and disk budgets, when the operator set them.
+    let (used, cap) = (app.usage.total(), app.usage.cap());
+    if cap > 0 {
+        let (level, found, todo) = if used >= cap {
+            (Level::Fix, format!("The traffic allowance for this month ({}) is used up: new connections are being refused until next month.", gb(cap)), "Raise the monthly traffic limit under Settings, or wait for the month to change.")
+        } else if used * 10 >= cap * 8 {
+            (
+                Level::Watch,
+                format!(
+                    "{} of the {} monthly traffic allowance is used.",
+                    gb(used),
+                    gb(cap)
+                ),
+                "Raise the limit if you want people to keep connecting until the month ends.",
+            )
+        } else {
+            (
+                Level::Good,
+                format!(
+                    "{} of the {} monthly traffic allowance is used.",
+                    gb(used),
+                    gb(cap)
+                ),
+                "",
+            )
+        };
+        out.push(check(level, "Traffic this month", found, todo));
+    }
+    let quota = c.limits.disk_quota_mb.saturating_mul(1024 * 1024);
+    if quota > 0 {
+        let held = data_bytes(data_dir);
+        let (level, found, todo) = if held >= quota {
+            (
+                Level::Fix,
+                format!(
+                    "The disk budget ({}) is full: new messages and events are being refused.",
+                    gb(quota)
+                ),
+                "Raise the disk limit, or clear old stored messages under Settings.",
+            )
+        } else if held * 10 >= quota * 8 {
+            (
+                Level::Watch,
+                format!("{} of the {} disk budget is used.", gb(held), gb(quota)),
+                "Raise the disk limit or clear old data before it fills.",
+            )
+        } else {
+            (
+                Level::Good,
+                format!("{} of the {} disk budget is used.", gb(held), gb(quota)),
+                "",
+            )
+        };
+        out.push(check(level, "Disk budget", found, todo));
     }
 
     // Backups.
@@ -501,5 +564,6 @@ pub fn live(app: &App, data_dir: &Path) -> Value {
         "data_bytes": data_bytes(data_dir),
         "relay": relay,
         "nostr": nostr,
+        "usage": app.usage.snapshot(),
     })
 }

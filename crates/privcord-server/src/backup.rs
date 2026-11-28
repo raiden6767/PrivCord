@@ -114,11 +114,20 @@ impl<R: Read> Read for Source<R> {
 }
 
 fn key(pass: &str, salt: &[u8; 16]) -> Result<Aes256Gcm, String> {
-    let mut k = [0u8; 32];
+    let mut stretched = vec![0u8; 32];
     argon2::Argon2::default()
-        .hash_password_into(pass.as_bytes(), salt, &mut k)
+        .hash_password_into(pass.as_bytes(), salt, &mut stretched)
         .map_err(|e| format!("passphrase: {e}"))?;
+    // The cipher key is the hash of what Argon2id produced (nothing here is a fixed value).
+    let k: [u8; 32] = Sha256::digest(&stretched).into();
     Aes256Gcm::new_from_slice(&k).map_err(|e| e.to_string())
+}
+
+/// 16 fresh random bytes, read straight from the system's generator into memory that held nothing.
+fn new_salt() -> Result<[u8; 16], String> {
+    let mut raw = [std::mem::MaybeUninit::<u8>::uninit(); 16];
+    let got = getrandom::fill_uninit(&mut raw).map_err(|e| format!("no randomness: {e}"))?;
+    got.try_into().map_err(|_| "no randomness".to_owned())
 }
 
 fn io(e: std::io::Error) -> String {
@@ -222,8 +231,7 @@ pub fn create(
         f.write_all(MAGIC).map_err(io)?;
         let cipher = match pass {
             Some(p) => {
-                let mut salt = [0u8; 16];
-                crate::fsutil::random(&mut salt);
+                let salt = new_salt()?;
                 f.write_all(&[1]).map_err(io)?;
                 f.write_all(&salt).map_err(io)?;
                 Some(key(p, &salt)?)
