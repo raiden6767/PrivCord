@@ -1189,3 +1189,56 @@ async fn the_protocols_card_lists_what_runs_and_only_an_owner_can_change_it_afte
     );
     r.stop().await;
 }
+
+#[tokio::test]
+async fn deleting_an_access_token_cuts_off_the_sockets_it_opened() {
+    use futures_util::{SinkExt, StreamExt};
+    let (r, _d, token) = boot().await;
+    let mut make = |name: &str| {
+        let body = json!({ "name": name });
+        let (r, token) = (&r, token.clone());
+        async move {
+            let (c, v) = api(r, "POST", "/access-tokens", &token, Some(body)).await;
+            assert_eq!(c, 200);
+            (
+                v["token"].as_str().unwrap().to_owned(),
+                v["id"].as_str().unwrap().to_owned(),
+            )
+        }
+    };
+    let (alice, alice_id) = make("Alice").await;
+    let (bob, _) = make("Bob").await;
+    let (mut a, _) = connect_async(format!("ws://{}/?token={alice}", r.addr))
+        .await
+        .unwrap();
+    let (mut b, _) = connect_async(format!("ws://{}/?token={bob}", r.addr))
+        .await
+        .unwrap();
+    assert_eq!(
+        api(
+            &r,
+            "DELETE",
+            &format!("/access-tokens/{alice_id}"),
+            &token,
+            None
+        )
+        .await
+        .0,
+        200
+    );
+    // Alice's open socket is closed on her next message; Bob's keeps working.
+    a.send(Message::text(r#"["sub","m1",0]"#)).await.unwrap();
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            match a.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return true,
+                Some(Ok(_)) => {}
+            }
+        }
+    })
+    .await;
+    assert_eq!(ended, Ok(true), "the deleted token's socket was not closed");
+    b.send(Message::text(r#"["sub","m2",0]"#)).await.unwrap();
+    assert!(b.send(Message::text(r#"["sub","m3",0]"#)).await.is_ok());
+    r.stop().await;
+}

@@ -24,6 +24,14 @@ use std::time::Duration;
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 
+/// What a connection presented when it was let in, kept to check again later (see `App::still_welcome`).
+struct Who {
+    headers: HeaderMap,
+    query: HashMap<String, String>,
+    peer: std::net::IpAddr,
+    ip: String,
+}
+
 pub struct App {
     pub cfg: Config,
     pub relay: Option<Arc<Relay>>,
@@ -116,6 +124,13 @@ impl App {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_empty()
+    }
+
+    /// Whether a connection that was let in is still welcome: its token is still accepted (a token deleted in the panel
+    /// must lock out the sockets it opened, not only new ones) and its address has not been blocked since.
+    fn still_welcome(&self, who: &Who) -> bool {
+        self.allowed(&who.headers, &who.query)
+            && !(self.ip_blocked(who.peer) || who.ip.parse().is_ok_and(|a| self.ip_blocked(a)))
     }
 
     fn allowed(&self, headers: &HeaderMap, query: &HashMap<String, String>) -> bool {
@@ -540,10 +555,18 @@ async fn socket(
         .read_buffer_size(4 * 1024)
         .max_write_buffer_size(256 * 1024)
         .max_frame_size(biggest)
-        .on_upgrade(move |socket| serve(socket, app, ip))
+        .on_upgrade(move |socket| {
+            let who = Who {
+                headers,
+                query: q,
+                peer: addr.ip(),
+                ip: ip.clone(),
+            };
+            serve(socket, app, ip, who)
+        })
 }
 
-async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
+async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String, who: Who) {
     let Some(relay) = app.relay.clone() else {
         return;
     };
@@ -639,6 +662,10 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
                     Message::Close(_) => break,
                     _ => continue,
                 };
+                if !app.still_welcome(&who) {
+                    let _ = tx.send(Out::Close(1008, "no longer allowed"));
+                    break;
+                }
                 app.usage.web(text.len(), 0);
                 if let Some(p) = pace_in.as_mut() {
                     p.wait(text.len()).await;
@@ -655,7 +682,7 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
             }
             _ = beat.tick() => {
                 // Nothing heard since the last beat (not even a pong): the other end is gone.
-                if !alive { break }
+                if !alive || !app.still_welcome(&who) { break }
                 alive = false;
                 let _ = tx.send(Out::Ping);
             }
