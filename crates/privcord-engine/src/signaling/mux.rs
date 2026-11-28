@@ -165,6 +165,15 @@ impl SignalingMux {
         self
     }
 
+    /// For a platform whose WebSocket library already pings and closes a socket that stops answering (OkHttp does): the
+    /// mux then neither pings nor decides a quiet link is dead, and just reacts to the socket being closed.
+    #[must_use]
+    pub fn with_transport_liveness(mut self) -> Self {
+        self.ping_every_ms = i64::MAX / 4;
+        self.dead_after_ms = i64::MAX / 4;
+        self
+    }
+
     pub fn enabled(&self) -> bool {
         !self.links.is_empty()
     }

@@ -8,13 +8,13 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 
 | Status | Files | Lines |
 |---|---:|---:|
-| Ported, tested | 67 | 10151 |
+| Ported, tested | 64 | 9697 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
 | Stays (UI) | 102 | 18800 |
-| Stays (platform adapter) | 81 | 14534 |
-| Replaced by a library | 4 | 333 |
-| **All mapped files** | **255** | **46130** |
+| Stays (platform adapter) | 82 | 14779 |
+| Replaced by a library | 3 | 208 |
+| **All mapped files** | **252** | **45796** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -244,7 +244,8 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/p2p/WebRtcTransport.kt` | 418 | `WebRtcTransport`, `PeerConnectionFactoryHolder` | ICE servers, WebRTC data channel | WebRTC adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/AndroidLan.kt` | 154 | `AndroidLan` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/KeystoreSecureStore.kt` | 124 | `KeystoreSecureStore` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/rustcore/RustChatEngine.kt` | 1617 | `RustChatEngine` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/rustcore/RelaySockets.kt` | 273 | `RelaySockets` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/rustcore/RustChatEngine.kt` | 1589 | `RustChatEngine` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/RustEngineProbe.kt` | 62 | `RustEngineProbe` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/AndroidIdentity.kt` | 252 | `PublicJwk`, `DeviceIdentity`, `PinnedPeer`, `AndroidIdentityManager` | Keystore identity storage, at-rest encryption, biometric lock | SecureStore adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/AppLock.kt` | 51 | `AppLock` | Keystore identity storage, at-rest encryption, biometric lock | SecureStore adapter | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -260,11 +261,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/security/Seal.kt` | 150 | `SealedBlob`, `Seal` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/SecureChannel.kt` | 136 | `SecureChannel` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/SignatureCodec.kt` | 81 | `SignatureCodec` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/signaling/Nostr.kt` | 79 | `NostrEvent`, `NostrCodec` | Nostr, relay client, signaling hub | engine::signaling (state machines) + crypto::nostr; a socket adapter remains | Engine/Adapter | Ported, tested | M8: replace with the socket adapter that feeds SignalingHub | same tests as the desktop clients |
-| `apps/android/app/src/main/java/com/duochat/app/signaling/NostrTransport.kt` | 110 | `NostrTransport` | Nostr, relay client, signaling hub | engine::signaling (state machines) + crypto::nostr; a socket adapter remains | Engine/Adapter | Ported, tested | M8: replace with the socket adapter that feeds SignalingHub | same tests as the desktop clients |
-| `apps/android/app/src/main/java/com/duochat/app/signaling/RelayClient.kt` | 96 | `RelayClient` | Nostr, relay client, signaling hub | engine::signaling (state machines) + crypto::nostr; a socket adapter remains | Engine/Adapter | Ported, tested | M8: replace with the socket adapter that feeds SignalingHub | same tests as the desktop clients |
-| `apps/android/app/src/main/java/com/duochat/app/signaling/Schnorr.kt` | 125 | `Schnorr` | Hand-written BIP-340 Schnorr | k256 crate (crypto::nostr) | Crypto | Replaced by a library | Delete with the Kotlin app's signaling | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/signaling/Signaling.kt` | 202 | `SignalingStatus`, `SignalingTransport`, `reconnectDelayMs`, `socketBackoff`, `ManagedSocket`, `newSignalingClient` +3 | Nostr, relay client, signaling hub | engine::signaling (state machines) + crypto::nostr; a socket adapter remains | Engine/Adapter | Ported, tested | M8: replace with the socket adapter that feeds SignalingHub | same tests as the desktop clients |
+| `apps/android/app/src/main/java/com/duochat/app/signaling/Signaling.kt` | 33 | `SignalingStatus`, `newSignalingClient`, `torIsRunning` | Nostr, relay client, signaling hub | engine::signaling (state machines) + crypto::nostr; a socket adapter remains | Engine/Adapter | Ported, tested | M8: replace with the socket adapter that feeds SignalingHub | same tests as the desktop clients |
 | `apps/android/app/src/main/java/com/duochat/app/ui/AboutTools.kt` | 130 | `AboutTools`, `WhatsNewCard` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/AddFriendScreen.kt` | 385 | `AddFriendScreen`, `SafetyNumberBox` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/AppViewModel.kt` | 480 | `AppViewModel` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |

@@ -43,9 +43,7 @@ import com.duochat.app.engine.IncomingNotice
 import com.duochat.app.p2p.WebRtcTransport
 import com.duochat.app.p2p.iceServers
 import com.duochat.app.security.Seal
-import com.duochat.app.signaling.SignalingHub
 import com.duochat.app.signaling.SignalingStatus
-import com.duochat.app.signaling.transportsFor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
@@ -299,17 +297,23 @@ class RustChatEngine(
     private var meshRadio: MeshRadio? = null
     private val links = ConcurrentHashMap<String, WebRtcTransport>()
     private val dialStartedAt = ConcurrentHashMap<String, Long>()
-    /** One signaling hub per mailbox: our own, plus any the engine asks for (invites, channels). */
-    private val hubs = ConcurrentHashMap<String, SignalingHub>()
+    /**
+     * The relay connections: one per relay for every mailbox (our own, plus any the engine asks for: invites, channels).
+     * All the logic is the Rust `SignalingClient`; this only runs the WebSockets (see [RelaySockets]).
+     */
+    private val sockets = RelaySockets(
+        scope = scope,
+        network = { networkConfig() },
+        deliver = { mailbox, blob ->
+            scope.launch {
+                withContext(Dispatchers.IO) { runCatching { engine?.signalBlob(mailbox, blob) } }
+                requestRefresh()
+            }
+        },
+        changed = { requestRefresh() },
+    )
 
-    private fun hubStatus(): SignalingStatus {
-        val all = hubs.values.map { it.status() }
-        return when {
-            all.any { it == SignalingStatus.ONLINE } -> SignalingStatus.ONLINE
-            all.isEmpty() -> SignalingStatus.IDLE
-            else -> all.first()
-        }
-    }
+    private fun hubStatus(): SignalingStatus = sockets.status()
 
     /** The account's other devices on the local network (step 7). */
     @Volatile private var lan: AndroidLan? = null
@@ -332,46 +336,15 @@ class RustChatEngine(
 
         override fun signalAvailable(): Boolean = networkConfig().signaling.isNotEmpty()
 
-        override fun signalSubscribe(mailbox: String): Boolean {
-            if (networkConfig().signaling.isEmpty()) return false
-            hubs.remove(mailbox)?.stop()
-            val created = SignalingHub(transportsFor(networkConfig(), scope))
-            hubs[mailbox] = created
-            created.start(mailbox) { blob, id, via ->
-                scope.launch {
-                    withContext(Dispatchers.IO) { runCatching { engine?.signalBlob(mailbox, Seal.encode(blob)) } }
-                    runCatching { created.remove(via, mailbox, id) }
-                    requestRefresh()
-                }
-            }
-            return true
-        }
+        override fun signalSubscribe(mailbox: String): Boolean = sockets.subscribe(mailbox)
 
         override fun signalUnsubscribe(mailbox: String) {
-            hubs.remove(mailbox)?.stop()
+            sockets.unsubscribe(mailbox)
         }
 
-        override fun signalPut(mailbox: String, blob: String, kind: SignalKind, ttlSec: UInt): Boolean {
+        override fun signalPut(mailbox: String, blob: String, kind: SignalKind, ttlSec: UInt): Boolean =
             // No relay configured, or every socket failed: say so, and the engine hands the blob to mutual friends instead.
-            if (hubs.isEmpty() || hubs.values.all { it.status() == SignalingStatus.ERROR }) return false
-            val decoded = Seal.decode(blob) ?: return false
-            val wire = if (kind == SignalKind.LIVE) "sig" else "msg"
-            // Right after start (or a network change) the sockets are still opening and a put would be refused. Keep the blob
-            // and send it as soon as a relay is online, for up to LIVE_PUT_WAIT_MS; the engine republishes what matters.
-            scope.launch {
-                val deadline = System.currentTimeMillis() + PUT_WAIT_MS
-                while (System.currentTimeMillis() < deadline && !stopped) {
-                    val online = hubs.values.firstOrNull { it.status() == SignalingStatus.ONLINE }
-                    if (online != null && runCatching { online.put(mailbox, decoded, wire, ttlSec.toInt()) }.isSuccess) {
-                        android.util.Log.i("RustEngine", "put $wire ok")
-                        break
-                    }
-                    delay(PUT_RETRY_MS)
-                }
-                requestRefresh()
-            }
-            return true
-        }
+            sockets.put(mailbox, blob, kind == SignalKind.LIVE, ttlSec.toInt())
     }
 
     private val notifier = object : NotifierCallbacks {
@@ -463,8 +436,7 @@ class RustChatEngine(
         bleLinks.clear()
         runCatching { meshRadio?.stop() }
         meshRadio = null
-        for (h in hubs.values) runCatching { h.stop() }
-        hubs.clear()
+        sockets.stop()
         val e = engine
         engine = null
         closer = Thread {
@@ -486,7 +458,7 @@ class RustChatEngine(
                     if (torRunning != was) {
                         was = torRunning
                         // Orbot just started: open the sockets now instead of waiting for their retry.
-                        if (torRunning) for (mailbox in hubs.keys.toList()) transport.signalSubscribe(mailbox)
+                        if (torRunning) sockets.reconfigure()
                         requestRefresh()
                     }
                 } else {
@@ -1208,8 +1180,8 @@ class RustChatEngine(
                 if (!found) {
                     return Result.failure(
                         IllegalStateException(
-                            if (hubStatus() == SignalingStatus.ONLINE) "Could not find that invite. Check the words, make sure your friend still has the invite screen open, then try again. (${hubs.values.map { it.describe() }.distinct().joinToString(" | ")})"
-                            else "Could not reach the connection service to look up those words. Check your internet, then try again. (${hubs.values.map { it.describe() }.distinct().joinToString(" | ")})",
+                            if (hubStatus() == SignalingStatus.ONLINE) "Could not find that invite. Check the words, make sure your friend still has the invite screen open, then try again. (${sockets.describe()})"
+                            else "Could not reach the connection service to look up those words. Check your internet, then try again. (${sockets.describe()})",
                         ),
                     )
                 }
@@ -1439,7 +1411,7 @@ class RustChatEngine(
             for ((peer, link) in links.entries.toList()) if (links.remove(peer, link)) link.close()
             dialStartedAt.clear()
         }
-        for (mailbox in hubs.keys.toList()) transport.signalSubscribe(mailbox)
+        sockets.reconfigure()
     }
 
     /**
@@ -1449,7 +1421,7 @@ class RustChatEngine(
      * within seconds if their network really went away).
      */
     override fun onNetworkAvailable() {
-        for (mailbox in hubs.keys.toList()) transport.signalSubscribe(mailbox)
+        sockets.networkChanged()
         for ((peer, link) in links.entries.toList()) {
             if (!link.isOpen && links.remove(peer, link)) {
                 link.close()
