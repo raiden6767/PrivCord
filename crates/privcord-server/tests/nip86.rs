@@ -460,3 +460,39 @@ async fn the_relays_name_changes_and_an_address_can_be_blocked_and_unblocked() {
         .contains("not supported"));
     g.r.stop().await;
 }
+
+#[tokio::test]
+async fn a_signed_request_captured_on_the_way_cannot_be_played_again() {
+    let rig = rig().await;
+    let body = json!({ "method": "supportedmethods", "params": [] }).to_string();
+    let url = format!("http://{}/", rig.r.addr);
+    let signed = auth(&rig.admin, &url, &body, now());
+    let go = || {
+        post(
+            rig.r.addr,
+            &body,
+            "application/nostr+json+rpc",
+            Some(&signed),
+        )
+    };
+    assert_eq!(go().await.0, 200, "the first use is accepted");
+    let (status, v) = go().await;
+    assert_eq!(
+        status, 401,
+        "the same signed request again is a replay: {v}"
+    );
+    assert!(v.to_string().contains("already used"), "{v}");
+    // a freshly signed one (a later second) is fine
+    let later = auth(&rig.admin, &url, &body, now() + 1);
+    assert_eq!(
+        post(
+            rig.r.addr,
+            &body,
+            "application/nostr+json+rpc",
+            Some(&later)
+        )
+        .await
+        .0,
+        200
+    );
+}

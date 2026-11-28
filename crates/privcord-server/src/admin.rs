@@ -793,7 +793,15 @@ fn guard(
     addr: SocketAddr,
     need: Need,
 ) -> Result<Admin, Response> {
-    let admin = a.state.authenticate(headers, addr.ip())?;
+    let admin = a.state.authenticate(
+        headers,
+        crate::net::client_addr(
+            addr,
+            headers,
+            &a.state.app.cfg.server,
+            &a.state.app.trusted_proxies,
+        ),
+    )?;
     let ok = match need {
         Need::Read => true,
         Need::Change => admin.role.can_change(),
@@ -826,10 +834,17 @@ async fn setup_status(State(a): State<AdminApp>) -> Response {
 async fn setup_claim(
     State(a): State<AdminApp>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
     let code = body.get("code").and_then(Value::as_str).unwrap_or("");
-    match a.state.claim(addr.ip(), code) {
+    let who = crate::net::client_addr(
+        addr,
+        &headers,
+        &a.state.app.cfg.server,
+        &a.state.app.trusted_proxies,
+    );
+    match a.state.claim(who, code) {
         Ok(token) => Json(json!({ "token": token })).into_response(),
         Err(r) => r,
     }

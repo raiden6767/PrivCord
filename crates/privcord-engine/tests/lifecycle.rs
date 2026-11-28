@@ -282,7 +282,9 @@ fn six_word_invites_pair_two_people_through_a_signaling_service() {
             _ => None,
         })
         .collect();
-    assert_eq!(reply.len(), 1);
+    // The answer to the words, and (as after a QR code) a request to be added back: if Alice's app was not open for the
+    // answer, the request still reaches her.
+    assert_eq!(reply.len(), 2);
     assert_eq!(
         b.core.snapshot().answer.map(|a| a.status),
         Some(privcord_engine::AnswerStatus::Sent)

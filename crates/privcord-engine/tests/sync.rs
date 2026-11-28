@@ -3311,3 +3311,49 @@ fn leaving_a_channel_leaves_nothing_about_it_behind() {
         "left behind after leaving a channel: {leaks:#?}"
     );
 }
+
+#[test]
+fn a_phone_with_a_linked_laptop_that_uses_a_friends_six_words_gets_through_as_a_request() {
+    // Seen on real phones: the friend (a new install) made six words, the other phone (an account with two devices) used
+    // them and saw the friend's card, but the friend's phone refused the request and showed nothing.
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    phone.core.create_identity().unwrap();
+    let mut fran = Device::new("fran", &clock);
+    fran.core.create_identity().unwrap();
+    let _laptop = link_laptop(&mut phone, &mut relay, &clock);
+    let pat = phone.core.own_uid().unwrap().clone();
+    let fran_uid = fran.core.own_uid().unwrap().clone();
+
+    let (words, _) = fran.core.create_invite().unwrap();
+    for _ in 0..3 {
+        fran.online(&mut relay);
+        phone.online(&mut relay);
+    }
+    // Pat finds the words and sees Fran's card ...
+    phone.core.preview_invite(&words).unwrap();
+    for _ in 0..3 {
+        phone.online(&mut relay);
+    }
+    // ... while Fran has left the app to send the words and closed the invite: nothing listens for the answer.
+    fran.core.stop_invite();
+    phone.core.accept_invite(&words).unwrap();
+    for _ in 0..8 {
+        phone.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    assert!(
+        phone
+            .core
+            .snapshot()
+            .contacts
+            .iter()
+            .any(|c| c.uid == fran_uid),
+        "Pat sees Fran's card"
+    );
+    assert!(
+        fran.core.snapshot().requests.iter().any(|r| r.uid == pat),
+        "Fran sees Pat's request"
+    );
+}

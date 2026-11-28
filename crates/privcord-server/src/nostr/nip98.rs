@@ -11,6 +11,22 @@ const HTTP_AUTH_KIND: u64 = 27_235;
 /// How far the event's time may be from ours, in seconds.
 const WINDOW_SECS: i64 = 60;
 
+/// Remembers the Authorization events already used, until they are too old to be accepted anyway.
+#[derive(Debug, Default)]
+pub struct Seen(std::sync::Mutex<std::collections::HashMap<Id, i64>>);
+
+impl Seen {
+    /// False if this event was used before (the request is a replay). Entries older than the window are dropped.
+    pub fn first_use(&self, id: Id, now: i64) -> bool {
+        let mut m = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        m.retain(|_, at| now - *at <= 2 * WINDOW_SECS);
+        m.insert(id, now).is_none()
+    }
+}
+
 /// The part of a URL that has to match: `host[:port]` (lower case) and the path with its query. The scheme is left out: a proxy
 /// that ends TLS makes the server see `http` where the client signed `https`.
 pub(crate) fn host_and_path(url: &str) -> Option<(String, String)> {
@@ -23,7 +39,8 @@ pub(crate) fn host_and_path(url: &str) -> Option<(String, String)> {
 }
 
 /// Checks the `Authorization` header of a request. `hosts` are the names this server answers to (its `Host` header and, when
-/// set, the host of `nostr.relay_url`); `path` is the request's path and query. Returns who signed it.
+/// set, the host of `nostr.relay_url`); `path` is the request's path and query. Returns who signed it and the event's id (the
+/// caller remembers ids for a minute or two, so one signed request cannot be played again within its window).
 pub fn verify(
     authorization: &str,
     method: &str,
@@ -31,7 +48,7 @@ pub fn verify(
     path: &str,
     body: &[u8],
     now: i64,
-) -> Result<Id, &'static str> {
+) -> Result<(Id, Id), &'static str> {
     let b64 = authorization
         .strip_prefix("Nostr ")
         .ok_or("the Authorization header must be: Nostr <base64 event>")?;
@@ -69,7 +86,7 @@ pub fn verify(
             return Err("the Authorization event's payload tag does not match the body");
         }
     }
-    Ok(e.pubkey)
+    Ok((e.pubkey, e.id))
 }
 
 #[cfg(test)]
@@ -84,6 +101,16 @@ mod tests {
         );
         assert_eq!(host_and_path("http://x"), Some(("x".into(), "/".into())));
         assert_eq!(host_and_path("https:///nope"), None);
+    }
+
+    #[test]
+    fn an_authorization_event_can_be_used_once_within_its_window() {
+        let seen = Seen::default();
+        assert!(seen.first_use([1; 32], 1_000));
+        assert!(!seen.first_use([1; 32], 1_030), "played again");
+        assert!(seen.first_use([2; 32], 1_030));
+        // long after the window the entry is gone (the event itself would be refused as too old)
+        assert!(seen.first_use([1; 32], 1_200));
     }
 
     #[test]

@@ -324,18 +324,19 @@ impl Core {
         self.invites.requests.remove(&uid);
         if let Some(rv) = answer_with {
             self.run_answer(uid.clone(), rv);
-        } else {
-            // From their card (a QR code): they do not know us yet. Ask them to add us back, so they only have to accept.
-            let now = self.now();
-            self.invites.hellos.insert(
-                uid.clone(),
-                Hello {
-                    next_at: now,
-                    until: now + HELLO_FOR_MS,
-                },
-            );
-            self.send_hellos();
         }
+        // They do not know us yet. Ask them to add us back, so they only have to accept: from a QR code that is the only
+        // way, and with six words it is the way when they missed the answer (they left the app to send the words, or
+        // closed the invite) - the answer is only heard by an app that is open at that moment.
+        let now = self.now();
+        self.invites.hellos.insert(
+            uid.clone(),
+            Hello {
+                next_at: now,
+                until: now + HELLO_FOR_MS,
+            },
+        );
+        self.send_hellos();
         Ok(uid)
     }
 
