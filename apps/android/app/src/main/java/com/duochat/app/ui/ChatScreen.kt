@@ -943,9 +943,20 @@ private fun FileContent(
     var wanted by remember(message.messageId) { mutableStateOf(!bigMedia) }
     // null = still loading; a failed decode falls back to the file card.
     var imageFailed by remember(message.messageId) { mutableStateOf(false) }
-    val image by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, message.messageId, arrived, wanted) {
+    // Tapping the empty frame (or the "try again" line) loads the photo again.
+    var reload by remember(message.messageId) { mutableStateOf(0) }
+    val image by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, message.messageId, arrived, wanted, reload) {
         if (!isImage || !arrived || !wanted) return@produceState
-        value = withContext(Dispatchers.IO) { loadFile(message.messageId)?.second?.let { decodeUpright(it, 1200) } }
+        imageFailed = false
+        // The message can show up a moment before its bytes are saved, so a missing file is asked for again a few times
+        // before the bubble gives up (it used to stay an empty frame with a spinner for good).
+        var bytes: ByteArray? = null
+        for (attempt in 0 until 6) {
+            bytes = withContext(Dispatchers.IO) { runCatching { loadFile(message.messageId)?.second }.getOrNull() }
+            if (bytes != null) break
+            kotlinx.coroutines.delay(600L * (attempt + 1))
+        }
+        value = bytes?.let { b -> withContext(Dispatchers.IO) { runCatching { decodeUpright(b, 1200) }.getOrNull() } }
         if (value == null) imageFailed = true
     }
     // Video: read from the encrypted database into memory and played from there, with a poster frame, in place when
@@ -982,7 +993,8 @@ private fun FileContent(
                 ) { bitmap ->
                     if (bitmap == null) {
                         Box(
-                            Modifier.size(width = 220.dp, height = 165.dp).clip(mediaShape).background(color.copy(alpha = 0.10f)),
+                            Modifier.size(width = 220.dp, height = 165.dp).clip(mediaShape).background(color.copy(alpha = 0.10f))
+                                .clickable(onClickLabel = "Load the photo again") { reload++ },
                             contentAlignment = Alignment.Center,
                         ) { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = color.copy(alpha = 0.7f)) }
                     } else {
@@ -1041,6 +1053,9 @@ private fun FileContent(
         }
         if (bigMedia && !wanted) {
             androidx.compose.material3.TextButton(onClick = { wanted = true }) { Text("Load preview (${formatBytes(meta.size)})") }
+        }
+        if (isImage && imageFailed && wanted) {
+            androidx.compose.material3.TextButton(onClick = { reload++ }) { Text("Photo could not be shown. Try again") }
         }
         if (progress != null) {
             val percent = (progress * 100).toInt().coerceIn(0, 100)

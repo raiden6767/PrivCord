@@ -380,49 +380,86 @@ fun FriendDetailsDialog(
     onRepair: ((Result<Unit>) -> Unit) -> Unit = {},
 ) {
     var repairNote by remember { mutableStateOf<String?>(null) }
+    var resetting by remember { mutableStateOf(false) }
     var name by remember(friend.uid) { mutableStateOf(friend.name) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmRemove by remember { mutableStateOf(false) }
+    val quiet = MaterialTheme.colorScheme.onSurfaceVariant
+    // After a reset the button rests for a while: tapping it again and again tore down each new try before it could finish.
+    androidx.compose.runtime.LaunchedEffect(resetting) {
+        if (resetting) { kotlinx.coroutines.delay(15_000); resetting = false }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(friend.name) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (friend.trust == ContactTrust.INTRODUCED) {
                     Text(
                         "Introduced by ${friend.introducedByName ?: "a group member"}. Nobody has checked this person yet.",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall, color = quiet,
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(12.dp))
                 }
                 DuoTextField(value = name, onValueChange = { name = it.take(40) }, label = { Text("Name") }, singleLine = true)
-                Spacer(Modifier.height(12.dp))
+
+                Spacer(Modifier.height(20.dp))
+                Text("Safety numbers", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
                 Text(
                     if (friend.checked) "You checked these numbers." else "Check it's really them: their numbers must match yours.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall, color = quiet,
                 )
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 SafetyNumberBox(friend.safetyNumber)
                 if (!friend.checked) {
                     TextButton(onClick = onChecked) { Text("The numbers match") }
                 }
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                // For a friendship that stays stuck: starts the connection with them over, and keeps the chat and the friend.
-                TextButton(onClick = {
-                    onRepair { result ->
-                        repairNote = result.fold(
-                            onSuccess = { "Connection reset. It can take a minute; both phones need the app open." },
-                            onFailure = { it.message ?: "That did not work." },
-                        )
-                    }
-                }) { Text("Reset the connection with ${friend.name}") }
-                repairNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
+                Spacer(Modifier.height(20.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(16.dp))
+                Text("Connection", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "If messages stay on \"delivered\" or ${friend.name} shows as offline while the app is open, start the connection over. " +
+                        "Your chat and the friendship stay. Both phones need PrivCord open.",
+                    style = MaterialTheme.typography.bodySmall, color = quiet,
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    enabled = !resetting,
+                    onClick = {
+                        resetting = true
+                        repairNote = "Resetting…"
+                        onRepair { result ->
+                            repairNote = result.fold(
+                                onSuccess = { "Reset. It can take up to a minute to connect; no need to tap again." },
+                                onFailure = { it.message ?: "That did not work." },
+                            )
+                        }
+                    },
+                ) { Text(if (resetting) "Resetting…" else "Reset the connection") }
+                repairNote?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = quiet)
+                }
+
+                Spacer(Modifier.height(20.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(16.dp))
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp))
+                }
                 if (confirmRemove) {
                     Text("Remove ${friend.name} and delete this chat from the phone?", style = MaterialTheme.typography.bodyMedium)
-                    Row {
-                        TextButton(onClick = {
-                            onRemove { result -> result.onSuccess { onDismiss() }.onFailure { error = it.message; confirmRemove = false } }
-                        }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { onRemove { result -> result.onSuccess { onDismiss() }.onFailure { error = it.message; confirmRemove = false } } },
+                            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        ) { Text("Remove") }
                         TextButton(onClick = { confirmRemove = false }) { Text("Cancel") }
                     }
                 } else {

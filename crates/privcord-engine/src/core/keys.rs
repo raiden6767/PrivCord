@@ -692,15 +692,19 @@ impl Core {
             // signed "keys" or "hello" carries nothing secret, and refusing it would leave the two of them stuck for good.
             // The exchange starts over on this side too: we give them keys again and accept the old protocol until they
             // hold them.
-            if matches!(
-                opened.payload.get("t").and_then(Value::as_str),
-                Some("keys" | "hello")
-            ) {
-                self.keys.confirmed.remove(&from);
-                self.keys.told_gen.remove(&from);
-                self.save_keys();
-            } else {
-                return None;
+            match opened.payload.get("t").and_then(Value::as_str) {
+                Some("keys" | "hello") => {
+                    self.keys.confirmed.remove(&from);
+                    self.keys.told_gen.remove(&from);
+                    self.save_keys();
+                }
+                // Connection setup is let through too. A friend who holds our keys per device (a phone and a laptop of one
+                // account each gave theirs) has none for the account's own address, and speaks to that address in the old
+                // protocol: refusing those left the two phones unable to set up any link again until the connection was
+                // reset by hand. Setup carries no message text; what it does carry (a session description) was already
+                // visible to the relay's operator in the old protocol, and every message stays refused in it.
+                Some("ready" | "offer" | "answer" | "devices") => {}
+                _ => return None,
             }
         }
         Some((opened, from))

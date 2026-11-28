@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 54 | 8378 |
 | Partly ported | 0 | 0 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 106 | 19429 |
-| Stays (platform adapter) | 80 | 14332 |
+| Stays (UI) | 106 | 19493 |
+| Stays (platform adapter) | 80 | 14348 |
 | Replaced by a library | 3 | 208 |
-| **All mapped files** | **243** | **42347** |
+| **All mapped files** | **243** | **42427** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -128,7 +128,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/hosted/linkByScan.test.ts` | 85 | (none) | Linking a new device by scanning: the commands sent and the stages shown | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/prefsExtras.test.ts` | 26 | (none) | Guards how the screens read silent chats, device receipts and mesh hops from the engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/runtime.test.ts` | 308 | (none) | WebRTC and relay adapters for the hosted engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/desktop/src/lib/hosted/runtime.ts` | 612 | `LinkTransport`, `BleLike`, `RelayHub`, `RuntimeOptions`, `HostedRuntime` | WebRTC and relay adapters for the hosted engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/desktop/src/lib/hosted/runtime.ts` | 619 | `LinkTransport`, `BleLike`, `RelayHub`, `RuntimeOptions`, `HostedRuntime` | WebRTC and relay adapters for the hosted engine | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/hosted/shape.test.ts` | 136 | (none) | Shapes the Rust engine's snapshot into the screens' state | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; tested on a real engine snapshot | n/a |
 | `apps/desktop/src/lib/hosted/shape.ts` | 432 | `LinkStateJson`, `PathKindJson`, `DeliveryJson`, `ContactJson`, `MessageJson`, `ConversationJson` +7 | Shapes the Rust engine's snapshot into the screens' state | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; tested on a real engine snapshot | n/a |
 | `apps/desktop/src/lib/hosted/start.ts` | 36 | `startHostedEngine` | The desktop chat engine on the Rust engine: commands, state, identity migration, the on/off switch | Desktop adapter + engine host | Adapter | Stays (platform adapter) | Stays; opt-in until M9 | n/a |
@@ -237,7 +237,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/AndroidLan.kt` | 168 | `AndroidLan`, `readLineMax` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/KeystoreSecureStore.kt` | 124 | `KeystoreSecureStore` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/RelaySockets.kt` | 273 | `RelaySockets` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/rustcore/RustChatEngine.kt` | 1618 | `RustChatEngine` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/rustcore/RustChatEngine.kt` | 1627 | `RustChatEngine` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/RustEngineProbe.kt` | 62 | `RustEngineProbe` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/AndroidIdentity.kt` | 252 | `PublicJwk`, `DeviceIdentity`, `PinnedPeer`, `AndroidIdentityManager` | Keystore identity storage, at-rest encryption, biometric lock | SecureStore adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/AppLock.kt` | 51 | `AppLock` | Keystore identity storage, at-rest encryption, biometric lock | SecureStore adapter | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -258,11 +258,11 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/AppViewModel.kt` | 481 | `AppViewModel` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/BackupSection.kt` | 147 | `BackupSection`, `AutomaticBackups` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/ChannelsDialog.kt` | 90 | `ChannelsDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/ChatScreen.kt` | 1764 | `ChatScreen`, `Banner`, `MessageList`, `DaySeparator`, `MessageBubble`, `FileContent` +15 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/ChatScreen.kt` | 1779 | `ChatScreen`, `Banner`, `MessageList`, `DaySeparator`, `MessageBubble`, `FileContent` +15 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/Clipboard.kt` | 34 | `copySensitive` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/DeviceLink.kt` | 504 | `DevicesSection`, `RemoveDeviceDialog`, `LinkHostDialog`, `LinkJoinContent`, `Digits`, `endText` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/DiagLogSection.kt` | 131 | `DiagLogSection` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/GroupScreens.kt` | 435 | `NewGroupScreen`, `FriendCheckRow`, `GroupDetailsScreen`, `FriendDetailsDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/GroupScreens.kt` | 472 | `NewGroupScreen`, `FriendCheckRow`, `GroupDetailsScreen`, `FriendDetailsDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/HomeScreen.kt` | 559 | `Filter`, `HomeScreen`, `Header`, `Notice`, `OldGroup`, `SearchField` +6 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/KillSwitchDialogs.kt` | 240 | `statusColor`, `StepList`, `NukeDialog` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/LockScreen.kt` | 83 | `LockScreen` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
@@ -273,7 +273,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ui/Onboarding.kt` | 365 | `Step`, `OnboardingScreen`, `ShowPhrase`, `ConfirmPhrase`, `RestorePhrase`, `Fact` +1 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/PrivacyCards.kt` | 232 | `PrivacyCheckupCard`, `NetworkHostsCard`, `formatSize`, `StorageByChatCard`, `SealedChip`, `DevicesStrip` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrDecode.kt` | 48 | `QrDecode` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/ui/QrScanner.kt` | 376 | `rememberQrScanner`, `QrScannerScreen`, `ScanFrame`, `analyze`, `decodeCaptured`, `decodeImage` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/ui/QrScanner.kt` | 388 | `rememberQrScanner`, `QrScannerScreen`, `ScanFrame`, `analyze`, `decodeCaptured`, `decodeImage` +2 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/QrUtils.kt` | 70 | `qrBitmap`, `qrSide`, `BrightScreenWhileShown` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/SettingsDialog.kt` | 1295 | `SettingsDialog`, `signalingWords`, `SectionTitle`, `DetailRow`, `ToggleRow`, `ChoiceChip` +4 | Compose screens | UI | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ui/StatusScreens.kt` | 125 | `LoadingScreen`, `FatalScreen` | Compose screens | UI | UI | Stays (UI) | Stays | n/a |

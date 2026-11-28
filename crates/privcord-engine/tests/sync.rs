@@ -3434,3 +3434,103 @@ fn one_side_removing_a_friend_and_adding_them_again_while_the_other_never_remove
         "Ann got Ben's message"
     );
 }
+
+#[test]
+fn a_friend_reaches_an_account_with_two_devices_again_after_a_link_dropped() {
+    // Seen on real phones: the friend's phone could not set up a new link after the first one dropped, until the connection
+    // was reset by hand: its "ready" and offer went to the account's address, sealed to a key the phone could not open.
+    use privcord_domain::state::ConnectionPath;
+    use privcord_engine::{EngineEvent, LinkSecurity, SignalMessage};
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    phone.core.create_identity().unwrap();
+    let mut fran = Device::new("fran", &clock);
+    fran.core.create_identity().unwrap();
+    let (fran_uid, pat) = (
+        fran.core.own_uid().unwrap().clone(),
+        phone.core.own_uid().unwrap().clone(),
+    );
+    phone.core.set_store_forward(true).unwrap();
+    fran.core.set_store_forward(true).unwrap();
+    phone
+        .core
+        .accept_invite(&fran.core.own_card(Some("Fran")).unwrap())
+        .unwrap();
+    for _ in 0..4 {
+        phone.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    fran.core.accept_request(&pat).unwrap();
+    let mut laptop = link_laptop(&mut phone, &mut relay, &clock);
+    laptop.core.set_store_forward(true).unwrap();
+    for _ in 0..6 {
+        phone.online(&mut relay);
+        laptop.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    let phone_addr =
+        UserId::new(format!("{pat}.{}", phone.core.this_device_id().unwrap())).unwrap();
+    // The first link, phone to Fran: the keys change hands over it. Then it drops.
+    phone.transport.set_connected(&fran_uid, true);
+    fran.transport.set_connected(&phone_addr, true);
+    phone
+        .core
+        .link_up_with(
+            &fran_uid,
+            ConnectionPath::DirectLan,
+            LinkSecurity::EngineEncrypted,
+        )
+        .unwrap();
+    fran.core
+        .link_up_with(
+            &phone_addr,
+            ConnectionPath::DirectLan,
+            LinkSecurity::EngineEncrypted,
+        )
+        .unwrap();
+    pump_link(&mut phone, &phone_addr, &mut fran, &fran_uid);
+    phone.core.link_down(&fran_uid);
+    fran.core.link_down(&phone_addr);
+    phone.transport.set_connected(&fran_uid, false);
+    fran.transport.set_connected(&phone_addr, false);
+    for _ in 0..4 {
+        phone.online(&mut relay);
+        laptop.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    let mut phone_events = phone.core.subscribe();
+    let mut fran_events = fran.core.subscribe();
+    let got = |ev: &mut privcord_engine::EventStream, want: &str| -> bool {
+        let mut seen = false;
+        while let Ok((_, e)) = ev.try_recv() {
+            if let EngineEvent::SignalReceived { message, .. } = e {
+                seen |= format!("{message:?}").starts_with(want);
+            }
+        }
+        seen
+    };
+    // Fran says she is ready, to each address she might dial (the account and the phone's own).
+    for (addr, what) in [(&pat, "the account"), (&phone_addr, "the phone")] {
+        let _ = fran.core.send_signal(addr, &SignalMessage::Ready);
+        for _ in 0..3 {
+            fran.online(&mut relay);
+            phone.online(&mut relay);
+            laptop.online(&mut relay);
+        }
+        assert!(
+            got(&mut phone_events, "Ready"),
+            "the phone hears Fran's ready sent to {what}"
+        );
+    }
+    // And the phone to Fran.
+    let _ = phone.core.send_signal(&fran_uid, &SignalMessage::Ready);
+    for _ in 0..3 {
+        phone.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    assert!(
+        got(&mut fran_events, "Ready"),
+        "Fran hears the phone's ready"
+    );
+}

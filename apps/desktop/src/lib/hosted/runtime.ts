@@ -405,15 +405,22 @@ export class HostedRuntime {
     // Private mode: a WebRTC connection would go around Tor and show our address, so there are none.
     if (this.o.network().torMode) throw new Error('Direct connections are off in private mode (Tor).');
     this.closeLink(peer, false);
+    // The old link reports its closing a moment after the new one is in place; that must not take the new one down.
+    let mine: LinkTransport | undefined;
     const handlers: PeerTransportHandlers = {
       onOpen: () => void this.opened(peer),
-      onClose: () => this.closeLink(peer, true),
+      onClose: () => {
+        const current = this.links.get(peer);
+        if (current && mine && current.transport !== mine) return;
+        this.closeLink(peer, true);
+      },
       onFrame: (data) => void this.o.engine.frameReceived(peer, data).catch(() => undefined),
       onStateChange: () => this.o.changed(),
       onError: () => undefined,
     };
     const rtc = this.o.rtcConfig();
     const transport = this.o.createTransport ? this.o.createTransport(rtc, handlers) : new PeerTransport(rtc, handlers);
+    mine = transport;
     const link: Link = { transport, startedAt: this.now(), outbound: [], writing: false, closing: false, manual: false };
     this.links.set(peer, link);
     return link;

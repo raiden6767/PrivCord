@@ -45,6 +45,8 @@ const HELLO_SLOWER_EVERY_MS: i64 = 60 * 60_000;
 /// on the other side of the world gets it whenever they next open the app).
 const HELLO_KEPT_TTL_SEC: u32 = 7 * 24 * 3600;
 const HELLO_KEPT_EVERY_MS: i64 = 12 * 3600 * 1000;
+/// A reset by hand is not repeated within this long (it takes a few seconds to bring a link up).
+const REPAIR_MIN_GAP_MS: i64 = 15_000;
 /// ...for at most this long (they may be away for days; on their side it waits as a request).
 const HELLO_FOR_MS: i64 = 30 * 24 * 3600 * 1000;
 /// Requests kept at once: someone who saw our QR code cannot fill the screen with them.
@@ -102,6 +104,9 @@ pub(super) struct InviteState {
     answer: Option<Answer>,
     pub(super) requests: BTreeMap<UserId, Request>,
     hellos: BTreeMap<UserId, Hello>,
+    /// When each friend's connection was last reset by hand: tapping again within a few seconds does nothing (each reset
+    /// tears down the try the last one started).
+    repaired_at: BTreeMap<UserId, i64>,
     seen: SeenSet,
     /// `requests` and `hellos` are kept across restarts (see `persist_pending`).
     pending_loaded: bool,
@@ -918,6 +923,21 @@ impl Core {
         if !self.contacts.contains_key(uid) {
             return Err(ErrorCode::UnknownContact);
         }
+        let now = self.now();
+        if self
+            .invites
+            .repaired_at
+            .get(uid)
+            .is_some_and(|at| now - at < REPAIR_MIN_GAP_MS)
+        {
+            self.diag(
+                "link",
+                "reset ignored: one is already under way",
+                uid.as_str(),
+            );
+            return Ok(());
+        }
+        self.invites.repaired_at.insert(uid.clone(), now);
         let addrs: Vec<UserId> = self
             .peers
             .keys()
