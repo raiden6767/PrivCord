@@ -104,7 +104,7 @@ impl RelayClient {
         use relay::Incoming;
         let mut out = Out::default();
         match relay::parse_incoming(text) {
-            Some(Incoming::Event { id, blob, ts }) => {
+            Some(Incoming::Event { id, blob, ts, .. }) => {
                 if let Some(ts) = ts {
                     self.last_seen = self.last_seen.max(ts);
                 }

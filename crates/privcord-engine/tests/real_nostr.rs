@@ -126,6 +126,7 @@ impl Driver {
                             .send(Message::text(text))
                             .unwrap();
                     }
+                    Action::Ping { .. } => {}
                     Action::Close { url } => {
                         if let Some(mut s) = self.sockets.remove(&url) {
                             let _ = s.close(None);

@@ -243,7 +243,10 @@ impl Action {
     /// The socket this action is about.
     pub fn url(&self) -> &str {
         match self {
-            Self::Connect { url } | Self::Send { url, .. } | Self::Close { url } => url,
+            Self::Connect { url }
+            | Self::Send { url, .. }
+            | Self::Close { url }
+            | Self::Ping { url } => url,
         }
     }
 }

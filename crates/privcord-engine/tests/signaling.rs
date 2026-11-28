@@ -201,6 +201,7 @@ impl World {
                             }
                         }
                     }
+                    Action::Ping { .. } => {}
                     Action::Close { url } => {
                         if url.starts_with("ws://relay") {
                             self.relay.disconnect(&who);
