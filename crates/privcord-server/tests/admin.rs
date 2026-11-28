@@ -1194,7 +1194,7 @@ async fn the_protocols_card_lists_what_runs_and_only_an_owner_can_change_it_afte
 async fn deleting_an_access_token_cuts_off_the_sockets_it_opened() {
     use futures_util::{SinkExt, StreamExt};
     let (r, _d, token) = boot().await;
-    let mut make = |name: &str| {
+    let make = |name: &str| {
         let body = json!({ "name": name });
         let (r, token) = (&r, token.clone());
         async move {
