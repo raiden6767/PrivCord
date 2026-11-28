@@ -1280,6 +1280,8 @@ class RustChatEngine(
         return call { removeContact(uid) }
     }
 
+    override suspend fun repairFriend(uid: String): Result<Unit> = call { repairContact(uid) }.also { requestRefresh() }
+
     override fun setGroupOnly(value: Boolean) {
         groupOnly = value
         scope.launch { call { setGroupOnly(value) } }

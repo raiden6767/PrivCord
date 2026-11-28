@@ -686,9 +686,22 @@ impl Core {
         let identity = self.key_for_address(&own)?;
         let opened = privcord_crypto::seal::open(blob, &own, identity, keys)?;
         let from = Self::sender_address(person, &opened.signer)?;
-        // Once that address has shown it holds our keys, the old protocol is refused.
+        // Once that address has shown it holds our keys, the old protocol is refused ...
         if self.keys.confirmed.contains(&from) {
-            return None;
+            // ... except for a friend starting the key exchange over (they reset the connection, or lost their keys): their
+            // signed "keys" or "hello" carries nothing secret, and refusing it would leave the two of them stuck for good.
+            // The exchange starts over on this side too: we give them keys again and accept the old protocol until they
+            // hold them.
+            if matches!(
+                opened.payload.get("t").and_then(Value::as_str),
+                Some("keys" | "hello")
+            ) {
+                self.keys.confirmed.remove(&from);
+                self.keys.told_gen.remove(&from);
+                self.save_keys();
+            } else {
+                return None;
+            }
         }
         Some((opened, from))
     }

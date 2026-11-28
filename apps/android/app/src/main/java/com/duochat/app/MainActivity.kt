@@ -405,6 +405,7 @@ private fun RootScreen(viewModel: AppViewModel) {
                         onRename = { viewModel.renameFriend(uid, it) },
                         onChecked = { viewModel.markChecked(uid) },
                         onRemove = { done -> viewModel.removeFriend(uid) { r -> r.onSuccess { route = HOME }; done(r) } },
+                        onRepair = { done -> viewModel.repairFriend(uid, done) },
                     )
                 }
             }

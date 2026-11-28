@@ -56,6 +56,7 @@ class LoggedEngine(private val inner: ChatEngineApi) : ChatEngineApi by inner {
     override suspend fun markChecked(uid: String) = tracked("mark the safety numbers as checked") { inner.markChecked(uid) }
     override suspend fun renameFriend(uid: String, name: String) = tracked("rename a friend") { inner.renameFriend(uid, name) }
     override suspend fun removeFriend(uid: String) = tracked("remove a friend") { inner.removeFriend(uid) }
+    override suspend fun repairFriend(uid: String) = tracked("reset a connection") { inner.repairFriend(uid) }
     override fun setGroupOnly(value: Boolean) { note("group-only switch", "on=$value"); inner.setGroupOnly(value) }
     override suspend fun createGroup(name: String, memberUids: List<String>) = tracked("create a group", "members=${memberUids.size}") { inner.createGroup(name, memberUids) }
     override suspend fun addToGroup(groupId: String, uids: List<String>) = tracked("add to a group", "people=${uids.size}") { inner.addToGroup(groupId, uids) }

@@ -325,6 +325,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeFriend(uid: String, onResult: (Result<Unit>) -> Unit) = withEngine(onResult) { it.removeFriend(uid) }
+    fun repairFriend(uid: String, onResult: (Result<Unit>) -> Unit) = withEngine(onResult) { it.repairFriend(uid) }
 
     fun removeBlocker(uid: String): String? = engine?.removeBlocker(uid)
 

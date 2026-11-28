@@ -247,10 +247,11 @@ fn six_word_invites_pair_two_people_through_a_signaling_service() {
         .collect();
     assert_eq!(
         live.len(),
-        1,
-        "live copy only: nothing is stored unless the person allows it"
+        2,
+        "a live copy, and one the relay keeps for 15 minutes (setup messages are short-lived and sealed)"
     );
     assert_eq!(live[0].2, 120);
+    assert_eq!(live[1].2, 900);
 
     // Bob types the words: the search listens on the same mailbox; Alice's card arrives; he sees who it is.
     assert_eq!(b.core.preview_invite(&words).unwrap(), None);
@@ -282,9 +283,9 @@ fn six_word_invites_pair_two_people_through_a_signaling_service() {
             _ => None,
         })
         .collect();
-    // The answer to the words, and (as after a QR code) a request to be added back: if Alice's app was not open for the
-    // answer, the request still reaches her.
-    assert_eq!(reply.len(), 2);
+    // The answer to the words and (as after a QR code) a request to be added back, each live and as a copy the relay keeps:
+    // if Alice's app was not open for the answer, the request still reaches her.
+    assert_eq!(reply.len(), 4);
     assert_eq!(
         b.core.snapshot().answer.map(|a| a.status),
         Some(privcord_engine::AnswerStatus::Sent)
@@ -1282,7 +1283,9 @@ fn an_open_invite_slows_down_after_a_minute_and_stops_when_closed() {
             .filter(|o| matches!(o, SignalOp::Put { .. }))
             .count()
     };
-    assert_eq!(puts(&a), 1);
+    // The first publish also leaves a copy the relay keeps (for a friend who types the words after the app was left); the
+    // republishing after that is live only.
+    assert_eq!(puts(&a), 2);
     // The first minute: every 4 seconds.
     let mut early = 0;
     for _ in 0..15 {

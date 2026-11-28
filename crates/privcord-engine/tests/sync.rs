@@ -3357,3 +3357,77 @@ fn a_phone_with_a_linked_laptop_that_uses_a_friends_six_words_gets_through_as_a_
         "Fran sees Pat's request"
     );
 }
+
+#[test]
+fn resetting_a_connection_keeps_the_friendship_and_messages_still_flow_after_it() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, mut ben, _storage, mut relay) = chatting_pair(&clock);
+    let (ann_uid, ben_uid) = (
+        ann.core.own_uid().unwrap().clone(),
+        ben.core.own_uid().unwrap().clone(),
+    );
+    ann.core.repair_contact(&ben_uid).unwrap();
+    assert!(
+        ann.core
+            .snapshot()
+            .contacts
+            .iter()
+            .any(|c| c.uid == ben_uid),
+        "still friends"
+    );
+    ann.core
+        .send_message(&ben_uid, "after the reset", None)
+        .unwrap();
+    ben.core.send_message(&ann_uid, "and back", None).unwrap();
+    for _ in 0..10 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    assert!(ben.texts().contains(&"after the reset".to_owned()));
+    assert!(ann.texts().contains(&"and back".to_owned()));
+    assert!(
+        ann.core.repair_contact(&ann_uid).is_err(),
+        "only a friend can be reset"
+    );
+}
+
+#[test]
+fn one_side_removing_a_friend_and_adding_them_again_while_the_other_never_removed_connects_again() {
+    // Ann removes Ben and scans his QR code again; Ben never removed Ann, so his phone still holds the keys of the old
+    // friendship and refuses the old protocol from her. Seen on real phones as "no connection after adding again".
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, mut ben, _storage, mut relay) = chatting_pair(&clock);
+    let (ann_uid, ben_uid) = (
+        ann.core.own_uid().unwrap().clone(),
+        ben.core.own_uid().unwrap().clone(),
+    );
+    ann.core.remove_contact(&ben_uid).unwrap();
+    for _ in 0..3 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core
+        .accept_invite(&ben.core.own_card(Some("Ben")).unwrap())
+        .unwrap();
+    for _ in 0..10 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    // Ben still has Ann as a friend, so there is no request to tap: both just talk again.
+    ann.core.send_message(&ben_uid, "I am back", None).unwrap();
+    ben.core
+        .send_message(&ann_uid, "welcome back", None)
+        .unwrap();
+    for _ in 0..12 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    assert!(
+        ben.texts().contains(&"I am back".to_owned()),
+        "Ben got Ann's message"
+    );
+    assert!(
+        ann.texts().contains(&"welcome back".to_owned()),
+        "Ann got Ben's message"
+    );
+}
