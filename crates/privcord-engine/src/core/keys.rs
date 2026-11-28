@@ -491,6 +491,22 @@ impl Core {
         }
     }
 
+    /// Forget every key exchanged with a person, under their account address and every device address (they were
+    /// removed as a friend). Keys left from the old friendship would seal the next request (a hello after scanning their
+    /// code again) in a form a stranger's phone refuses, so the second time never connected.
+    pub(super) fn forget_keys_of_person(&mut self, person: &UserId) {
+        let addrs: Vec<UserId> = self
+            .keys
+            .theirs
+            .keys()
+            .chain(self.keys.issued.keys())
+            .chain(self.keys.confirmed.iter())
+            .filter(|a| &Self::person_of(a) == person)
+            .cloned()
+            .collect();
+        self.forget_keys_of(&addrs);
+    }
+
     /// Forget every key exchanged with these addresses (devices their account removed).
     pub(super) fn forget_keys_of(&mut self, addrs: &[UserId]) {
         let mut changed = false;
