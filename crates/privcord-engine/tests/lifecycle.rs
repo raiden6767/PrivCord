@@ -1653,3 +1653,179 @@ fn after_a_qr_scan_and_one_tap_a_direct_link_carries_messages_both_ways() {
         texts(&phone)
     );
 }
+
+/// Whatever one side has posted since the last look goes to the other side's mailboxes, as the relay would.
+fn relay_between(from: &Node, to: &mut Node) -> usize {
+    let mut n = 0;
+    for (mailbox, blob, _) in put_blobs(from) {
+        to.core.signal_blob(&mailbox, &blob);
+        n += 1;
+    }
+    n
+}
+
+#[test]
+fn a_link_that_dropped_after_keys_were_exchanged_is_set_up_again_through_the_relay_in_both_directions(
+) {
+    use privcord_engine::SignalMessage;
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut a, mut b) = (node("alice", &clock), node("bob", &clock));
+    befriend(&mut a, &mut b);
+    a.transport.set_signaling(true);
+    b.transport.set_signaling(true);
+    // The first link: the two hand each other their keys (everything after this is sealed to them). Then it drops (a phone
+    // went to the background, a network changed).
+    connect(&mut a, &mut b);
+    for round in 0..3 {
+        a.core.link_down(&b.uid);
+        b.core.link_down(&a.uid);
+        a.transport.set_connected(&b.uid, false);
+        b.transport.set_connected(&a.uid, false);
+        a.clock.advance(20_000);
+        a.core.tick();
+        b.core.tick();
+        put_blobs(&a);
+        put_blobs(&b);
+        drain_events(&mut a);
+        drain_events(&mut b);
+        let (offerer, answerer) = if a.uid.as_str() < b.uid.as_str() {
+            (&mut a, &mut b)
+        } else {
+            (&mut b, &mut a)
+        };
+        // "Ready" from the answerer, the offer from the offerer, the answer back: the way a link is set up.
+        answerer
+            .core
+            .send_signal(&offerer.uid, &SignalMessage::Ready)
+            .unwrap();
+        relay_between(answerer, offerer);
+        assert!(
+            drain_events(offerer).iter().any(|e| matches!(
+                e,
+                EngineEvent::SignalReceived {
+                    message: SignalMessage::Ready,
+                    ..
+                }
+            )),
+            "round {round}: the offerer hears that the answerer is ready"
+        );
+        offerer
+            .core
+            .send_signal(&answerer.uid, &SignalMessage::Offer("o".into()))
+            .unwrap();
+        relay_between(offerer, answerer);
+        assert!(
+            drain_events(answerer).iter().any(|e| matches!(
+                e,
+                EngineEvent::SignalReceived {
+                    message: SignalMessage::Offer(_),
+                    ..
+                }
+            )),
+            "round {round}: the answerer can open the offer"
+        );
+        answerer
+            .core
+            .send_signal(&offerer.uid, &SignalMessage::Answer("a".into()))
+            .unwrap();
+        relay_between(answerer, offerer);
+        assert!(
+            drain_events(offerer).iter().any(|e| matches!(
+                e,
+                EngineEvent::SignalReceived {
+                    message: SignalMessage::Answer(_),
+                    ..
+                }
+            )),
+            "round {round}: the offerer can open the answer"
+        );
+        connect(&mut a, &mut b);
+    }
+}
+
+#[test]
+fn after_both_removed_each_other_and_added_again_a_dropped_link_is_set_up_again_through_the_relay()
+{
+    use privcord_engine::SignalMessage;
+    for removals in 0..3 {
+        let clock = FakeClock::at(1_700_000_000_000);
+        let (mut a, mut b) = (node("alice", &clock), node("bob", &clock));
+        a.transport.set_signaling(true);
+        b.transport.set_signaling(true);
+        // A friendship with a link (keys exchanged), then both remove the other, and add again (as seen on real phones).
+        for _ in 0..removals {
+            befriend(&mut a, &mut b);
+            connect(&mut a, &mut b);
+            a.core.link_down(&b.uid);
+            b.core.link_down(&a.uid);
+            a.transport.set_connected(&b.uid, false);
+            b.transport.set_connected(&a.uid, false);
+            a.core.remove_contact(&b.uid).unwrap();
+            b.core.remove_contact(&a.uid).unwrap();
+        }
+        befriend(&mut a, &mut b);
+        connect(&mut a, &mut b);
+        a.core.link_down(&b.uid);
+        b.core.link_down(&a.uid);
+        a.transport.set_connected(&b.uid, false);
+        b.transport.set_connected(&a.uid, false);
+        a.clock.advance(20_000);
+        a.core.tick();
+        b.core.tick();
+        put_blobs(&a);
+        put_blobs(&b);
+        drain_events(&mut a);
+        drain_events(&mut b);
+        // The setup in the direction it goes (the lower id offers): the answerer's "ready", the offer, the answer.
+        let (offerer, answerer) = if a.uid.as_str() < b.uid.as_str() {
+            (&mut a, &mut b)
+        } else {
+            (&mut b, &mut a)
+        };
+        answerer
+            .core
+            .send_signal(&offerer.uid, &SignalMessage::Ready)
+            .unwrap();
+        relay_between(answerer, offerer);
+        assert!(
+            drain_events(offerer).iter().any(|e| matches!(
+                e,
+                EngineEvent::SignalReceived {
+                    message: SignalMessage::Ready,
+                    ..
+                }
+            )),
+            "after {removals} removals: the offerer hears Ready"
+        );
+        offerer
+            .core
+            .send_signal(&answerer.uid, &SignalMessage::Offer("o".into()))
+            .unwrap();
+        relay_between(offerer, answerer);
+        assert!(
+            drain_events(answerer).iter().any(|e| matches!(
+                e,
+                EngineEvent::SignalReceived {
+                    message: SignalMessage::Offer(_),
+                    ..
+                }
+            )),
+            "after {removals} removals: the answerer opens the offer"
+        );
+        answerer
+            .core
+            .send_signal(&offerer.uid, &SignalMessage::Answer("a".into()))
+            .unwrap();
+        relay_between(answerer, offerer);
+        assert!(
+            drain_events(offerer).iter().any(|e| matches!(
+                e,
+                EngineEvent::SignalReceived {
+                    message: SignalMessage::Answer(_),
+                    ..
+                }
+            )),
+            "after {removals} removals: the offerer opens the answer"
+        );
+    }
+}

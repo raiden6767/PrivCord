@@ -651,6 +651,10 @@ class RustChatEngine(
 
     private fun newTransport(peer: String): WebRtcTransport {
         stopSender(peer)
+        // Closing the old link reports its closing a moment later, after this new one is already in place: that report says
+        // nothing about the new link and must not take it down (the engine saw "link up" and at once "link down", and a
+        // message sent right then waited for a reset by hand).
+        val mine = arrayOfNulls<WebRtcTransport>(1)
         links.remove(peer)?.close()
         val created = WebRtcTransport(
             networkConfig().iceServers(), networkConfig().forceRelay,
@@ -674,6 +678,8 @@ class RustChatEngine(
                 }
 
                 override fun onClose() {
+                    val current = links[peer]
+                    if (current != null && current !== mine[0]) return // a newer link replaced this one
                     stopSender(peer)
                     inbound.trySend(Inbound.Down(peer))
                     scope.launch { requestRefresh() }
@@ -688,6 +694,7 @@ class RustChatEngine(
                 }
             },
         )
+        mine[0] = created
         links[peer] = created
         return created
     }
@@ -1166,6 +1173,8 @@ class RustChatEngine(
 
     override fun setVisible(isVisible: Boolean) {
         visible = isVisible
+        // Back in the app: whatever dropped while it was away is dialled now, not after the retry delay it earned meanwhile.
+        if (isVisible) scope.launch { io { runCatching { engine?.resetDialBackoff(null) } } }
         openChat?.let { id -> if (isVisible) markOpen(id) }
     }
 

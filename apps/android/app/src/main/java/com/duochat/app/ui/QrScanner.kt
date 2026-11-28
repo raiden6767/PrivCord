@@ -171,7 +171,19 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
         // area to it, so the capture button would sit under it. Room at the bottom that does not depend on that, and
         // controls that grow and shrink with the screen.
         val screen = androidx.compose.ui.platform.LocalConfiguration.current
-        val bottomRoom = (screen.screenHeightDp * 0.07f).dp.coerceIn(28.dp, 72.dp)
+        // What the activity's own window reports for the status and navigation bars (the dialog's window often reports
+        // nothing): a three-button bar or a tall gesture area is 48 dp or more, and the capture button must clear it.
+        val activityContext = LocalContext.current
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val bars = remember(screen.screenHeightDp, screen.orientation) {
+            val activity = generateSequence(activityContext) { (it as? android.content.ContextWrapper)?.baseContext }
+                .firstNotNullOfOrNull { it as? android.app.Activity }
+            val insets = activity?.window?.decorView?.let { androidx.core.view.ViewCompat.getRootWindowInsets(it) }
+                ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            with(density) { (insets?.top ?: 0).toDp() to (insets?.bottom ?: 0).toDp() }
+        }
+        val bottomRoom = maxOf((screen.screenHeightDp * 0.07f).dp.coerceIn(28.dp, 72.dp), bars.second + 16.dp)
+        val topRoom = bars.first
         val captureSize = (screen.screenWidthDp * 0.19f).dp.coerceIn(60.dp, 84.dp)
         val sideSize = (captureSize * 0.74f).coerceAtLeast(48.dp)
         Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -247,7 +259,7 @@ private fun QrScannerScreen(prompt: String, onResult: (String) -> Unit, onClose:
             ScanFrame(Modifier.fillMaxSize())
 
             Column(
-                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp),
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(start = 16.dp, end = 16.dp, bottom = 16.dp, top = 16.dp + topRoom),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
