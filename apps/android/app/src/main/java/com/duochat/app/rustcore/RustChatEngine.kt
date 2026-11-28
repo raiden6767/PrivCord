@@ -42,7 +42,6 @@ import com.duochat.app.engine.ChatEngineApi
 import com.duochat.app.engine.IncomingNotice
 import com.duochat.app.p2p.WebRtcTransport
 import com.duochat.app.p2p.iceServers
-import com.duochat.app.security.Seal
 import com.duochat.app.signaling.SignalingStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

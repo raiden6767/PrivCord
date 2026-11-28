@@ -8,13 +8,13 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 
 | Status | Files | Lines |
 |---|---:|---:|
-| Ported, tested | 64 | 9697 |
+| Ported, tested | 63 | 9609 |
 | Partly ported | 1 | 2312 |
 | Not yet ported | 0 | 0 |
 | Stays (UI) | 102 | 18800 |
-| Stays (platform adapter) | 82 | 14779 |
+| Stays (platform adapter) | 82 | 14778 |
 | Replaced by a library | 3 | 208 |
-| **All mapped files** | **252** | **45796** |
+| **All mapped files** | **251** | **45707** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -245,13 +245,12 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/AndroidLan.kt` | 154 | `AndroidLan` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/KeystoreSecureStore.kt` | 124 | `KeystoreSecureStore` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/RelaySockets.kt` | 273 | `RelaySockets` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/rustcore/RustChatEngine.kt` | 1589 | `RustChatEngine` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/rustcore/RustChatEngine.kt` | 1588 | `RustChatEngine` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/rustcore/RustEngineProbe.kt` | 62 | `RustEngineProbe` | Android adapters for the Rust engine (Keystore secret store, on-device probe) | Platform adapter for engine ports | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/AndroidIdentity.kt` | 252 | `PublicJwk`, `DeviceIdentity`, `PinnedPeer`, `AndroidIdentityManager` | Keystore identity storage, at-rest encryption, biometric lock | SecureStore adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/AppLock.kt` | 51 | `AppLock` | Keystore identity storage, at-rest encryption, biometric lock | SecureStore adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/Bip39.kt` | 67 | `Bip39` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/CanonicalJson.kt` | 83 | `CanonicalJson` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/security/Channels.kt` | 88 | `Channels` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/ContactCard.kt` | 38 | `ContactCard`, `Contact`, `ContactCards` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/EcKeys.kt` | 59 | `EcKeys` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/security/IdentityCodec.kt` | 81 | `IdentityCodec` | Cryptography duplicated from TypeScript | crypto | Crypto | Ported, tested | M8 | n/a |
