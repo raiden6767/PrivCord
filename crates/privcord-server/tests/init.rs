@@ -26,7 +26,7 @@ fn init(args: &[&str]) -> Config {
 fn private_by_default_open_on_request() {
     let c = init(&[]);
     assert_eq!(c.server.access_tokens.len(), 1);
-    assert_eq!(c.server.access_tokens[0].len(), 32);
+    assert_eq!(c.server.access_tokens.first().map(String::len), Some(32));
     assert!(c.limits.disk_quota_mb > 0 && c.limits.monthly_traffic_gb > 0);
     assert!(c.problems().iter().all(|p| !p.contains("token")));
     let o = init(&["--open"]);
