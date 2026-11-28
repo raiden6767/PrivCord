@@ -124,6 +124,24 @@ fn pump(a: &Side, a_uid: &str, b: &Side, b_uid: &str) {
     }
 }
 
+/// Carry frames until `ready` gives an answer (up to a minute): how long a transfer takes depends on the machine, so a
+/// test waits for what it needs instead of for a fixed stretch of quiet.
+fn pump_until<T>(
+    a: &Side,
+    a_uid: &str,
+    b: &Side,
+    b_uid: &str,
+    mut ready: impl FnMut() -> Option<T>,
+) -> T {
+    for _ in 0..60 {
+        pump(a, a_uid, b, b_uid);
+        if let Some(v) = ready() {
+            return v;
+        }
+    }
+    panic!("nothing arrived within a minute");
+}
+
 fn snapshot_text(s: &Side) -> String {
     s.host.invoke("snapshot", &json!({})).unwrap().to_string()
 }
@@ -276,9 +294,16 @@ fn files_search_and_group_commands_work_through_json() {
         .as_str()
         .unwrap()
         .to_owned();
-    pump(&a, &a_uid, &b, &b_uid);
-    // B sees the file message and can read it.
-    let snapshot = b.host.invoke("snapshot", &json!({})).unwrap();
+    // B sees the file message and can read it. A slow machine needs longer than any fixed quiet stretch, so carry frames
+    // until the message is really there (up to a minute) instead of guessing how long a file takes.
+    let mut snapshot = Value::Null;
+    for _ in 0..60 {
+        pump(&a, &a_uid, &b, &b_uid);
+        snapshot = b.host.invoke("snapshot", &json!({})).unwrap();
+        if snapshot["conversations"][0]["messages"][0]["id"].is_string() {
+            break;
+        }
+    }
     let file_id = snapshot["conversations"][0]["messages"][0]["id"]
         .as_str()
         .unwrap()
@@ -301,8 +326,10 @@ fn files_search_and_group_commands_work_through_json() {
         .as_str()
         .unwrap()
         .to_owned();
-    pump(&a, &a_uid, &b, &b_uid);
-    assert_eq!(b.host.load_file_bytes(&raw_id).unwrap().unwrap(), bytes);
+    let got = pump_until(&a, &a_uid, &b, &b_uid, || {
+        b.host.load_file_bytes(&raw_id).unwrap()
+    });
+    assert_eq!(got, bytes);
     assert!(b.host.load_file_bytes("no-such-message").unwrap().is_none());
 
     // Search finds a text message.
@@ -312,11 +339,14 @@ fn files_search_and_group_commands_work_through_json() {
             &json!({ "peer": b_uid, "text": "pineapple pizza" }),
         )
         .unwrap();
-    pump(&a, &a_uid, &b, &b_uid);
-    let hits = b
-        .host
-        .invoke("search", &json!({ "query": "pineapple" }))
-        .unwrap();
+    let hits = pump_until(&a, &a_uid, &b, &b_uid, || {
+        let hits = b
+            .host
+            .invoke("search", &json!({ "query": "pineapple" }))
+            .unwrap();
+        let found = hits.as_array().is_some_and(|h| !h.is_empty());
+        found.then_some(hits)
+    });
     assert_eq!(hits.as_array().unwrap().len(), 1);
 
     // A group can be made with the friend; the page asks only through commands.
