@@ -111,3 +111,28 @@ describe('nostr events', () => {
     expect(verifyEvent({ ...e1, sig: e2.sig })).toBe(false);
   });
 });
+
+describe('the hub drops copies, not different blobs that share a signature', () => {
+  it('lets every anonymous envelope through (they have no signature) and drops only a repeat', () => {
+    const delivered: string[] = [];
+    let push: (blob: SealedBlob, id: string) => void = () => undefined;
+    const fake = {
+      name: 'fake',
+      start: (_mailbox: string, onBlob: (blob: SealedBlob, id: string) => void) => {
+        push = onBlob;
+      },
+      put: async () => undefined,
+      remove: () => undefined,
+      status: () => 'online',
+      stop: () => undefined,
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    new SignalingHub([fake as any]).start('box', (blob) => delivered.push(blob.iv));
+    const envelope = (iv: string) => ({ v: 3, to: '', from: '', epk: {}, iv, ct: `ciphertext-of-${iv}`, sig: '' }) as unknown as SealedBlob;
+    push(envelope('one'), 'e1');
+    push(envelope('two'), 'e2');
+    push(envelope('three'), 'e3');
+    push(envelope('two'), 'e2-again');
+    expect(delivered).toEqual(['one', 'two', 'three']);
+  });
+});
