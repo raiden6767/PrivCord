@@ -1238,6 +1238,10 @@ fn the_side_that_offers_does_not_dial_someone_who_has_not_added_it_back_yet() {
 
     // The low side scans the high side's card: nobody has accepted yet, so an offer would be thrown away.
     lo.core.accept_invite(&hi_card).unwrap();
+    assert!(
+        lo.core.snapshot().contacts[0].awaiting_acceptance,
+        "the app can say it is waiting for them to accept"
+    );
     let _ = dials(&mut lo, &hiu);
     for _ in 0..4 {
         lo.clock.advance(2_000);

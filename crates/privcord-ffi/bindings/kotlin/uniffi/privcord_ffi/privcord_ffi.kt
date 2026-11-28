@@ -7049,7 +7049,11 @@ data class ContactDto (
     var `checked`: kotlin.Boolean, 
     var `safetyNumber`: kotlin.String, 
     var `link`: LinkState, 
-    var `canMessage`: kotlin.Boolean
+    var `canMessage`: kotlin.Boolean, 
+    /**
+     * We added them from their card and they have not added us back yet.
+     */
+    var `awaitingAcceptance`: kotlin.Boolean
 ) {
     
     companion object
@@ -7070,6 +7074,7 @@ public object FfiConverterTypeContactDto: FfiConverterRustBuffer<ContactDto> {
             FfiConverterString.read(buf),
             FfiConverterTypeLinkState.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -7082,7 +7087,8 @@ public object FfiConverterTypeContactDto: FfiConverterRustBuffer<ContactDto> {
             FfiConverterBoolean.allocationSize(value.`checked`) +
             FfiConverterString.allocationSize(value.`safetyNumber`) +
             FfiConverterTypeLinkState.allocationSize(value.`link`) +
-            FfiConverterBoolean.allocationSize(value.`canMessage`)
+            FfiConverterBoolean.allocationSize(value.`canMessage`) +
+            FfiConverterBoolean.allocationSize(value.`awaitingAcceptance`)
     )
 
     override fun write(value: ContactDto, buf: ByteBuffer) {
@@ -7095,6 +7101,7 @@ public object FfiConverterTypeContactDto: FfiConverterRustBuffer<ContactDto> {
             FfiConverterString.write(value.`safetyNumber`, buf)
             FfiConverterTypeLinkState.write(value.`link`, buf)
             FfiConverterBoolean.write(value.`canMessage`, buf)
+            FfiConverterBoolean.write(value.`awaitingAcceptance`, buf)
     }
 }
 

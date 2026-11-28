@@ -22,6 +22,8 @@ pub struct ContactView {
     pub connection: ConnectionState,
     /// Whether a direct chat is allowed with this person right now (the group-only rules).
     pub can_message: bool,
+    /// We added them from their card and they have not added us back yet: nothing can connect until they accept.
+    pub awaiting_acceptance: bool,
 }
 
 /// A group you are in.

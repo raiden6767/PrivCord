@@ -895,6 +895,16 @@ class RustChatEngine(
             heardFrom.remove(c.uid)
             return null
         }
+        // Added from their card and not added back yet: nothing can connect until they accept, so say that instead of
+        // showing a connection that just never starts.
+        if (c.awaitingAcceptance) {
+            return com.duochat.app.data.Diagnosis(
+                "awaiting-acceptance",
+                "Waiting for ${c.displayName} to add you back. They will see a request in PrivCord and need to tap Accept; " +
+                    "once they do, you connect. If they have not seen it, ask them to open the app.",
+                emptyList(),
+            )
+        }
         if (networkConfig().torMode) {
             return com.duochat.app.data.Diagnosis(
                 if (torRunning) "tor" else "tor-down",

@@ -506,6 +506,8 @@ pub struct ContactDto {
     pub safety_number: String,
     pub link: LinkState,
     pub can_message: bool,
+    /// We added them from their card and they have not added us back yet.
+    pub awaiting_acceptance: bool,
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -2134,6 +2136,7 @@ fn snapshot_dto(s: privcord_engine::Snapshot) -> SnapshotDto {
                 safety_number: c.safety_number,
                 link: c.connection.into(),
                 can_message: c.can_message,
+                awaiting_acceptance: c.awaiting_acceptance,
             })
             .collect(),
         channels: s.channels,
