@@ -370,7 +370,7 @@
         "stun": [],
         "turn": [],
         "signaling": [],
-        "storeForward": false,
+        "storeForward": true,
         "forceRelay": false,
         "bluetooth": true
       }
@@ -424,7 +424,7 @@
           }
         ],
         "signaling": [],
-        "storeForward": false,
+        "storeForward": true,
         "forceRelay": false,
         "bluetooth": true
       }
