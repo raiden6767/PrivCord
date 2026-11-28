@@ -121,8 +121,8 @@ jobs:
           cargo install cargo-audit --locked
           cargo audit
 
-  e2e:
-    name: End-to-end (real browsers, relay, Nostr, TURN)
+  hosted-e2e:
+    name: Desktop page vs real Rust engine
     runs-on: ubuntu-latest
     needs: node
     steps:
@@ -132,21 +132,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: cd relay && npm ci
-      - name: Playwright (global, as the suite expects)
-        # --with-deps also apt-installs optional fonts; when Ubuntu's mirror is unreachable that fails the whole step
-        # (twice in a row on 11 Nov 2026). The runner image already has what Chromium needs to run, so fall back to the
-        # browser alone; the suite below still runs every test and fails on its own if something is really missing.
-        run: |
-          npm install -g playwright
-          npx playwright install --with-deps chromium || {
-            echo "::warning::system packages could not be installed; installing the browser alone"
-            npx playwright install chromium
-          }
-      - run: npm run e2e --workspace @duochat/desktop
       # The desktop page's hosted-engine code against two real Rust engine processes (the stand-in for the Tauri shell):
-      # what the installed app runs. (The browser-only TypeScript engine cannot talk to the Rust engine since protocol v2,
-      # so the old TypeScript-vs-Rust Bluetooth check is gone; see ADR-011.)
+      # what the installed app runs. The old browser end-to-end suite (Playwright, TypeScript engine) is gone with that engine;
+      # the screens are covered by component tests against a fake engine in the node job (src/components/screens.test.tsx).
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build -p privcord-desktop-host --example host_stdio --locked
       - run: npx vitest run src/lib/hosted/e2e.test.ts
