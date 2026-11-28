@@ -19,7 +19,7 @@ The budget is **2,000 GitHub Actions minutes a month** (Windows runners count do
   GitHub MCP server works; `gh` is blocked here).
 - Dependabot PRs cost a full CI run each when opened and again when merged: prefer grouped updates, merge several in one go,
   close the ones that fail (they come back as a new version).
-- Test locally first (type-check, unit tests, builds) and push once, not in small pieces: every push to a pull
+- Test locally first (type-check, unit tests, builds, Playwright) and push once, not in small pieces: every push to a pull
   request restarts its CI.
 - A change that touches only `site/` or root-level `.md` files does not run the app's CI (see `paths-ignore` in
   `.github/workflows/ci.yml`); the landing page is built and deployed by `pages.yml`. Build and test the site locally.
