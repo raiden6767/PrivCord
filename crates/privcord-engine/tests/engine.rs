@@ -1207,3 +1207,55 @@ fn a_link_that_never_finishes_its_handshake_is_dropped_and_frees_its_dial_slot()
         "after 20 seconds with no handshake the link is dropped, so it no longer occupies a dial slot"
     );
 }
+
+#[test]
+fn the_side_that_offers_does_not_dial_someone_who_has_not_added_it_back_yet() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut x, mut y) = (fresh("alice", &clock), fresh("bob", &clock));
+    // `lo` is the one whose id sorts lower, so it is the one that sends offers.
+    let (xu, yu) = (
+        x.core.own_uid().unwrap().clone(),
+        y.core.own_uid().unwrap().clone(),
+    );
+    let (mut lo, mut hi, lou, hiu) = if xu < yu {
+        (x, y, xu, yu)
+    } else {
+        (y, x, yu, xu)
+    };
+    let hi_card = hi.core.own_card(Some("Hi")).unwrap();
+    let lo_card = lo.core.own_card(Some("Lo")).unwrap();
+    let dials = |n: &mut Node, peer: &UserId| {
+        let mut out = vec![];
+        while let Ok((_, e)) = n.events.try_recv() {
+            if let EngineEvent::DialRequested { peer: p, initiator } = e {
+                if &p == peer {
+                    out.push(initiator);
+                }
+            }
+        }
+        out
+    };
+
+    // The low side scans the high side's card: nobody has accepted yet, so an offer would be thrown away.
+    lo.core.accept_invite(&hi_card).unwrap();
+    let _ = dials(&mut lo, &hiu);
+    for _ in 0..4 {
+        lo.clock.advance(2_000);
+        lo.core.tick();
+    }
+    assert!(
+        dials(&mut lo, &hiu).is_empty(),
+        "no offer while the other side has not added us back"
+    );
+
+    // The high side scans the low side's card: it only announces itself ("ready"), which is what starts the offer.
+    hi.core.accept_invite(&lo_card).unwrap();
+    let _ = dials(&mut hi, &lou);
+    hi.clock.advance(2_000);
+    hi.core.tick();
+    assert_eq!(
+        dials(&mut hi, &lou),
+        vec![false],
+        "the waiting side still announces itself"
+    );
+}

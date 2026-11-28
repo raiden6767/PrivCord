@@ -1946,6 +1946,13 @@ impl Core {
             .iter()
             .map(|uid| {
                 let p = self.peers.get(uid);
+                // Someone we added from their card who has not added us back yet cannot answer an offer: it would be
+                // thrown away, and would use up the retry delay the real attempt then has to wait out. Their own
+                // "ready" (sent as soon as they accept) starts the dial. Only the side that offers waits.
+                let waiting_for_them = self.awaiting_acceptance(&Self::person_of(uid))
+                    && self
+                        .as_me(uid)
+                        .is_some_and(|me| is_initiator(me.as_str(), uid.as_str()));
                 LinkInfo {
                     uid: uid.to_string(),
                     ready: p.is_some_and(Peer::ready),
@@ -1958,7 +1965,7 @@ impl Core {
                     }),
                     last_attempt_at: p.map_or(0, |p| p.last_attempt_at),
                     attempts: p.map_or(0, |p| p.attempts),
-                    dialable: true,
+                    dialable: !waiting_for_them,
                 }
             })
             .collect();

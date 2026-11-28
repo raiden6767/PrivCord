@@ -111,6 +111,11 @@ fn short(uid: &UserId) -> String {
 }
 
 impl Core {
+    /// We added this person from their card and they have not added us back yet (the request is still being sent).
+    pub(super) fn awaiting_acceptance(&self, person: &UserId) -> bool {
+        self.invites.hellos.contains_key(person)
+    }
+
     pub(super) fn store_forward(&self) -> bool {
         matches!(self.ports.storage.kv(KV_STORE_FORWARD), Ok(Some(v)) if v == b"1")
     }
