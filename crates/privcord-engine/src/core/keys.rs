@@ -514,6 +514,7 @@ impl Core {
             changed |= self.keys.theirs.remove(a).is_some();
             changed |= self.keys.issued.remove(a).is_some();
             changed |= self.keys.confirmed.remove(a);
+            changed |= self.keys.told_gen.remove(a).is_some();
         }
         if changed {
             self.save_keys();

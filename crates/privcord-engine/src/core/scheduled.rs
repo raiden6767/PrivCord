@@ -75,6 +75,10 @@ impl Core {
         all
     }
 
+    pub(super) fn save_scheduled_list(&mut self, all: &[Scheduled]) -> Result<(), ErrorCode> {
+        self.save_scheduled(all)
+    }
+
     fn save_scheduled(&mut self, all: &[Scheduled]) -> Result<(), ErrorCode> {
         let value = serde_json::to_vec(all).map_err(|_| ErrorCode::Storage)?;
         self.ports.storage.apply(&[StorageOp::SetKv {

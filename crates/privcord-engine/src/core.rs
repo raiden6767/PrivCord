@@ -2253,6 +2253,8 @@ impl Core {
         let result = groups
             .leave(&author, group_id, now)
             .map_err(|e| Self::group_error(&e))?;
+        // A group we have left has no pin, archive, silence or mute any more.
+        self.forget_chat_prefs(group_id);
         self.finish_group_result(result)
     }
 
@@ -2898,6 +2900,10 @@ impl Core {
             if self.channel_subscribed.remove(&keys.mailbox) {
                 self.ports.transport.signal_unsubscribe(&keys.mailbox);
             }
+            // The chat list names a channel `chan:<name>`; nothing pinned, archived or muted stays for one we left.
+            let id = ConversationId::Channel(name.clone()).storage_key();
+            self.forget_chat_prefs(&id);
+            self.forget_chat_prefs(&name);
         }
         Ok(())
     }

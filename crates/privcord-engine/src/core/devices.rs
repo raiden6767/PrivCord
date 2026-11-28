@@ -261,6 +261,17 @@ impl Core {
             .unwrap_or_default()
     }
 
+    /// A person was removed: forget that their app understood device lists (it is learned again from what they send).
+    pub(super) fn forget_aware(&mut self, person: &UserId) {
+        let mut aware = self.aware_list();
+        if aware.remove(person.as_str()) {
+            let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+                key: KV_AWARE.into(),
+                value: serde_json::to_vec(&aware).unwrap_or_default(),
+            }]);
+        }
+    }
+
     /// Whether a friend's app understands device lists (we have seen it say so).
     pub(super) fn understands_devices(&self, person: &UserId) -> bool {
         self.aware_list().contains(person.as_str())

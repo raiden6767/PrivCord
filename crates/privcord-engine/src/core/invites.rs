@@ -823,6 +823,27 @@ impl Core {
 
     /// Forget a friend and their chat. Refused while they share a group with us, because the group would bring them
     /// straight back.
+    /// Everything else kept about a person besides their messages and keys: a person removed and added again must come
+    /// back as a stranger would, not muted, pinned or half-introduced (and nothing about them may stay on the phone).
+    fn forget_person_state(&mut self, uid: &UserId) {
+        self.invites.hellos.remove(uid);
+        self.forget_aware(uid);
+        if self.muted.remove(uid) {
+            let list: Vec<&str> = self.muted.iter().map(UserId::as_str).collect();
+            let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+                key: super::social::KV_MUTED.into(),
+                value: serde_json::to_vec(&list).unwrap_or_default(),
+            }]);
+        }
+        self.forget_chat_prefs(uid.as_str());
+        let mut all = self.scheduled();
+        let before = all.len();
+        all.retain(|s| s.group || s.target != uid.as_str());
+        if all.len() != before {
+            let _ = self.save_scheduled_list(&all);
+        }
+    }
+
     pub fn remove_contact(&mut self, uid: &UserId) -> Result<(), ErrorCode> {
         self.require_live()?;
         if !self.contacts.contains_key(uid) {
@@ -843,6 +864,7 @@ impl Core {
         ])?;
         self.forget_contact_devices(uid);
         self.forget_keys_of_person(uid);
+        self.forget_person_state(uid);
         // They know our private inbox: move to a new one and tell everyone else.
         self.rotate_inbox();
         let addrs: Vec<UserId> = self

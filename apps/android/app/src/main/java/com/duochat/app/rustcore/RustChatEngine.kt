@@ -560,6 +560,7 @@ class RustChatEngine(
             }
             is EventDto.FileQueued -> senders[event.peer]?.beginTransfer(event.messageId, event.frames.toLong())
             is EventDto.PeerStateChanged -> requestRefresh()
+            is EventDto.ContactRemoved -> { forgetPeerState(event.uid); requestRefresh() }
             is EventDto.DeviceLink -> {
                 _state.update { it.copy(deviceLink = com.duochat.app.data.DeviceLinkState(event.stage, event.code, event.name)) }
                 requestRefresh()
@@ -588,6 +589,13 @@ class RustChatEngine(
      * before the engine has said anything does it fall back to comparing ids.
      */
     private val initiatorOf = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /** A friend was removed: nothing this adapter noted about them (or their devices) may colour a later friendship. */
+    private fun forgetPeerState(uid: String) {
+        fun <V> MutableMap<String, V>.forget() = keys.removeAll { it == uid || it.startsWith("$uid.") }
+        initiatorOf.forget(); attempts.forget(); heardFrom.forget(); progress.forget(); incoming.forget()
+        bleLastAttempt.forget(); dialStartedAt.forget(); extra.forget()
+    }
 
     private fun isInitiator(peer: String): Boolean = initiatorOf[peer] ?: ((last?.ownUid ?: "") < peer)
 

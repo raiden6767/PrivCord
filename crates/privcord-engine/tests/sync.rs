@@ -3143,3 +3143,171 @@ fn removing_a_friend_and_scanning_their_qr_code_again_gets_through_as_a_request(
         }
     }
 }
+
+#[test]
+fn removing_a_friend_leaves_nothing_about_them_behind() {
+    // The class of bug behind the stale-keys failure: adding someone creates state in many places, and removing them
+    // must undo all of it. Every stored value is searched for the friend's address after the removal.
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let storage = MemoryStorage::new();
+    let mut ann = Device::on("ann", &clock, storage.clone(), MemorySecureStore::new());
+    ann.core.create_identity().unwrap();
+    let mut ben = Device::new("ben", &clock);
+    ben.core.create_identity().unwrap();
+    let (ann_uid, ben_uid) = (
+        ann.core.own_uid().unwrap().clone(),
+        ben.core.own_uid().unwrap().clone(),
+    );
+    ann.core.set_store_forward(true).unwrap();
+    ben.core.set_store_forward(true).unwrap();
+    ann.core
+        .accept_invite(&ben.core.own_card(Some("Ben")).unwrap())
+        .unwrap();
+    for _ in 0..4 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ben.core.accept_request(&ann_uid).unwrap();
+    for _ in 0..8 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.send_message(&ben_uid, "hi", None).unwrap();
+    ben.core.send_message(&ann_uid, "hello", None).unwrap();
+    ann.core.set_muted(&ben_uid, true).unwrap();
+    let conv = ben_uid.to_string();
+    ann.core.toggle_pin(&conv).unwrap();
+    ann.core.set_archived(&conv, true).unwrap();
+    ann.core.set_silent(&conv, true).unwrap();
+    ann.core
+        .set_mute_until(&conv, 1_700_000_000_000 + 86_400_000)
+        .unwrap();
+    ann.core
+        .schedule_message(&conv, false, "later", 1_700_000_000_000 + 3_600_000)
+        .unwrap();
+    for _ in 0..8 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.remove_contact(&ben_uid).unwrap();
+    ann.online(&mut relay);
+    let needle = ben_uid.to_string();
+    let leaks: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        // The sync log is the account's append-only history (it must keep "removed" to tell the other devices); an empty
+        // value is a deleted entry.
+        .filter(|(k, _)| !k.starts_with("sync.e."))
+        .filter(|(k, v)| !v.is_empty() && (k.contains(&needle) || v.contains(&needle)))
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(300).collect::<String>()))
+        .collect();
+    assert!(
+        leaks.is_empty(),
+        "left behind after removing a friend: {leaks:#?}"
+    );
+}
+
+/// Two friends who have chatted; returns (ann, ben, ann's storage, relay).
+fn chatting_pair(clock: &Arc<FakeClock>) -> (Device, Device, Arc<MemoryStorage>, Relay) {
+    let mut relay = Relay::default();
+    let storage = MemoryStorage::new();
+    let mut ann = Device::on("ann", clock, storage.clone(), MemorySecureStore::new());
+    ann.core.create_identity().unwrap();
+    let mut ben = Device::new("ben", clock);
+    ben.core.create_identity().unwrap();
+    let ann_uid = ann.core.own_uid().unwrap().clone();
+    let ben_uid = ben.core.own_uid().unwrap().clone();
+    ann.core.set_store_forward(true).unwrap();
+    ben.core.set_store_forward(true).unwrap();
+    ann.core
+        .accept_invite(&ben.core.own_card(Some("Ben")).unwrap())
+        .unwrap();
+    for _ in 0..4 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ben.core.accept_request(&ann_uid).unwrap();
+    for _ in 0..6 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.send_message(&ben_uid, "hi", None).unwrap();
+    for _ in 0..6 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    (ann, ben, storage, relay)
+}
+
+#[test]
+fn leaving_a_group_leaves_nothing_about_it_behind() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, mut ben, storage, mut relay) = chatting_pair(&clock);
+    let ben_uid = ben.core.own_uid().unwrap().clone();
+    let gid = ann.core.create_group("Trip", &[ben_uid]).unwrap();
+    for _ in 0..6 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.toggle_pin(&gid).unwrap();
+    ann.core.leave_group(&gid).unwrap();
+    ann.online(&mut relay);
+    let leaks: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        // The group's own event log stays: it holds our "left" event, so an old copy of the log handed to us by another
+        // member cannot put us back in.
+        .filter(|(k, _)| !k.starts_with("sync.e.") && k != "groups.v1")
+        .filter(|(k, v)| !v.is_empty() && (k.contains(&gid) || v.contains(&gid)))
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(200).collect::<String>()))
+        .collect();
+    assert!(
+        leaks.is_empty(),
+        "left behind after leaving a group: {leaks:#?}"
+    );
+}
+
+#[test]
+fn erasing_everything_leaves_no_stored_value_behind() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, _ben, storage, _relay) = chatting_pair(&clock);
+    ann.core.kill_switch_app();
+    let left: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        // The report shown to the person after the erase (no keys, names or addresses: it says what was done).
+        .filter(|(k, v)| !v.is_empty() && k != "killswitch.report")
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(120).collect::<String>()))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "still stored after erasing everything: {left:#?}"
+    );
+    assert!(ann.core.snapshot().contacts.is_empty());
+}
+
+#[test]
+fn leaving_a_channel_leaves_nothing_about_it_behind() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let storage = MemoryStorage::new();
+    let mut ann = Device::on("ann", &clock, storage.clone(), MemorySecureStore::new());
+    ann.core.create_identity().unwrap();
+    let id = ann.core.join_channel("zebra-crossing").unwrap();
+    ann.core
+        .send_channel_message("zebra-crossing", "hello")
+        .unwrap();
+    ann.core.toggle_pin(&id).unwrap();
+    ann.core.leave_channel("zebra-crossing").unwrap();
+    let leaks: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        .filter(|(k, _)| !k.starts_with("sync.e."))
+        .filter(|(k, v)| !v.is_empty() && (k.contains("zebra") || v.contains("zebra")))
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(200).collect::<String>()))
+        .collect();
+    assert!(
+        leaks.is_empty(),
+        "left behind after leaving a channel: {leaks:#?}"
+    );
+}

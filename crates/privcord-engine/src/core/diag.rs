@@ -61,6 +61,18 @@ pub(super) struct DiagState {
     since: i64,
 }
 
+/// What the alias table is keyed by: a hash of the identifier, never the identifier. The table is saved with the log, and a
+/// phone's saved log must not hold a friend's address or a mailbox (a friend who was removed would still be listed).
+fn alias_key(id: &str) -> String {
+    format!(
+        "h:{}",
+        privcord_crypto::kdf::sha256_hex(format!("privcord-diag-alias|{id}").as_bytes())
+            .chars()
+            .take(16)
+            .collect::<String>()
+    )
+}
+
 /// A text with every identifier and address made harmless: long hex runs become aliases, anything long and unbroken
 /// becomes `<long>`, IP-looking pieces become `<ip>`.
 fn redact(text: &str, aliases: &mut BTreeMap<String, usize>) -> String {
@@ -73,6 +85,7 @@ fn redact(text: &str, aliases: &mut BTreeMap<String, usize>) -> String {
         let w = std::mem::take(word);
         if w.len() >= 16 && w.bytes().all(|b| b.is_ascii_hexdigit()) {
             let next = aliases.len() + 1;
+            let w = alias_key(&w);
             let n = if aliases.contains_key(&w) || aliases.len() < MAX_ALIASES {
                 *aliases.entry(w).or_insert(next)
             } else {
@@ -233,7 +246,13 @@ impl Core {
         if let Some(o) = meta.get("ids").and_then(serde_json::Value::as_object) {
             for (k, n) in o {
                 if let Some(n) = n.as_u64().and_then(|n| usize::try_from(n).ok()) {
-                    self.diag.aliases.insert(k.clone(), n);
+                    // A table saved by an older version is keyed by the identifiers themselves: re-keyed here.
+                    let key = if k.starts_with("h:") {
+                        k.clone()
+                    } else {
+                        alias_key(k)
+                    };
+                    self.diag.aliases.insert(key, n);
                 }
             }
         }
