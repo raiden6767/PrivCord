@@ -1211,7 +1211,7 @@ fn a_link_that_never_finishes_its_handshake_is_dropped_and_frees_its_dial_slot()
 #[test]
 fn the_side_that_offers_does_not_dial_someone_who_has_not_added_it_back_yet() {
     let clock = FakeClock::at(1_700_000_000_000);
-    let (mut x, mut y) = (fresh("alice", &clock), fresh("bob", &clock));
+    let (x, y) = (fresh("alice", &clock), fresh("bob", &clock));
     // `lo` is the one whose id sorts lower, so it is the one that sends offers.
     let (xu, yu) = (
         x.core.own_uid().unwrap().clone(),
