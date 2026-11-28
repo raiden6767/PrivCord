@@ -10,7 +10,7 @@
 use privcord_crypto::{
     identity::Identity,
     nostr::make_event,
-    rng::SeededEntropy,
+    rng::{random_array, OsEntropy, SeededEntropy},
     seal::{mailbox_for, seal},
 };
 use privcord_domain::{blob::SealedBlob, signaling::PutKind};
@@ -46,14 +46,16 @@ fn blob(seed: &str) -> SealedBlob {
     .unwrap()
 }
 
-/// An anonymous envelope: nothing names a sender or a recipient, and the signature is empty.
-fn envelope(iv: &str) -> SealedBlob {
-    let mut b = blob(iv);
+/// An anonymous envelope: nothing names a sender or a recipient, and the signature is empty. Its iv is random, as a real
+/// one is, so no two are alike.
+fn envelope() -> SealedBlob {
+    let mut b = blob("envelope");
+    let iv: [u8; 12] = random_array(&mut OsEntropy).unwrap();
     b.v = 3;
     b.to = String::new();
     b.from = String::new();
     b.sig = String::new();
-    b.iv = iv.into();
+    b.iv = privcord_domain::codec::encode(&iv);
     b.kem = Some("kem".into());
     b.key = Some("key".into());
     b
@@ -161,11 +163,13 @@ fn a_relay_event_is_routed_by_the_mailbox_it_names_and_the_catch_up_point_is_kep
     m.subscribe(&a, 0);
     m.subscribe(&b, 0);
     m.socket_opened(RELAY, 1);
-    let ev = |mailbox: &str, id: &str, iv: &str, ts: i64| {
-        json!({ "op": "event", "mailbox": mailbox, "id": id, "blob": envelope(iv).encode(), "ts": ts }).to_string()
+    let e = envelope();
+    let ev = |mailbox: &str, id: &str, ts: i64| {
+        json!({ "op": "event", "mailbox": mailbox, "id": id, "blob": e.encode(), "ts": ts })
+            .to_string()
     };
-    let out = m.socket_message(RELAY, &ev(&b, "i1", "iv-1", 500), 2);
-    assert_eq!(blobs(&out.events), vec![(b.clone(), "iv-1".into())]);
+    let out = m.socket_message(RELAY, &ev(&b, "i1", 500), 2);
+    assert_eq!(blobs(&out.events), vec![(b.clone(), e.iv.clone())]);
     // After a reconnect only mailbox b asks "since 500"; a still asks from the start.
     m.socket_closed(RELAY, 3);
     let again = m.tick(40_000).actions;
@@ -189,17 +193,17 @@ fn every_anonymous_envelope_gets_through_and_only_a_real_copy_is_dropped() {
     let a = mailbox_for("a");
     m.subscribe(&a, 0);
     m.socket_opened(RELAY, 1);
-    let frame = |iv: &str| {
-        json!({ "op": "event", "mailbox": a, "id": iv, "blob": envelope(iv).encode(), "ts": 1 })
-            .to_string()
+    let (one, two, three) = (envelope(), envelope(), envelope());
+    let frame = |e: &SealedBlob| {
+        json!({ "op": "event", "mailbox": a, "id": e.iv, "blob": e.encode(), "ts": 1 }).to_string()
     };
     let mut got = Vec::new();
-    for iv in ["one", "two", "three", "two"] {
-        got.extend(blobs(&m.socket_message(RELAY, &frame(iv), 2).events));
+    for e in [&one, &two, &three, &two] {
+        got.extend(blobs(&m.socket_message(RELAY, &frame(e), 2).events));
     }
     assert_eq!(
-        got.iter().map(|(_, iv)| iv.as_str()).collect::<Vec<_>>(),
-        ["one", "two", "three"]
+        got.iter().map(|(_, iv)| iv.clone()).collect::<Vec<_>>(),
+        [one.iv.clone(), two.iv.clone(), three.iv.clone()]
     );
 }
 
