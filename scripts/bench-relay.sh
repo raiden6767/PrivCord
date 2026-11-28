@@ -12,6 +12,7 @@ cat > "$TMP/s.toml" <<T
 [server]
 listen = "127.0.0.1:$PORT"
 data_dir = "$TMP/data"
+max_http_connections_per_ip = 0
 [relay]
 store_and_forward = false
 rate_limit = 1000000

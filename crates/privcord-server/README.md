@@ -19,10 +19,15 @@ Turn on what you want in the settings file.
 ## Quick start
 
 ```sh
-privcord-server init --turn     # writes privcord-server.toml
-privcord-server doctor          # checks ports, your public address, NAT
+privcord-server init --turn     # writes privcord-server.toml: private (a random access token), with caps for a small machine
+privcord-server doctor          # checks ports, your public address, NAT, and tells you what is unsafe
 privcord-server serve
 ```
+
+`init` makes a **private** server by default: it prints an access token and only people who have it can connect (put it on the
+address as `ws://YOUR-ADDRESS:8787/?token=...`). Use `init --open` only for a server you mean to run publicly. The file also sets
+caps that suit a Raspberry Pi, a Chromebook or an old laptop on a home line (2 GB of disk, 100 GB of traffic a month, 2 Mbit/s
+per connection); raise them in `[limits]` if you have room.
 
 Then in the apps, add `ws://YOUR-ADDRESS:8787` as a relay. For `wss://`, put a certificate in `[tls]` (see below) or use a TLS
 proxy such as Caddy (`reverse_proxy 127.0.0.1:8787`, with `trust_proxy = true`). TURN is `turn:YOUR-IP:3478` with credentials from

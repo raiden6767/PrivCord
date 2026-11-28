@@ -33,6 +33,10 @@ enum Cmd {
         /// Also run the TURN role.
         #[arg(long)]
         turn: bool,
+        /// Let anyone use the server. Without this the file is private: a random access token is made and only people who
+        /// have it can connect (the safe choice for a home machine, a Raspberry Pi or a spare laptop).
+        #[arg(long)]
+        open: bool,
     },
     /// Check this machine and network for what would stop the server working.
     Doctor,
@@ -88,7 +92,7 @@ data_dir = "./data"
 trust_proxy = false             # true only behind a proxy you control that sets the header below
 # real_ip_header = "x-forwarded-for"   # e.g. "cf-connecting-ip" behind Cloudflare
 # metrics = false               # Prometheus counters at /metrics (needs a token if tokens are set)
-access_tokens = []              # empty: anyone can use it; otherwise clients must send one of these
+access_tokens = [ACCESS_TOKENS]   # empty: anyone can use it; otherwise clients must send one of these (add it to the address as ?token=...)
 admin_contact = ""              # shown on the discovery page
 
 [relay]
@@ -137,10 +141,10 @@ max_port = 49400
 max_kbps = 0                    # per relayed connection, 0 = no limit
 # stun_only = true              # only answer STUN: no relaying, no logins, no port range to open
 
-# [limits]                      # all 0 = no limit
-# monthly_traffic_gb = 500
-# connection_kbps = 2000
-# disk_quota_mb = 20000
+[limits]                        # what this server may use; all 0 = no limit. These suit a Pi or an old laptop on a home line.
+monthly_traffic_gb = 100        # relay, Nostr and TURN together; at the cap new connections wait for next month
+connection_kbps = 2000          # per connection, both directions
+disk_quota_mb = 2000            # shared out as the Nostr and waiting-message caps
 "#;
 
 /// A minimal logger to stderr. Quiet by default (warnings and errors only); `PRIVCORD_LOG=info|debug|trace` turns it up. At
@@ -183,7 +187,7 @@ fn main() -> std::process::ExitCode {
         Err(e) => return fail(&e.to_string()),
     };
     let result = match cli.cmd.unwrap_or(Cmd::Serve) {
-        Cmd::Init { turn } => init(&cli.config, turn),
+        Cmd::Init { turn, open } => init(&cli.config, turn, open),
         Cmd::Serve => rt.block_on(serve(&cli.config)),
         Cmd::Doctor => rt.block_on(doctor(&cli.config)),
         Cmd::StoreKey { out } => store_key(&out),
@@ -276,22 +280,38 @@ fn fail(msg: &str) -> std::process::ExitCode {
     std::process::ExitCode::FAILURE
 }
 
-fn init(path: &std::path::Path, turn: bool) -> Result<(), String> {
+fn init(path: &std::path::Path, turn: bool, open: bool) -> Result<(), String> {
     if path.exists() {
         return Err(format!(
             "{} already exists; not overwriting it",
             path.display()
         ));
     }
+    let mut b = [0u8; 16];
+    getrandom::fill(&mut b).map_err(|e| format!("no randomness: {e}"))?;
+    let token: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    let tokens = if open {
+        String::new()
+    } else {
+        format!("\"{token}\"")
+    };
     std::fs::write(
         path,
-        TEMPLATE.replace("TURN_ENABLED", if turn { "true" } else { "false" }),
+        TEMPLATE
+            .replace("TURN_ENABLED", if turn { "true" } else { "false" })
+            .replace("ACCESS_TOKENS", &tokens),
     )
     .map_err(|e| format!("could not write {}: {e}", path.display()))?;
-    println!(
-        "wrote {}. Edit it, then run: privcord-server doctor",
-        path.display()
-    );
+    println!("wrote {}.", path.display());
+    if open {
+        println!("this server is OPEN: anyone who finds its address can use it (within the limits in the file).");
+    } else {
+        println!("this server is PRIVATE: people need this access token (it is also in the file): {token}");
+        println!(
+            "give friends the address with it, for example ws://YOUR-ADDRESS:8787/?token={token}"
+        );
+    }
+    println!("next: privcord-server doctor");
     Ok(())
 }
 
@@ -438,6 +458,21 @@ async fn doctor(path: &std::path::Path) -> Result<(), String> {
             println!("note: also forward the TCP port(s) you set for TURN over TCP / TLS; relayed traffic still leaves over UDP.");
         }
         println!("note: from inside your own network, test with a phone on mobile data, not Wi-Fi (many routers cannot loop back to their own public address).");
+    }
+    let open_to_world = cfg.server.access_tokens.is_empty()
+        && !cfg.server.listen.starts_with("127.")
+        && !cfg.server.listen.starts_with("[::1]");
+    if open_to_world && !cfg.server.trust_proxy {
+        println!("note: no access token is set and the server listens on {}: anyone who finds the address can use it (and your bandwidth). `init` makes a private file by default; add access_tokens, or keep this only for a server you mean to run publicly.", cfg.server.listen);
+    }
+    if cfg.limits.disk_quota_mb == 0 && cfg.limits.monthly_traffic_gb == 0 {
+        println!("note: [limits] sets no disk or traffic cap. On a small machine or a metered line set disk_quota_mb and monthly_traffic_gb.");
+    }
+    if std::fs::read_to_string("/proc/self/status").is_ok_and(|s| {
+        s.lines()
+            .any(|l| l.starts_with("Uid:") && l.split_whitespace().nth(1) == Some("0"))
+    }) {
+        println!("note: running as root. Run it as its own user (contrib/privcord-server.service does this), so a flaw in the server cannot touch the rest of the machine.");
     }
     if bad == 0 {
         println!("all checks passed.");
