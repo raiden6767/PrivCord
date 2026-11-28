@@ -12,7 +12,7 @@ is the map; details live in the linked documents.
 | **Links** | One authenticated, encrypted channel per contact: WebRTC data channel, or Bluetooth LE with its own forward-secret channel. After connecting, both sides prove their keys match the pinned ones. Heartbeat detects dead links. | `peerAuth.ts`, `connectivity/secureChannel.ts`, [BLE_TRANSPORT.md](BLE_TRANSPORT.md) |
 | **Finding each other** | Sealed (encrypted + signed) offers and answers delivered by signaling: public Nostr relays and/or your own relay, or through a mutual friend. Optional store-and-forward for offline friends. | `connectivity/seal.ts`, `relay/`, [CONNECTIVITY.md](CONNECTIVITY.md) |
 | **Groups** | A group is a signed event log every member holds. Members can add members; the added member's card is the introduction, so everyone connects to them automatically. Messages go to each member over that member's own link. | `groups/`, [GROUPS.md](GROUPS.md) |
-| **Storage** | Messages, contacts and group logs are stored locally with message text encrypted at rest. An outbox keeps unsent messages per recipient. | desktop `lib/localDb.ts`, Android Room |
+| **Storage** | Messages, contacts and group logs are stored locally with message text encrypted at rest. An outbox keeps unsent messages per recipient. | the Rust engine's database (desktop and Android Room) |
 
 ## Data flow for one message
 
@@ -37,5 +37,5 @@ strict networks) TURN you configure.
 ## Not implemented
 
 Some building blocks exist in `packages/protocol` but nothing uses them yet: epoch group keys
-(`e2ee/groupCrypto.ts`), the earlier (replaced) mesh router. Files are implemented in `files.ts` (8 MB in the TypeScript engine, 50 MB in the Rust engine; direct links only); open channels and
+(`e2ee/groupCrypto.ts`), the earlier (replaced) mesh router. Files are implemented in `files.ts` (50 MB in the Rust engine; direct links only); open channels and
 Bluetooth mesh relaying are in `mesh/` (see [CHANNELS_AND_MESH.md](CHANNELS_AND_MESH.md)).

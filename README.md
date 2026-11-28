@@ -294,9 +294,7 @@ Requires Node.js 20+ for the TypeScript parts and a recent stable Rust (1.82+) f
 ```bash
 npm install
 npm run typecheck
-npm test                       # protocol + desktop unit tests
-npm run dev:desktop            # UI in the browser at http://127.0.0.1:1420
-npm run e2e --workspace @duochat/desktop   # real browsers, relay, Nostr, TURN (needs Playwright)
+npm test                       # protocol + desktop unit and screen tests
 
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
@@ -321,7 +319,7 @@ The browser build uses a development store that is **not encrypted at rest** and
 | `crates/privcord-import` | Reads the old desktop and Android databases and backups |
 | `crates/privcord-ffi` | UniFFI facade and the generated Kotlin bindings |
 | `packages/protocol` | Shared TypeScript protocol, unit-tested |
-| `apps/desktop` | React + Vite in a Tauri 2 shell (Rust: secure storage, SQLite, Bluetooth), plus the Playwright e2e suite |
+| `apps/desktop` | React + Vite in a Tauri 2 shell (Rust: secure storage, SQLite, Bluetooth) |
 | `apps/android` | Kotlin + Jetpack Compose on the Rust engine |
 | `relay` | Optional self-hosted signaling / store-and-forward relay (Node.js) |
 | `docs` | Architecture, operations and Rust-migration documentation |
@@ -342,8 +340,8 @@ The browser build uses a development store that is **not encrypted at rest** and
 | Rust engine against the real desktop app | A built desktop app in headless Chromium and a separate Rust engine process talk over a simulated Bluetooth radio: pairing through the app's own dialog, messages both ways, receipts, nothing readable on the air (CI) | WebRTC, groups, files and channels against a live app; a real radio |
 | Android "rust" build | Compiles and packages in CI for four CPU types; on a real phone the native library self-test and an engine probe (identity, card, snapshot, Keystore round-trip) pass | **The chat screens on the Rust engine have not been run on a phone.** Messaging, Bluetooth, mesh, manual codes and channels are the likeliest to show bugs |
 | Android app | Compiles, unit tests, debug APK builds | The engine and screens on a device or emulator |
-| One-to-one messaging over WebRTC | Used on real hardware by the maintainer; automated e2e suite in real browsers | Two devices on different internet connections |
-| Groups and introductions | Protocol: 120+ unit tests, a 25-member simulation, offline and forged-event cases. Desktop: real browsers, a three-person introduction and a six-person group | **Android groups on a real phone**, groups larger than 6 on real connections |
+| One-to-one messaging over WebRTC | Used on real hardware by the maintainer; the page driving two real Rust engine processes in CI | Two devices on different internet connections |
+| Groups and introductions | Protocol: 120+ unit tests, a 25-member simulation, offline and forged-event cases. Desktop: screens tested against a fake engine; the engine itself in `crates/` | **Android groups on a real phone**, groups larger than 6 on real connections |
 | Bluetooth and mesh | Link encryption and framing in code and on a simulated radio; mesh logic in simulation | **Any real Bluetooth radio**. Windows can only search, so a phone must be the other side |
 | Importers (old desktop and Android data) | Generated and TypeScript-made fixtures | **Real app data from a device**. Android Room data has never been read from a real phone |
 | Windows installer | Built by CI | Run on a clean machine; signing |

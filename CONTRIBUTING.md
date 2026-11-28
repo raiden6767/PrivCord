@@ -45,7 +45,6 @@ For the larger test suites on their own:
 ```bash
 cargo test -p privcord-engine                      # add PRIVCORD_SKIP_REAL_NOSTR=1 if you have no network
 cd relay && npm test                               # the self-hosted relay
-npm run e2e --workspace @duochat/desktop           # real browsers, relay, Nostr, TURN (needs Playwright)
 ```
 
 Protocol or crypto changes need tests. A new message shape needs a case in

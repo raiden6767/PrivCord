@@ -25,8 +25,7 @@ on both apps (Android through uniffi, Windows through Tauri).
 | 6 | Relay (optional, self-hosted) | `relay/` | about 330 JS |
 | 7 | Update mechanism: Windows signed `latest.json` (`apps/desktop/src-tauri/src/updater.rs`, `tauri.conf.json`) and Android in-app installer (`AppUpdater.kt`, `AppUpdate.kt`), plus the publishing job `.github/workflows/test-builds.yml` | | |
 
-Out of scope unless you want them: the landing page (`site/`), the legacy TypeScript engine (browser development and
-end-to-end tests only), the legacy Kotlin "classic" flavour, the third-party libraries themselves (WebRTC, SQLCipher,
+Out of scope unless you want them: the landing page (`site/`), the legacy Kotlin "classic" flavour, the third-party libraries themselves (WebRTC, SQLCipher,
 RustCrypto crates), and the operating system.
 
 ## 3. What we promise (the claims to test)
@@ -74,7 +73,7 @@ We wrote the protocol composition ourselves from these primitives. That composit
 
 ## 6. Existing evidence
 
-- Unit and integration tests across the Rust workspace, plus end-to-end tests in real browsers (relay, Nostr, TURN).
+- Unit and integration tests across the Rust workspace, plus the desktop page driving two real Rust engine processes (`hosted/e2e.test.ts`) and component tests of the screens.
 - cargo-fuzz targets for every parser that reads untrusted input (`fuzz/fuzz_targets`: parsers, engine, sync log,
   media, text decoders, Bluetooth reassembly), run in CI with seeds from the test vectors.
 - CodeQL (Rust, TypeScript, Python, Actions), `cargo audit`, `npm audit` and Dependabot on every change; `deny.toml`

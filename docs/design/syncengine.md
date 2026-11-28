@@ -2,7 +2,7 @@
 
 Status: **steps 1–4 built; steps 5–10 to come.** See [§16](#16-what-is-built) for exactly what runs today.
 Scope: the Rust engine (`crates/privcord-*`). Android, Windows, macOS and Linux get it through thin platform adapters, as
-they get the rest of the engine. The TypeScript engine (browser preview) does not sync (risk 128).
+they get the rest of the engine. The TypeScript engine (browser preview) that did not sync (risk 128) has been removed.
 
 ## 1. Goal
 
