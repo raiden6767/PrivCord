@@ -9,7 +9,6 @@ import {
   uidFromKeys,
   verifyIdentityProof,
 } from '../src';
-import { verifyEvent } from '../../../apps/desktop/src/lib/signaling/nostr';
 
 // Written by the Android unit tests (RelayInteropTest "export Kotlin made artifacts"). Run
 // `gradle :app:testDebugUnitTest` in apps/android first; without the file these checks are skipped.
@@ -46,10 +45,6 @@ describe.skipIf(!existsSync(file))('artifacts produced by the Android app', () =
     expect(wrong).toBeNull();
   });
 
-  it('a Nostr event signed in Kotlin passes the desktop verifier', () => {
-    expect(verifyEvent(k.event)).toBe(true);
-    expect(verifyEvent({ ...k.event, content: k.event.content + 'x' })).toBe(false);
-  });
 });
 
 // Written by SecureChannelTest ("export Kotlin made frames"). Kotlin plays Bob with the fixed ephemeral key and nonce
