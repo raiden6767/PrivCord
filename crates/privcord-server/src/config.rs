@@ -64,6 +64,9 @@ pub struct ServerConfig {
     /// The same, from one address (a /64 for IPv6). 0: no limit; it is also off with `trust_proxy`, where every visitor
     /// arrives from the proxy.
     pub max_http_connections_per_ip: usize,
+    /// Ask the home router (UPnP) to forward this server's ports, and remove them when the server stops. Off unless you
+    /// turn it on: opening a port is a decision, and it only helps behind a router that has its own internet address.
+    pub port_mapping: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +137,7 @@ impl Default for ServerConfig {
             request_timeout_secs: 30,
             max_http_connections: 20_000,
             max_http_connections_per_ip: 100,
+            port_mapping: false,
         }
     }
 }

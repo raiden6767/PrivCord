@@ -141,6 +141,7 @@ pub fn is_blocked(ip: std::net::IpAddr) -> bool {
                 || v4.is_link_local()
                 || v4.is_broadcast()
                 || v4.is_multicast()
+                || o[0] == 0 // "this network"
                 || (o[0] == 100 && (64..128).contains(&o[1])) // carrier-grade NAT
                 || (o[0] == 192 && o[1] == 0 && o[2] == 0) // protocol assignments
                 || (o[0] == 198 && (18..20).contains(&o[1])) // benchmarking
@@ -151,6 +152,31 @@ pub fn is_blocked(ip: std::net::IpAddr) -> bool {
                 return is_blocked(IpAddr::V4(v4));
             }
             let seg = v6.segments();
+            let v4_of = |hi: u16, lo: u16| {
+                std::net::Ipv4Addr::new((hi >> 8) as u8, hi as u8, (lo >> 8) as u8, lo as u8)
+            };
+            // Ways to write an IPv4 address inside an IPv6 one: what they point at is judged as the IPv4 address it is, so
+            // a private address cannot be reached by dressing it up.
+            if seg[0] == 0x2002 {
+                // 6to4
+                return is_blocked(IpAddr::V4(v4_of(seg[1], seg[2])));
+            }
+            if seg[0] == 0x0064 && seg[1] == 0xff9b {
+                // NAT64: the well-known /96 stands for the IPv4 address in its last 32 bits; the local-use /48 is private.
+                return seg[2] != 0
+                    || seg[3..6].iter().any(|s| *s != 0)
+                    || is_blocked(IpAddr::V4(v4_of(seg[6], seg[7])));
+            }
+            if seg[0] == 0x2001 && seg[1] == 0 {
+                return true; // Teredo: tunnels to who-knows-where
+            }
+            if seg[0] == 0x2001 && seg[1] == 0x0db8 {
+                return true; // documentation
+            }
+            if seg[..6].iter().all(|s| *s == 0) {
+                // ::a.b.c.d (deprecated IPv4-compatible)
+                return is_blocked(IpAddr::V4(v4_of(seg[6], seg[7])));
+            }
             v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
@@ -604,6 +630,15 @@ mod block_tests {
             "::ffff:192.168.0.1",
             "::ffff:127.0.0.1",
             "255.255.255.255",
+            // IPv4 addresses written inside IPv6 ones
+            "2002:c0a8:0101::1",                    // 6to4 of 192.168.1.1
+            "2002:7f00:0001::1",                    // 6to4 of 127.0.0.1
+            "64:ff9b::a00:1",                       // NAT64 of 10.0.0.1
+            "64:ff9b:1::1",                         // NAT64 local use
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2", // Teredo
+            "2001:db8::1",                          // documentation
+            "::10.0.0.1",                           // IPv4-compatible
+            "::7f00:1",
         ] {
             assert!(is_blocked(bad.parse().unwrap()), "{bad} should be blocked");
         }
@@ -614,6 +649,8 @@ mod block_tests {
             "100.63.255.255",
             "2606:4700::1111",
             "::ffff:8.8.8.8",
+            "2002:0808:0808::1", // 6to4 of 8.8.8.8
+            "64:ff9b::808:808",  // NAT64 of 8.8.8.8
         ] {
             assert!(
                 !is_blocked(fine.parse().unwrap()),

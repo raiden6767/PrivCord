@@ -338,6 +338,26 @@ pub fn checks(app: &App, data_dir: &Path, self_signed: bool) -> Vec<Check> {
         }
     }
 
+    // Forwarding ports on the home router, when asked for.
+    if c.server.port_mapping {
+        let state = app
+            .portmap
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let (ok, words) = crate::portmap::describe(&state);
+        out.push(check(
+            if ok { Level::Good } else { Level::Watch },
+            "Reachable from the internet",
+            words,
+            if ok {
+                ""
+            } else {
+                "Rent a small server and run this program there, or turn the forwarding off."
+            },
+        ));
+    }
+
     // Traffic and disk budgets, when the operator set them.
     let (used, cap) = (app.usage.total(), app.usage.cap());
     if cap > 0 {

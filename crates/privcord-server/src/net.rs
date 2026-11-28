@@ -24,6 +24,14 @@ use std::time::Duration;
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 
+/// What a connection presented when it was let in, kept to check again later (see `App::still_welcome`).
+struct Who {
+    headers: HeaderMap,
+    query: HashMap<String, String>,
+    peer: std::net::IpAddr,
+    ip: String,
+}
+
 pub struct App {
     pub cfg: Config,
     pub relay: Option<Arc<Relay>>,
@@ -43,8 +51,12 @@ pub struct App {
     pub admin: std::sync::OnceLock<std::sync::Weak<crate::admin::AdminState>>,
     /// Traffic counted this month (and its cap).
     pub usage: Arc<crate::limits::Usage>,
+    /// Where the router port forwarding stands (see `portmap`).
+    pub portmap: crate::portmap::Status,
     /// Set when the panel asks for a restart with new choices (see `supervise`).
     pub restart: tokio::sync::Notify,
+    /// Authorization events of the management API already used (see `nostr::nip98::Seen`).
+    pub nip98_seen: crate::nostr::nip98::Seen,
 }
 
 impl App {
@@ -53,6 +65,7 @@ impl App {
         relay: Option<Arc<Relay>>,
         turn: Option<(Vec<u8>, Vec<String>)>,
         usage: Arc<crate::limits::Usage>,
+        portmap: crate::portmap::Status,
     ) -> Self {
         let cfg_trusted: Vec<std::net::IpAddr> = cfg
             .server
@@ -80,7 +93,9 @@ impl App {
             blocked_ips: std::sync::RwLock::new(std::collections::HashSet::new()),
             admin: std::sync::OnceLock::new(),
             usage,
+            portmap,
             restart: tokio::sync::Notify::new(),
+            nip98_seen: crate::nostr::nip98::Seen::default(),
         }
     }
 
@@ -116,6 +131,13 @@ impl App {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_empty()
+    }
+
+    /// Whether a connection that was let in is still welcome: its token is still accepted (a token deleted in the panel
+    /// must lock out the sockets it opened, not only new ones) and its address has not been blocked since.
+    fn still_welcome(&self, who: &Who) -> bool {
+        self.allowed(&who.headers, &who.query)
+            && !(self.ip_blocked(who.peer) || who.ip.parse().is_ok_and(|a| self.ip_blocked(a)))
     }
 
     fn allowed(&self, headers: &HeaderMap, query: &HashMap<String, String>) -> bool {
@@ -158,6 +180,32 @@ pub fn ip_group(ip: std::net::IpAddr) -> std::net::IpAddr {
     }
 }
 
+/// This machine, or an address on a private network (a proxy in front of us on the same host, in a container network or on the
+/// same LAN).
+fn is_local(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// The visitor's address as an address (grouped like [`client_ip`]), for counting wrong tokens against; the peer's own when
+/// the header gives none.
+pub fn client_addr(
+    addr: SocketAddr,
+    headers: &HeaderMap,
+    cfg: &crate::config::ServerConfig,
+    trusted: &[std::net::IpAddr],
+) -> std::net::IpAddr {
+    client_ip(addr, headers, cfg.trust_proxy, &cfg.real_ip_header, trusted)
+        .parse()
+        .unwrap_or_else(|_| ip_group(addr.ip()))
+}
+
 pub fn client_ip(
     addr: SocketAddr,
     headers: &HeaderMap,
@@ -165,8 +213,15 @@ pub fn client_ip(
     header: &str,
     trusted_proxies: &[std::net::IpAddr],
 ) -> String {
-    let believe =
-        trust_proxy && (trusted_proxies.is_empty() || trusted_proxies.contains(&addr.ip()));
+    // With a list, only those proxies are believed. With none, only a proxy on this machine or its own network is: a header
+    // from an address on the internet could be anything the visitor wrote, and would let them pick the address that limits
+    // and blocks are counted against.
+    let believe = trust_proxy
+        && if trusted_proxies.is_empty() {
+            is_local(addr.ip())
+        } else {
+            trusted_proxies.contains(&addr.ip())
+        };
     if believe {
         // A proxy may add a header line of its own instead of extending the visitor's: the LAST value is the one our
         // proxy wrote; earlier ones are whatever the visitor claimed.
@@ -436,13 +491,24 @@ async fn management(
         i64::try_from(now).unwrap_or(0),
     ) {
         Err(why) => return reply(StatusCode::UNAUTHORIZED, json!({ "error": why })),
-        Ok(pk) if !keys.contains(&pk) => {
+        Ok((pk, _)) if !keys.contains(&pk) => {
             return reply(
                 StatusCode::UNAUTHORIZED,
                 json!({ "error": "that key is not an administrator of this relay" }),
             )
         }
-        Ok(_) => {}
+        Ok((_, id)) => {
+            // One signed request is good once: a copy of it captured on the way cannot be sent again.
+            if !app
+                .nip98_seen
+                .first_use(id, i64::try_from(now).unwrap_or(0))
+            {
+                return reply(
+                    StatusCode::UNAUTHORIZED,
+                    json!({ "error": "this Authorization event was already used; sign a new one" }),
+                );
+            }
+        }
     }
     let Some(admin) = app.admin.get().and_then(std::sync::Weak::upgrade) else {
         return reply(
@@ -540,10 +606,18 @@ async fn socket(
         .read_buffer_size(4 * 1024)
         .max_write_buffer_size(256 * 1024)
         .max_frame_size(biggest)
-        .on_upgrade(move |socket| serve(socket, app, ip))
+        .on_upgrade(move |socket| {
+            let who = Who {
+                headers,
+                query: q,
+                peer: addr.ip(),
+                ip: ip.clone(),
+            };
+            serve(socket, app, ip, who)
+        })
 }
 
-async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
+async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String, who: Who) {
     let Some(relay) = app.relay.clone() else {
         return;
     };
@@ -639,6 +713,10 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
                     Message::Close(_) => break,
                     _ => continue,
                 };
+                if !app.still_welcome(&who) {
+                    let _ = tx.send(Out::Close(1008, "no longer allowed"));
+                    break;
+                }
                 app.usage.web(text.len(), 0);
                 if let Some(p) = pace_in.as_mut() {
                     p.wait(text.len()).await;
@@ -655,7 +733,7 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
             }
             _ = beat.tick() => {
                 // Nothing heard since the last beat (not even a pong): the other end is gone.
-                if !alive { break }
+                if !alive || !app.still_welcome(&who) { break }
                 alive = false;
                 let _ = tx.send(Out::Ping);
             }

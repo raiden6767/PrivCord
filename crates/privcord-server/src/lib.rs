@@ -12,6 +12,7 @@ pub mod limits;
 pub mod nat;
 pub mod net;
 pub mod nostr;
+pub mod portmap;
 pub mod protocols;
 pub mod record;
 pub mod relay;
@@ -216,12 +217,41 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
     let turn_port = None;
     #[cfg(not(feature = "turn"))]
     let turn_info = None;
+    let portmap_status: portmap::Status = Arc::default();
+    // What the router is asked to forward: the ports this server listens on (never the admin panel's).
+    let mut mapped_ports: Vec<(portmap::Proto, u16)> = vec![(portmap::Proto::Tcp, addr.port())];
+    if let Some(p) = cfg
+        .tls
+        .https_listen
+        .parse::<SocketAddr>()
+        .ok()
+        .filter(|_| !cfg.tls.https_listen.is_empty())
+    {
+        mapped_ports.push((portmap::Proto::Tcp, p.port()));
+    }
+    if let Some(p) = turn_port {
+        mapped_ports.push((portmap::Proto::Udp, p));
+        if !cfg.turn.stun_only {
+            mapped_ports
+                .extend((cfg.turn.min_port..=cfg.turn.max_port).map(|p| (portmap::Proto::Udp, p)));
+        }
+    }
+    if let (Some(t), _) | (_, Some(t)) = turn_ports.unwrap_or((None, None)) {
+        mapped_ports.push((portmap::Proto::Tcp, t));
+    }
+    let want_port_mapping = cfg.server.port_mapping;
     let https_listen = cfg.tls.https_listen.clone();
     let acme_cfg = cfg.tls.clone();
     let admin_cfg = cfg.admin.clone();
     let data_dir = cfg.server.data_dir.clone();
     let http_limits = serve::HttpLimits::from_config(&cfg.server);
-    let app = Arc::new(net::App::new(cfg, relay.clone(), turn_info, usage.clone()));
+    let app = Arc::new(net::App::new(
+        cfg,
+        relay.clone(),
+        turn_info,
+        usage.clone(),
+        portmap_status.clone(),
+    ));
     let (stop, mut stopped) = tokio::sync::watch::channel(false);
     let router = net::router(app.clone());
     let mut for_server = stopped.clone();
@@ -326,6 +356,14 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
         .filter(|n| n.cfg.durable && n.cfg.persist)
         .map(|n| tokio::spawn(n.run_committer(stopped.clone())));
     let stopped_for_acme = stopped.clone();
+    // Forwarding the server's ports on the router, when asked for; the mappings are removed at stop.
+    let portmap_task = want_port_mapping.then(|| {
+        tokio::spawn(portmap::run(
+            mapped_ports,
+            portmap_status.clone(),
+            stopped.clone(),
+        ))
+    });
     // The traffic counters are saved about once a minute, and once more at stop.
     let usage_task = {
         let (u, mut st) = (usage.clone(), stopped.clone());
@@ -388,6 +426,9 @@ pub async fn start(mut cfg: Config) -> Result<Running, String> {
             let _ = s.await;
         }
         let _ = usage_task.await;
+        if let Some(t) = portmap_task {
+            let _ = t.await;
+        }
         if let Some(c) = committer {
             // Confirms what was still waiting for the disk.
             let _ = c.await;

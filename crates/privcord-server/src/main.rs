@@ -84,6 +84,7 @@ const TEMPLATE: &str = r#"# PrivCord server settings. Whoever runs this server i
 [server]
 listen = "0.0.0.0:8787"        # the relay's web address (put a TLS proxy such as Caddy in front for wss://)
 data_dir = "./data"
+# port_mapping = true           # ask the home router (UPnP) to forward this server's ports, and remove them at stop
 trust_proxy = false             # true only behind a proxy you control that sets the header below
 # real_ip_header = "x-forwarded-for"   # e.g. "cf-connecting-ip" behind Cloudflare
 # metrics = false               # Prometheus counters at /metrics (needs a token if tokens are set)

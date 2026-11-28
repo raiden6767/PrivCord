@@ -76,6 +76,18 @@ impl MemoryStorage {
     pub fn applied_batches(&self) -> usize {
         self.applied.load(Ordering::SeqCst)
     }
+
+    /// Everything kept under a name (not contacts, messages or files), as text: for tests that look for what a removal
+    /// left behind.
+    pub fn kv_dump(&self) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = lock(&self.data)
+            .kv
+            .iter()
+            .map(|(k, b)| (k.clone(), String::from_utf8_lossy(b).into_owned()))
+            .collect();
+        v.sort();
+        v
+    }
 }
 
 impl Storage for MemoryStorage {

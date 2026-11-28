@@ -161,6 +161,36 @@ impl Core {
         Ok(())
     }
 
+    /// A conversation is gone: no pin, archive, silence or mute stays for it.
+    pub(super) fn forget_chat_prefs(&mut self, conversation: &str) {
+        let (mut pins, mut archived, mut silent) = (
+            self.prefs.pins.clone(),
+            self.prefs.archived.clone(),
+            self.prefs.silent_chats.clone(),
+        );
+        let mut mute = self.prefs.mute_until.clone();
+        pins.retain(|c| c != conversation);
+        archived.retain(|c| c != conversation);
+        silent.retain(|c| c != conversation);
+        mute.remove(conversation);
+        if pins != self.prefs.pins {
+            let _ = self.save_pref(KV_PINS, serde_json::json!(pins));
+            self.prefs.pins = pins;
+        }
+        if archived != self.prefs.archived {
+            let _ = self.save_pref(KV_ARCHIVED, serde_json::json!(archived));
+            self.prefs.archived = archived;
+        }
+        if silent != self.prefs.silent_chats {
+            let _ = self.save_pref(KV_SILENT, serde_json::json!(silent));
+            self.prefs.silent_chats = silent;
+        }
+        if mute != self.prefs.mute_until {
+            let _ = self.save_pref(KV_MUTE_UNTIL, serde_json::json!(mute));
+            self.prefs.mute_until = mute;
+        }
+    }
+
     /// Pin a chat to the top (or take it off). At most three; the oldest pin drops off.
     pub fn toggle_pin(&mut self, conversation: &str) -> Result<(), ErrorCode> {
         self.require_live()?;

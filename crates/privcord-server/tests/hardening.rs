@@ -131,3 +131,31 @@ async fn one_address_cannot_hold_more_connections_than_allowed_and_websockets_ar
     assert_eq!(sockets.len(), 8);
     r.stop().await;
 }
+
+#[test]
+fn a_forwarded_for_header_is_believed_only_from_a_proxy_we_can_trust() {
+    use axum::http::HeaderMap;
+    let mut h = HeaderMap::new();
+    h.insert("x-forwarded-for", "203.0.113.7".parse().unwrap());
+    let ip = |peer: &str, list: &[std::net::IpAddr]| {
+        privcord_server::net::client_ip(
+            format!("{peer}:1").parse().unwrap(),
+            &h,
+            true,
+            "x-forwarded-for",
+            list,
+        )
+    };
+    // No list: a proxy on this machine or its own network is believed; one on the internet is not.
+    assert_eq!(ip("127.0.0.1", &[]), "203.0.113.7");
+    assert_eq!(ip("172.18.0.2", &[]), "203.0.113.7");
+    assert_eq!(
+        ip("198.51.100.9", &[]),
+        "198.51.100.9",
+        "an outsider cannot pick its own address"
+    );
+    // A list: only those.
+    let list: Vec<std::net::IpAddr> = vec!["198.51.100.9".parse().unwrap()];
+    assert_eq!(ip("198.51.100.9", &list), "203.0.113.7");
+    assert_eq!(ip("127.0.0.1", &list), "127.0.0.1");
+}

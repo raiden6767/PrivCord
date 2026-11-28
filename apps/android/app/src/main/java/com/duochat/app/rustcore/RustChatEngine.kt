@@ -560,6 +560,7 @@ class RustChatEngine(
             }
             is EventDto.FileQueued -> senders[event.peer]?.beginTransfer(event.messageId, event.frames.toLong())
             is EventDto.PeerStateChanged -> requestRefresh()
+            is EventDto.ContactRemoved -> { forgetPeerState(event.uid); requestRefresh() }
             is EventDto.DeviceLink -> {
                 _state.update { it.copy(deviceLink = com.duochat.app.data.DeviceLinkState(event.stage, event.code, event.name)) }
                 requestRefresh()
@@ -588,6 +589,13 @@ class RustChatEngine(
      * before the engine has said anything does it fall back to comparing ids.
      */
     private val initiatorOf = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /** A friend was removed: nothing this adapter noted about them (or their devices) may colour a later friendship. */
+    private fun forgetPeerState(uid: String) {
+        fun <V> MutableMap<String, V>.forget() = keys.removeAll { it == uid || it.startsWith("$uid.") }
+        initiatorOf.forget(); attempts.forget(); heardFrom.forget(); progress.forget(); incoming.forget()
+        bleLastAttempt.forget(); dialStartedAt.forget(); extra.forget()
+    }
 
     private fun isInitiator(peer: String): Boolean = initiatorOf[peer] ?: ((last?.ownUid ?: "") < peer)
 
@@ -1127,7 +1135,11 @@ class RustChatEngine(
         is uniffi.privcord_ffi.FfiException.Storage, is uniffi.privcord_ffi.FfiException.SecureStorage -> "This phone could not save that. Check free storage and try again."
         is uniffi.privcord_ffi.FfiException.InviteNotFound -> "Could not find that invite. Check the words, or ask your friend to share it again."
         is uniffi.privcord_ffi.FfiException.InvalidInvite -> "That is not a valid invite. Check the words, or ask your friend to share it again."
-        is uniffi.privcord_ffi.FfiException.NoSignaling -> "No connection service is set up, so six words cannot be looked up. Turn one on in Settings > Connection, or use the long invite."
+        is uniffi.privcord_ffi.FfiException.NoSignaling -> when (hubStatus()) {
+            SignalingStatus.CONNECTING -> "Still connecting to the connection service. Wait a few seconds and try again."
+            SignalingStatus.ERROR -> "Could not reach the connection service just now. Check your internet connection and try again, or use the long invite."
+            else -> "No connection service is set up, so six words cannot be looked up. Turn one on in Settings > Connection, or use the long invite."
+        }
         is uniffi.privcord_ffi.FfiException.WeakPassphrase -> "Use a longer backup passphrase: at least 12 characters."
         is uniffi.privcord_ffi.FfiException.BackupUnreadable -> "That backup could not be opened. Check the passphrase, or that it is a PrivCord backup."
         is uniffi.privcord_ffi.FfiException.BackupNotYours -> "That backup belongs to a different account (another recovery phrase)."
@@ -1240,7 +1252,13 @@ class RustChatEngine(
     override fun leaveChannel(conversationId: String) { scope.launch { call { leaveChannel(conversationId.removePrefix("chan:")) } } }
     override fun muteSender(uid: String) { scope.launch { call { setMuted(uid, true) } } }
 
-    override suspend fun createInvite(): Result<ActiveInvite> = call { createInvite() }.map { ActiveInvite(it.words, it.expiresAt) }
+    override suspend fun createInvite(): Result<ActiveInvite> {
+        // Just back from another app (the words are sent from somewhere else), the connection service is still reconnecting:
+        // wait for it a few seconds instead of failing.
+        var waited = 0
+        while (hubStatus() == SignalingStatus.CONNECTING && waited < 8_000) { delay(250); waited += 250 }
+        return call { createInvite() }.map { ActiveInvite(it.words, it.expiresAt) }
+    }
     override fun closeInvite() { scope.launch { call { stopInvite() } } }
     override suspend fun acceptRequest(uid: String): Result<String> = call { acceptRequest(uid) }
     override fun dismissRequest(uid: String) { scope.launch { call { dismissRequest(uid) } } }
@@ -1261,6 +1279,8 @@ class RustChatEngine(
         removeBlocker(uid)?.let { return Result.failure(IllegalStateException(it)) }
         return call { removeContact(uid) }
     }
+
+    override suspend fun repairFriend(uid: String): Result<Unit> = call { repairContact(uid) }.also { requestRefresh() }
 
     override fun setGroupOnly(value: Boolean) {
         groupOnly = value

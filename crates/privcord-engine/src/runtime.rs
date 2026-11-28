@@ -141,6 +141,7 @@ pub enum Op {
     AcceptRequest(UserId),
     DismissRequest(UserId),
     RemoveContact(UserId),
+    RepairContact(UserId),
     SetStoreForward(bool),
     SetDisplayName(String),
     DeleteMessage {
@@ -419,6 +420,7 @@ fn pump(core: &mut Core, cmd: Command) -> bool {
                     Ok(Answer::Done)
                 }
                 Op::RemoveContact(u) => core.remove_contact(&u).map(|()| Answer::Done),
+                Op::RepairContact(u) => core.repair_contact(&u).map(|()| Answer::Done),
                 Op::SetStoreForward(v) => core.set_store_forward(v).map(|()| Answer::Done),
                 Op::SetDisplayName(n) => core.set_display_name(&n).map(|()| Answer::Done),
                 Op::DeleteMessage { id, everyone } => {

@@ -1286,6 +1286,12 @@ impl PrivcordEngine {
         self.misc(Op::RemoveContact(user(&uid)?))
     }
 
+    /// Start the connection with a friend over (forget the keys exchanged, drop the link, ask again, dial at once): for a
+    /// friendship that stays stuck.
+    pub fn repair_contact(&self, uid: String) -> Result<(), FfiError> {
+        self.misc(Op::RepairContact(user(&uid)?))
+    }
+
     /// Keep invites on the relay for 15 minutes as well as publishing them live.
     pub fn set_store_forward(&self, value: bool) -> Result<(), FfiError> {
         self.misc(Op::SetStoreForward(value))

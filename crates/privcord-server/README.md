@@ -232,6 +232,16 @@ The month's traffic is counted in `data_dir/usage.json` (saved about once a minu
 and shown on the panel and in the health report, which warns at 80% and turns red at the cap. The counters split the relay and
 Nostr together from TURN for now; they will be split further when each protocol is its own module.
 
+## Being reachable from the internet without logging in to the router
+
+Phones have to be able to reach the server. On a home connection that normally means forwarding ports in the router. With
+`[server] port_mapping = true` the server asks the router to do it (UPnP), for only the ports it listens on (never the admin
+panel's), renews the request every half hour (each lasts an hour, so a crash leaves nothing open for long), and removes them when it
+stops. It is off by default: opening a port is a decision.
+
+It cannot help when the provider shares one internet address between customers (carrier-grade NAT); the health report says so in
+words. Then the choices are a small rented server (about $3-5 a month) running this program, or a tunnel to one.
+
 ## Backup, restore, and moving to another server
 
 One command saves everything the server keeps (people's waiting messages, Nostr events, admins, the TURN secret, the TLS

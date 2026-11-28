@@ -377,7 +377,9 @@ fun FriendDetailsDialog(
     onRename: (String) -> Unit,
     onChecked: () -> Unit,
     onRemove: ((Result<Unit>) -> Unit) -> Unit,
+    onRepair: ((Result<Unit>) -> Unit) -> Unit = {},
 ) {
+    var repairNote by remember { mutableStateOf<String?>(null) }
     var name by remember(friend.uid) { mutableStateOf(friend.name) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmRemove by remember { mutableStateOf(false) }
@@ -405,6 +407,16 @@ fun FriendDetailsDialog(
                     TextButton(onClick = onChecked) { Text("The numbers match") }
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                // For a friendship that stays stuck: starts the connection with them over, and keeps the chat and the friend.
+                TextButton(onClick = {
+                    onRepair { result ->
+                        repairNote = result.fold(
+                            onSuccess = { "Connection reset. It can take a minute; both phones need the app open." },
+                            onFailure = { it.message ?: "That did not work." },
+                        )
+                    }
+                }) { Text("Reset the connection with ${friend.name}") }
+                repairNote?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 if (confirmRemove) {
                     Text("Remove ${friend.name} and delete this chat from the phone?", style = MaterialTheme.typography.bodyMedium)
                     Row {

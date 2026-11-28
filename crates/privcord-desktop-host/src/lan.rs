@@ -44,6 +44,8 @@ pub struct LanConfig {
 pub const BEACON_PORT: u16 = 47_811;
 /// The longest line read from a connection (a frame is at most 128 KiB, and JSON-escaped text fits well within this).
 const MAX_LINE: usize = 512 * 1024;
+/// The longest first line (a beacon) accepted from a connection that has not proved anything yet.
+const MAX_HELLO: usize = 4096;
 
 impl Default for LanConfig {
     fn default() -> Self {
@@ -154,7 +156,14 @@ impl Lan {
                     let Ok(mut r) = stream.try_clone().map(BufReader::new) else {
                         continue;
                     };
-                    if r.read_line(&mut first).is_err() {
+                    // The first line is a beacon of a few hundred bytes: anything longer is not one, and is not read to the end
+                    // (a machine on the network could otherwise send endless text without a line break).
+                    if r.by_ref()
+                        .take(MAX_HELLO as u64)
+                        .read_line(&mut first)
+                        .is_err()
+                        || !first.ends_with('\n')
+                    {
                         continue;
                     }
                     // Only another device of ours, saying so with a beacon of its own (one we would not connect to:

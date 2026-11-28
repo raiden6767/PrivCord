@@ -1150,6 +1150,8 @@ internal open class UniffiVTableCallbackInterfaceTransportCallbacks(
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -1317,6 +1319,8 @@ internal interface UniffiLib : Library {
     fun uniffi_privcord_ffi_fn_method_privcordengine_rename_contact(`ptr`: Pointer,`uid`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_privcord_ffi_fn_method_privcordengine_rename_group(`ptr`: Pointer,`group`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_privcord_ffi_fn_method_privcordengine_repair_contact(`ptr`: Pointer,`uid`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     fun uniffi_privcord_ffi_fn_method_privcordengine_request_device_removal(`ptr`: Pointer,`device`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
@@ -1718,6 +1722,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_rename_group(
     ): Short
+    fun uniffi_privcord_ffi_checksum_method_privcordengine_repair_contact(
+    ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_request_device_removal(
     ): Short
     fun uniffi_privcord_ffi_checksum_method_privcordengine_reset_dial_backoff(
@@ -2062,6 +2068,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_rename_group() != 8179.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_repair_contact() != 35360.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_privcord_ffi_checksum_method_privcordengine_request_device_removal() != 59975.toShort()) {
@@ -3825,6 +3834,12 @@ public interface PrivcordEngineInterface {
     fun `renameGroup`(`group`: kotlin.String, `name`: kotlin.String)
     
     /**
+     * Start the connection with a friend over (forget the keys exchanged, drop the link, ask again, dial at once): for a
+     * friendship that stays stuck.
+     */
+    fun `repairContact`(`uid`: kotlin.String)
+    
+    /**
      * Ask for another device of the account to be removed: every device shows it, and it happens in 24 hours unless
      * taken back (a device holding the account key can only be removed with the phrase).
      */
@@ -4944,6 +4959,22 @@ open class PrivcordEngine: Disposable, AutoCloseable, PrivcordEngineInterface {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_rename_group(
         it, FfiConverterString.lower(`group`),FfiConverterString.lower(`name`),_status)
+}
+    }
+    
+    
+
+    
+    /**
+     * Start the connection with a friend over (forget the keys exchanged, drop the link, ask again, dial at once): for a
+     * friendship that stays stuck.
+     */
+    @Throws(FfiException::class)override fun `repairContact`(`uid`: kotlin.String)
+        = 
+    callWithPointer {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.INSTANCE.uniffi_privcord_ffi_fn_method_privcordengine_repair_contact(
+        it, FfiConverterString.lower(`uid`),_status)
 }
     }
     

@@ -3143,3 +3143,291 @@ fn removing_a_friend_and_scanning_their_qr_code_again_gets_through_as_a_request(
         }
     }
 }
+
+#[test]
+fn removing_a_friend_leaves_nothing_about_them_behind() {
+    // The class of bug behind the stale-keys failure: adding someone creates state in many places, and removing them
+    // must undo all of it. Every stored value is searched for the friend's address after the removal.
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let storage = MemoryStorage::new();
+    let mut ann = Device::on("ann", &clock, storage.clone(), MemorySecureStore::new());
+    ann.core.create_identity().unwrap();
+    let mut ben = Device::new("ben", &clock);
+    ben.core.create_identity().unwrap();
+    let (ann_uid, ben_uid) = (
+        ann.core.own_uid().unwrap().clone(),
+        ben.core.own_uid().unwrap().clone(),
+    );
+    ann.core.set_store_forward(true).unwrap();
+    ben.core.set_store_forward(true).unwrap();
+    ann.core
+        .accept_invite(&ben.core.own_card(Some("Ben")).unwrap())
+        .unwrap();
+    for _ in 0..4 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ben.core.accept_request(&ann_uid).unwrap();
+    for _ in 0..8 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.send_message(&ben_uid, "hi", None).unwrap();
+    ben.core.send_message(&ann_uid, "hello", None).unwrap();
+    ann.core.set_muted(&ben_uid, true).unwrap();
+    let conv = ben_uid.to_string();
+    ann.core.toggle_pin(&conv).unwrap();
+    ann.core.set_archived(&conv, true).unwrap();
+    ann.core.set_silent(&conv, true).unwrap();
+    ann.core
+        .set_mute_until(&conv, 1_700_000_000_000 + 86_400_000)
+        .unwrap();
+    ann.core
+        .schedule_message(&conv, false, "later", 1_700_000_000_000 + 3_600_000)
+        .unwrap();
+    for _ in 0..8 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.remove_contact(&ben_uid).unwrap();
+    ann.online(&mut relay);
+    let needle = ben_uid.to_string();
+    let leaks: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        // The sync log is the account's append-only history (it must keep "removed" to tell the other devices); an empty
+        // value is a deleted entry.
+        .filter(|(k, _)| !k.starts_with("sync.e."))
+        .filter(|(k, v)| !v.is_empty() && (k.contains(&needle) || v.contains(&needle)))
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(300).collect::<String>()))
+        .collect();
+    assert!(
+        leaks.is_empty(),
+        "left behind after removing a friend: {leaks:#?}"
+    );
+}
+
+/// Two friends who have chatted; returns (ann, ben, ann's storage, relay).
+fn chatting_pair(clock: &Arc<FakeClock>) -> (Device, Device, Arc<MemoryStorage>, Relay) {
+    let mut relay = Relay::default();
+    let storage = MemoryStorage::new();
+    let mut ann = Device::on("ann", clock, storage.clone(), MemorySecureStore::new());
+    ann.core.create_identity().unwrap();
+    let mut ben = Device::new("ben", clock);
+    ben.core.create_identity().unwrap();
+    let ann_uid = ann.core.own_uid().unwrap().clone();
+    let ben_uid = ben.core.own_uid().unwrap().clone();
+    ann.core.set_store_forward(true).unwrap();
+    ben.core.set_store_forward(true).unwrap();
+    ann.core
+        .accept_invite(&ben.core.own_card(Some("Ben")).unwrap())
+        .unwrap();
+    for _ in 0..4 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ben.core.accept_request(&ann_uid).unwrap();
+    for _ in 0..6 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.send_message(&ben_uid, "hi", None).unwrap();
+    for _ in 0..6 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    (ann, ben, storage, relay)
+}
+
+#[test]
+fn leaving_a_group_leaves_nothing_about_it_behind() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, mut ben, storage, mut relay) = chatting_pair(&clock);
+    let ben_uid = ben.core.own_uid().unwrap().clone();
+    let gid = ann.core.create_group("Trip", &[ben_uid]).unwrap();
+    for _ in 0..6 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core.toggle_pin(&gid).unwrap();
+    ann.core.leave_group(&gid).unwrap();
+    ann.online(&mut relay);
+    let leaks: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        // The group's own event log stays: it holds our "left" event, so an old copy of the log handed to us by another
+        // member cannot put us back in.
+        .filter(|(k, _)| !k.starts_with("sync.e.") && k != "groups.v1")
+        .filter(|(k, v)| !v.is_empty() && (k.contains(&gid) || v.contains(&gid)))
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(200).collect::<String>()))
+        .collect();
+    assert!(
+        leaks.is_empty(),
+        "left behind after leaving a group: {leaks:#?}"
+    );
+}
+
+#[test]
+fn erasing_everything_leaves_no_stored_value_behind() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, _ben, storage, _relay) = chatting_pair(&clock);
+    ann.core.kill_switch_app();
+    let left: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        // The report shown to the person after the erase (no keys, names or addresses: it says what was done).
+        .filter(|(k, v)| !v.is_empty() && k != "killswitch.report")
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(120).collect::<String>()))
+        .collect();
+    assert!(
+        left.is_empty(),
+        "still stored after erasing everything: {left:#?}"
+    );
+    assert!(ann.core.snapshot().contacts.is_empty());
+}
+
+#[test]
+fn leaving_a_channel_leaves_nothing_about_it_behind() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let storage = MemoryStorage::new();
+    let mut ann = Device::on("ann", &clock, storage.clone(), MemorySecureStore::new());
+    ann.core.create_identity().unwrap();
+    let id = ann.core.join_channel("zebra-crossing").unwrap();
+    ann.core
+        .send_channel_message("zebra-crossing", "hello")
+        .unwrap();
+    ann.core.toggle_pin(&id).unwrap();
+    ann.core.leave_channel("zebra-crossing").unwrap();
+    let leaks: Vec<String> = storage
+        .kv_dump()
+        .into_iter()
+        .filter(|(k, _)| !k.starts_with("sync.e."))
+        .filter(|(k, v)| !v.is_empty() && (k.contains("zebra") || v.contains("zebra")))
+        .map(|(k, v)| format!("{k} = {}", v.chars().take(200).collect::<String>()))
+        .collect();
+    assert!(
+        leaks.is_empty(),
+        "left behind after leaving a channel: {leaks:#?}"
+    );
+}
+
+#[test]
+fn a_phone_with_a_linked_laptop_that_uses_a_friends_six_words_gets_through_as_a_request() {
+    // Seen on real phones: the friend (a new install) made six words, the other phone (an account with two devices) used
+    // them and saw the friend's card, but the friend's phone refused the request and showed nothing.
+    let clock = FakeClock::at(1_700_000_000_000);
+    let mut relay = Relay::default();
+    let mut phone = Device::new("phone", &clock);
+    phone.core.create_identity().unwrap();
+    let mut fran = Device::new("fran", &clock);
+    fran.core.create_identity().unwrap();
+    let _laptop = link_laptop(&mut phone, &mut relay, &clock);
+    let pat = phone.core.own_uid().unwrap().clone();
+    let fran_uid = fran.core.own_uid().unwrap().clone();
+
+    let (words, _) = fran.core.create_invite().unwrap();
+    for _ in 0..3 {
+        fran.online(&mut relay);
+        phone.online(&mut relay);
+    }
+    // Pat finds the words and sees Fran's card ...
+    phone.core.preview_invite(&words).unwrap();
+    for _ in 0..3 {
+        phone.online(&mut relay);
+    }
+    // ... while Fran has left the app to send the words and closed the invite: nothing listens for the answer.
+    fran.core.stop_invite();
+    phone.core.accept_invite(&words).unwrap();
+    for _ in 0..8 {
+        phone.online(&mut relay);
+        fran.online(&mut relay);
+    }
+    assert!(
+        phone
+            .core
+            .snapshot()
+            .contacts
+            .iter()
+            .any(|c| c.uid == fran_uid),
+        "Pat sees Fran's card"
+    );
+    assert!(
+        fran.core.snapshot().requests.iter().any(|r| r.uid == pat),
+        "Fran sees Pat's request"
+    );
+}
+
+#[test]
+fn resetting_a_connection_keeps_the_friendship_and_messages_still_flow_after_it() {
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, mut ben, _storage, mut relay) = chatting_pair(&clock);
+    let (ann_uid, ben_uid) = (
+        ann.core.own_uid().unwrap().clone(),
+        ben.core.own_uid().unwrap().clone(),
+    );
+    ann.core.repair_contact(&ben_uid).unwrap();
+    assert!(
+        ann.core
+            .snapshot()
+            .contacts
+            .iter()
+            .any(|c| c.uid == ben_uid),
+        "still friends"
+    );
+    ann.core
+        .send_message(&ben_uid, "after the reset", None)
+        .unwrap();
+    ben.core.send_message(&ann_uid, "and back", None).unwrap();
+    for _ in 0..10 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    assert!(ben.texts().contains(&"after the reset".to_owned()));
+    assert!(ann.texts().contains(&"and back".to_owned()));
+    assert!(
+        ann.core.repair_contact(&ann_uid).is_err(),
+        "only a friend can be reset"
+    );
+}
+
+#[test]
+fn one_side_removing_a_friend_and_adding_them_again_while_the_other_never_removed_connects_again() {
+    // Ann removes Ben and scans his QR code again; Ben never removed Ann, so his phone still holds the keys of the old
+    // friendship and refuses the old protocol from her. Seen on real phones as "no connection after adding again".
+    let clock = FakeClock::at(1_700_000_000_000);
+    let (mut ann, mut ben, _storage, mut relay) = chatting_pair(&clock);
+    let (ann_uid, ben_uid) = (
+        ann.core.own_uid().unwrap().clone(),
+        ben.core.own_uid().unwrap().clone(),
+    );
+    ann.core.remove_contact(&ben_uid).unwrap();
+    for _ in 0..3 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    ann.core
+        .accept_invite(&ben.core.own_card(Some("Ben")).unwrap())
+        .unwrap();
+    for _ in 0..10 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    // Ben still has Ann as a friend, so there is no request to tap: both just talk again.
+    ann.core.send_message(&ben_uid, "I am back", None).unwrap();
+    ben.core
+        .send_message(&ann_uid, "welcome back", None)
+        .unwrap();
+    for _ in 0..12 {
+        ann.online(&mut relay);
+        ben.online(&mut relay);
+    }
+    assert!(
+        ben.texts().contains(&"I am back".to_owned()),
+        "Ben got Ann's message"
+    );
+    assert!(
+        ann.texts().contains(&"welcome back".to_owned()),
+        "Ann got Ben's message"
+    );
+}

@@ -52,6 +52,8 @@ interface ChatEngineApi {
     suspend fun renameFriend(uid: String, name: String)
     fun removeBlocker(uid: String): String?
     suspend fun removeFriend(uid: String): Result<Unit>
+    /** Start the connection with a friend over (forget the keys exchanged, drop the link, ask again, dial at once). */
+    suspend fun repairFriend(uid: String): Result<Unit> = Result.failure(IllegalStateException("Not available."))
     fun setGroupOnly(value: Boolean)
     suspend fun createGroup(name: String, memberUids: List<String>): Result<String>
     suspend fun addToGroup(groupId: String, uids: List<String>): Result<Unit>

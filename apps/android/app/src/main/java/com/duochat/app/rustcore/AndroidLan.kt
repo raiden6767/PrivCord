@@ -94,7 +94,7 @@ class AndroidLan(
                 launch {
                     s.soTimeout = 5000
                     val r = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
-                    val first = runCatching { r.readLine() }.getOrNull()
+                    val first = runCatching { r.readLineMax(MAX_HELLO) }.getOrNull()
                     val peer = first?.let { seen(it.trim()) }
                     if (peer == null || peer.initiator) { runCatching { s.close() }; return@launch }
                     s.soTimeout = 0
@@ -111,8 +111,7 @@ class AndroidLan(
         scope.launch(Dispatchers.IO) {
             val r = reader ?: BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
             while (running) {
-                val line = runCatching { r.readLine() }.getOrNull() ?: break
-                if (line.length > MAX_LINE) break
+                val line = runCatching { r.readLineMax(MAX_LINE) }.getOrNull() ?: break
                 onFrame(peer, line)
             }
             if (sockets.remove(peer, s)) {
@@ -150,5 +149,20 @@ class AndroidLan(
         const val BEACON_PORT = 47_811
         const val EVERY_MS = 5_000L
         const val MAX_LINE = 512 * 1024
+
+        /** The longest first line (a beacon) taken from a connection that has proved nothing yet. */
+        const val MAX_HELLO = 4096
+    }
+}
+
+/** A line of at most `max` characters, or null at the end of the stream or when it runs longer (never read to its end). */
+internal fun BufferedReader.readLineMax(max: Int): String? {
+    val sb = StringBuilder()
+    while (true) {
+        val c = read()
+        if (c < 0) return if (sb.isEmpty()) null else sb.toString()
+        if (c == '\n'.code) return sb.toString().trimEnd('\r')
+        if (sb.length >= max) return null
+        sb.append(c.toChar())
     }
 }

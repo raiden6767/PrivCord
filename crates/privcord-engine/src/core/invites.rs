@@ -47,6 +47,9 @@ const KV_PENDING: &str = "invites.pending.v1";
 struct Hello {
     next_at: i64,
     until: i64,
+    /// When a stored copy of the request was last left on the relay (0: never). One now and then, not one a minute: they are
+    /// for a phone that was away, and must not pile up in its mailbox.
+    stored_at: i64,
 }
 
 struct ActiveInvite {
@@ -55,6 +58,8 @@ struct ActiveInvite {
     started_at: i64,
     expires_at: i64,
     next_publish_at: i64,
+    /// A stored copy of the card is on the relay (so a friend who types the words after the app was left still finds it).
+    stored: bool,
 }
 
 struct Lookup {
@@ -195,6 +200,7 @@ impl Core {
             started_at: now,
             expires_at,
             next_publish_at: now + REPUBLISH_MS,
+            stored: false,
         });
         if self.publish_invite().is_err() {
             self.stop_invite();
@@ -204,13 +210,22 @@ impl Core {
         Ok((text, expires_at))
     }
 
-    fn put_everywhere(&self, mailbox: &str, blob: &SealedBlob) -> Result<(), ErrorCode> {
+    /// Sends a connection-setup message: live to whoever is listening, and, when `keep` (or the person allows messages to
+    /// wait), a copy the relay keeps for 15 minutes for a phone that is not listening right now (a friend who left the app to
+    /// send the words, a phone with no signal for a minute). Setup messages are sealed (the card is under a key from the words,
+    /// the request to the friend's own key) and short-lived, so the relay learns nothing from holding one.
+    fn put_everywhere(
+        &self,
+        mailbox: &str,
+        blob: &SealedBlob,
+        keep: bool,
+    ) -> Result<(), ErrorCode> {
         let text = blob.encode();
         let live = self
             .ports
             .transport
             .signal_put(mailbox, &text, PutKind::Sig, LIVE_TTL_SEC);
-        let stored = if self.store_forward() {
+        let stored = if keep || self.store_forward() {
             Some(self.ports.transport.signal_put(
                 mailbox,
                 &text,
@@ -241,6 +256,7 @@ impl Core {
         let Some(a) = &self.invites.active else {
             return Ok(());
         };
+        let first = !a.stored;
         let blob = seal_invite(
             &a.rv,
             InviteKind::Card,
@@ -248,7 +264,14 @@ impl Core {
             &card,
             &mut *self.ports.entropy,
         )?;
-        self.put_everywhere(&a.rv.mailbox, &blob)
+        let mailbox = a.rv.mailbox.clone();
+        let sent = self.put_everywhere(&mailbox, &blob, first);
+        if first && sent.is_ok() {
+            if let Some(a) = self.invites.active.as_mut() {
+                a.stored = true;
+            }
+        }
+        sent
     }
 
     pub fn stop_invite(&mut self) {
@@ -324,18 +347,20 @@ impl Core {
         self.invites.requests.remove(&uid);
         if let Some(rv) = answer_with {
             self.run_answer(uid.clone(), rv);
-        } else {
-            // From their card (a QR code): they do not know us yet. Ask them to add us back, so they only have to accept.
-            let now = self.now();
-            self.invites.hellos.insert(
-                uid.clone(),
-                Hello {
-                    next_at: now,
-                    until: now + HELLO_FOR_MS,
-                },
-            );
-            self.send_hellos();
         }
+        // They do not know us yet. Ask them to add us back, so they only have to accept: from a QR code that is the only
+        // way, and with six words it is the way when they missed the answer (they left the app to send the words, or
+        // closed the invite) - the answer is only heard by an app that is open at that moment.
+        let now = self.now();
+        self.invites.hellos.insert(
+            uid.clone(),
+            Hello {
+                next_at: now,
+                until: now + HELLO_FOR_MS,
+                stored_at: 0,
+            },
+        );
+        self.send_hellos();
         Ok(uid)
     }
 
@@ -401,6 +426,7 @@ impl Core {
                         Hello {
                             next_at: now,
                             until,
+                            stored_at: 0,
                         },
                     );
                 }
@@ -455,8 +481,13 @@ impl Core {
                 self.invites.hellos.remove(&uid);
                 continue;
             }
+            let mut keep = false;
             if let Some(h) = self.invites.hellos.get_mut(&uid) {
                 h.next_at = now + HELLO_EVERY_MS;
+                keep = h.stored_at == 0 || now - h.stored_at >= 10 * 60_000;
+                if keep {
+                    h.stored_at = now;
+                }
             }
             let Ok(card) = self.own_card(self.display_name.clone().as_deref()) else {
                 continue;
@@ -465,8 +496,11 @@ impl Core {
             self.diag("invite", "asking to be added back", uid.as_str());
             if let Ok(blob) = self.seal_to(&uid, &payload) {
                 // A failed send is tried again on the next round.
-                let _ =
-                    self.put_everywhere(&privcord_crypto::seal::mailbox_for(uid.as_str()), &blob);
+                let _ = self.put_everywhere(
+                    &privcord_crypto::seal::mailbox_for(uid.as_str()),
+                    &blob,
+                    keep,
+                );
             }
         }
     }
@@ -566,7 +600,7 @@ impl Core {
             &card,
             &mut *self.ports.entropy,
         )?;
-        self.put_everywhere(&rv.mailbox, &blob)
+        self.put_everywhere(&rv.mailbox, &blob, true)
     }
 
     /// Send our answer again after it failed.
@@ -823,6 +857,64 @@ impl Core {
 
     /// Forget a friend and their chat. Refused while they share a group with us, because the group would bring them
     /// straight back.
+    /// Everything else kept about a person besides their messages and keys: a person removed and added again must come
+    /// back as a stranger would, not muted, pinned or half-introduced (and nothing about them may stay on the phone).
+    fn forget_person_state(&mut self, uid: &UserId) {
+        self.invites.hellos.remove(uid);
+        self.forget_aware(uid);
+        if self.muted.remove(uid) {
+            let list: Vec<&str> = self.muted.iter().map(UserId::as_str).collect();
+            let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+                key: super::social::KV_MUTED.into(),
+                value: serde_json::to_vec(&list).unwrap_or_default(),
+            }]);
+        }
+        self.forget_chat_prefs(uid.as_str());
+        let mut all = self.scheduled();
+        let before = all.len();
+        all.retain(|s| s.group || s.target != uid.as_str());
+        if all.len() != before {
+            let _ = self.save_scheduled_list(&all);
+        }
+    }
+
+    /// Starts the connection with a friend over, for a friendship that stays stuck: the keys exchanged with them are forgotten
+    /// (they are given again on the next link or through the relay), any link is dropped, they are asked once more to add us
+    /// back (a no-op for a friend who already did), and the next tick dials at once. Nothing else about them changes.
+    pub fn repair_contact(&mut self, uid: &UserId) -> Result<(), ErrorCode> {
+        self.require_live()?;
+        if !self.contacts.contains_key(uid) {
+            return Err(ErrorCode::UnknownContact);
+        }
+        let addrs: Vec<UserId> = self
+            .peers
+            .keys()
+            .filter(|a| &Self::person_of(a) == uid)
+            .cloned()
+            .collect();
+        for a in &addrs {
+            self.link_down(a);
+            self.ports.transport.close(a);
+        }
+        self.forget_keys_of_person(uid);
+        for p in self.peers.values_mut() {
+            p.attempts = 0;
+            p.last_attempt_at = 0;
+        }
+        let now = self.now();
+        self.invites.hellos.insert(
+            uid.clone(),
+            Hello {
+                next_at: now,
+                until: now + HELLO_FOR_MS,
+                stored_at: 0,
+            },
+        );
+        self.send_hellos();
+        self.diag("link", "connection reset by the person", uid.as_str());
+        Ok(())
+    }
+
     pub fn remove_contact(&mut self, uid: &UserId) -> Result<(), ErrorCode> {
         self.require_live()?;
         if !self.contacts.contains_key(uid) {
@@ -843,6 +935,7 @@ impl Core {
         ])?;
         self.forget_contact_devices(uid);
         self.forget_keys_of_person(uid);
+        self.forget_person_state(uid);
         // They know our private inbox: move to a new one and tell everyone else.
         self.rotate_inbox();
         let addrs: Vec<UserId> = self
