@@ -10,7 +10,7 @@ use axum::{
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -29,10 +29,18 @@ pub struct App {
     pub relay: Option<Arc<Relay>>,
     /// `Some((secret, urls))` when the TURN role is on.
     pub turn: Option<(Vec<u8>, Vec<String>)>,
-    /// SHA-256 of each accepted token (empty: open to anyone).
-    tokens: Vec<[u8; 32]>,
+    /// SHA-256 of each accepted token (empty: open to anyone): the ones in the settings file plus those the admin panel made.
+    tokens: std::sync::RwLock<Vec<[u8; 32]>>,
+    base_tokens: Vec<[u8; 32]>,
+    pub trusted_proxies: Vec<std::net::IpAddr>,
+    pub started: std::time::Instant,
     next_conn: AtomicU64,
     turn_asks: Mutex<HashMap<String, (u32, u64)>>,
+    mgmt_asks: Mutex<HashMap<String, (u32, u64)>>,
+    /// Addresses refused by the management API (`blockip`): they cannot open the relay's socket.
+    blocked_ips: std::sync::RwLock<std::collections::HashSet<std::net::IpAddr>>,
+    /// The admin state, once it exists: the management API changes what the panel saves.
+    pub admin: std::sync::OnceLock<std::sync::Weak<crate::admin::AdminState>>,
 }
 
 impl App {
@@ -41,7 +49,13 @@ impl App {
         relay: Option<Arc<Relay>>,
         turn: Option<(Vec<u8>, Vec<String>)>,
     ) -> Self {
-        let tokens = cfg
+        let cfg_trusted: Vec<std::net::IpAddr> = cfg
+            .server
+            .trusted_proxies
+            .iter()
+            .filter_map(|a| a.trim().parse().ok())
+            .collect();
+        let tokens: Vec<[u8; 32]> = cfg
             .server
             .access_tokens
             .iter()
@@ -51,14 +65,58 @@ impl App {
             cfg,
             relay,
             turn,
-            tokens,
+            tokens: std::sync::RwLock::new(tokens.clone()),
+            base_tokens: tokens,
+            trusted_proxies: cfg_trusted,
+            started: std::time::Instant::now(),
             next_conn: AtomicU64::new(1),
             turn_asks: Mutex::new(HashMap::new()),
+            mgmt_asks: Mutex::new(HashMap::new()),
+            blocked_ips: std::sync::RwLock::new(std::collections::HashSet::new()),
+            admin: std::sync::OnceLock::new(),
         }
     }
 
+    /// Replaces the tokens made in the admin panel (the ones from the settings file always stay).
+    pub fn set_extra_tokens(&self, extra: &[[u8; 32]]) {
+        let mut all = self.base_tokens.clone();
+        all.extend_from_slice(extra);
+        *self
+            .tokens
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = all;
+    }
+
+    /// Replaces the blocked addresses.
+    pub fn set_blocked_ips(&self, ips: std::collections::HashSet<std::net::IpAddr>) {
+        *self
+            .blocked_ips
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = ips;
+    }
+
+    pub fn ip_blocked(&self, ip: std::net::IpAddr) -> bool {
+        self.blocked_ips
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(&ip)
+    }
+
+    /// Whether clients must present a token.
+    pub fn requires_token(&self) -> bool {
+        !self
+            .tokens
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+    }
+
     fn allowed(&self, headers: &HeaderMap, query: &HashMap<String, String>) -> bool {
-        if self.tokens.is_empty() {
+        let tokens = self
+            .tokens
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if tokens.is_empty() {
             return true;
         }
         let bearer = headers
@@ -70,7 +128,7 @@ impl App {
             .unwrap_or("");
         let hash: [u8; 32] = Sha256::digest(presented.as_bytes()).into();
         // Compared as hashes, over every accepted token, without stopping early.
-        self.tokens.iter().fold(false, |ok, t| ok | ct_eq(t, &hash))
+        tokens.iter().fold(false, |ok, t| ok | ct_eq(t, &hash))
     }
 }
 
@@ -78,21 +136,50 @@ fn ct_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     a.iter().zip(b.iter()).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
 }
 
-pub fn client_ip(addr: SocketAddr, headers: &HeaderMap, trust_proxy: bool, header: &str) -> String {
-    if trust_proxy {
-        if let Some(xff) = headers.get(header).and_then(|v| v.to_str().ok()) {
-            // The rightmost entry is the one our proxy appended; earlier ones are whatever the visitor claimed.
-            if let Some(last) = xff
-                .rsplit(',')
-                .next()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                return last.to_owned();
+/// The address limits are counted against. An IPv6 visitor controls a whole /64, so that is what counts as one visitor
+/// (otherwise one machine could present billions of "different" addresses).
+pub fn ip_group(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip {
+        std::net::IpAddr::V4(_) => ip,
+        std::net::IpAddr::V6(v6) => {
+            let mut o = v6.octets();
+            for b in o.iter_mut().skip(8) {
+                *b = 0;
             }
+            std::net::IpAddr::V6(std::net::Ipv6Addr::from(o))
         }
     }
-    addr.ip().to_string()
+}
+
+pub fn client_ip(
+    addr: SocketAddr,
+    headers: &HeaderMap,
+    trust_proxy: bool,
+    header: &str,
+    trusted_proxies: &[std::net::IpAddr],
+) -> String {
+    let believe =
+        trust_proxy && (trusted_proxies.is_empty() || trusted_proxies.contains(&addr.ip()));
+    if believe {
+        // A proxy may add a header line of its own instead of extending the visitor's: the LAST value is the one our
+        // proxy wrote; earlier ones are whatever the visitor claimed.
+        let last = headers
+            .get_all(header)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .next_back()
+            .and_then(|v| v.rsplit(',').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(last) = last {
+            return match last.parse::<std::net::IpAddr>() {
+                Ok(ip) => ip_group(ip).to_string(),
+                // Not an address: still one key, but never an unbounded string.
+                Err(_) => last.chars().take(64).collect(),
+            };
+        }
+    }
+    ip_group(addr.ip()).to_string()
 }
 
 pub fn now_ms() -> i64 {
@@ -101,19 +188,59 @@ pub fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(0))
 }
 
+/// What an app (a desktop window is a web page) needs to ask this server about itself from another origin: `GET` with an
+/// `Authorization` header. `/turn` still needs the access token (when there is one); nothing is opened that was closed.
+async fn cors(mut r: Response) -> Response {
+    let h = r.headers_mut();
+    for (k, v) in [
+        ("access-control-allow-origin", "*"),
+        (
+            "access-control-allow-headers",
+            "authorization, content-type",
+        ),
+        ("access-control-allow-methods", "GET, OPTIONS"),
+        ("access-control-max-age", "600"),
+    ] {
+        h.insert(
+            axum::http::HeaderName::from_static(k),
+            axum::http::HeaderValue::from_static(v),
+        );
+    }
+    r
+}
+
+async fn preflight() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
 pub fn router(app: Arc<App>) -> Router {
+    let open = Router::new()
+        .route(
+            "/.well-known/privcord-server",
+            get(about).options(preflight),
+        )
+        .route("/turn", get(turn_credentials).options(preflight))
+        .layer(axum::middleware::map_response(cors));
     Router::new()
         .route("/healthz", get(healthz))
-        .route("/.well-known/privcord-server", get(about))
-        .route("/turn", get(turn_credentials))
+        .merge(open)
         .route("/metrics", get(metrics))
+        // NIP-86: management calls are POSTs to the relay's own address; a GET there is still the relay's socket.
+        .route(
+            "/",
+            post(management)
+                .layer(axum::extract::DefaultBodyLimit::max(64 * 1024))
+                .fallback(socket),
+        )
         .fallback(socket)
         .with_state(app)
 }
 
 async fn healthz(State(app): State<Arc<App>>, headers: HeaderMap) -> Json<Value> {
     // Asked through a proxy: a minimal answer, and no counters.
-    if headers.contains_key("x-forwarded-for") {
+    if headers.contains_key(app.cfg.server.real_ip_header.as_str())
+        || headers.contains_key("x-forwarded-for")
+    {
         return Json(json!({ "ok": true }));
     }
     Json(
@@ -176,7 +303,7 @@ async fn about(State(app): State<Arc<App>>) -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "roles": roles,
         "admin": c.server.admin_contact,
-        "requires_token": !app.tokens.is_empty(),
+        "requires_token": app.requires_token(),
         "relay": app.relay.as_ref().map(|r| json!({
             "store_and_forward": r.store_and_forward(),
             "max_blob_bytes": MAX_BLOB,
@@ -204,6 +331,7 @@ async fn turn_credentials(
         &headers,
         app.cfg.server.trust_proxy,
         &app.cfg.server.real_ip_header,
+        &app.trusted_proxies,
     );
     let now = now_ms().max(0) as u64 / 1000;
     {
@@ -226,6 +354,120 @@ async fn turn_credentials(
         Json(json!({ "urls": urls, "username": username, "credential": credential, "ttl": ttl })),
     )
         .into_response()
+}
+
+/// NIP-86 (relay management), authenticated with NIP-98: `POST /` with `Content-Type: application/nostr+json+rpc`, the body
+/// `{"method": ..., "params": [...]}` and `Authorization: Nostr <signed event>` from one of the configured administrator keys.
+async fn management(
+    State(app): State<Arc<App>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let reply = |code: StatusCode, v: Value| {
+        (
+            code,
+            [("content-type", "application/nostr+json+rpc")],
+            Json(v),
+        )
+            .into_response()
+    };
+    let rpc = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|c| c.starts_with("application/nostr+json+rpc"));
+    let Some(n) = app.relay.as_ref().and_then(|r| r.nostr()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let keys = n.admin_keys();
+    if !rpc || keys.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let now = now_ms().max(0) as u64 / 1000;
+    {
+        // A few calls a minute from one address: checking a signature is cheap, but not free.
+        let ip = client_ip(
+            addr,
+            &headers,
+            app.cfg.server.trust_proxy,
+            &app.cfg.server.real_ip_header,
+            &app.trusted_proxies,
+        );
+        let mut asks = app
+            .mgmt_asks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        asks.retain(|_, (_, reset)| *reset > now);
+        let e = asks.entry(ip).or_insert((0, now + 60));
+        e.0 += 1;
+        if e.0 > 60 {
+            return reply(
+                StatusCode::TOO_MANY_REQUESTS,
+                json!({ "error": "too many calls; wait a minute" }),
+            );
+        }
+    }
+    let mut hosts: Vec<String> = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .into_iter()
+        .collect();
+    hosts.extend(crate::nostr::nip98::host_and_path(&app.cfg.nostr.relay_url).map(|(h, _)| h));
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let path = uri.path_and_query().map_or("/", |p| p.as_str());
+    match crate::nostr::nip98::verify(
+        auth,
+        "POST",
+        &hosts,
+        path,
+        &body,
+        i64::try_from(now).unwrap_or(0),
+    ) {
+        Err(why) => return reply(StatusCode::UNAUTHORIZED, json!({ "error": why })),
+        Ok(pk) if !keys.contains(&pk) => {
+            return reply(
+                StatusCode::UNAUTHORIZED,
+                json!({ "error": "that key is not an administrator of this relay" }),
+            )
+        }
+        Ok(_) => {}
+    }
+    let Some(admin) = app.admin.get().and_then(std::sync::Weak::upgrade) else {
+        return reply(
+            StatusCode::OK,
+            json!({ "error": "turn the admin panel on ([admin] enabled = true): it keeps what the management API changes" }),
+        );
+    };
+    // A small, typed request: a method name and a list of parameters, nothing else is read.
+    #[derive(serde::Deserialize)]
+    struct Call {
+        method: String,
+        #[serde(default)]
+        params: Vec<Value>,
+    }
+    let call = match std::str::from_utf8(&body)
+        .ok()
+        .filter(|t| t.len() <= 64 * 1024)
+        .and_then(|t| serde_json::from_str::<Call>(t).ok())
+    {
+        Some(c) if c.method.len() <= 64 && c.params.len() <= 64 => c,
+        _ => {
+            return reply(
+                StatusCode::OK,
+                json!({ "error": "the body must be JSON: {\"method\": ..., \"params\": [...]}" }),
+            )
+        }
+    };
+    let (method, params) = (call.method.as_str(), call.params);
+    match admin.nip86(method, &params) {
+        Ok(result) => reply(StatusCode::OK, json!({ "result": result })),
+        Err(e) => reply(StatusCode::OK, json!({ "error": e })),
+    }
 }
 
 /// Anything else: a WebSocket for the relay (the apps connect to the root path, with or without a query).
@@ -267,7 +509,12 @@ async fn socket(
         &headers,
         app.cfg.server.trust_proxy,
         &app.cfg.server.real_ip_header,
+        &app.trusted_proxies,
     );
+    // An address an administrator blocked (the management API): the peer's own, and the one a proxy reported.
+    if app.ip_blocked(addr.ip()) || ip.parse().is_ok_and(|a| app.ip_blocked(a)) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let biggest = if app.cfg.nostr.enabled {
         app.cfg.nostr.max_message_bytes
     } else {
@@ -305,13 +552,18 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
     };
     let total = relay.out_total().clone();
     let writer_pending = pending.clone();
+    // When the last write to this client completed: a client that takes nothing for a long time is cut off.
+    let progress = Arc::new(AtomicU64::new(now_ms().unsigned_abs()));
+    let writer_progress = progress.clone();
     let writer = tokio::spawn(async move {
         let pending = writer_pending;
+        let progress = writer_progress;
         while let Some(out) = rx.recv().await {
             match out {
                 Out::Text(t) => {
                     let n = t.len();
                     let sent = sink.send(Message::Text(t.as_ref().into())).await;
+                    progress.store(now_ms().unsigned_abs(), Ordering::Relaxed);
                     pending.fetch_sub(n.min(pending.load(Ordering::Relaxed)), Ordering::Relaxed);
                     total.fetch_sub(n.min(total.load(Ordering::Relaxed)), Ordering::Relaxed);
                     if sent.is_err() {
@@ -341,11 +593,16 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
     let mut beat = tokio::time::interval(HEARTBEAT);
     beat.tick().await;
     let soft = relay.out_limit().1;
+    let stall_ms = relay.stall_ms();
+    let mut reaper = tokio::time::interval(Duration::from_millis((stall_ms / 3).clamp(250, 5000)));
+    reaper.tick().await;
     loop {
         // A flood is slowed at the door: while too much is waiting to be written, this socket is not read, so the
         // sender's own connection fills up and it slows down, instead of the relay growing.
+        // (For a quarter of a second at most per frame: a client that never reads is cut off by the stall check below, so
+        // it cannot keep everyone else slowed down.)
         let mut waited = 0;
-        while relay.out_total().load(Ordering::Relaxed) > soft && waited < 2000 {
+        while relay.out_total().load(Ordering::Relaxed) > soft && waited < 250 {
             tokio::time::sleep(Duration::from_millis(1)).await;
             waited += 1;
         }
@@ -360,6 +617,14 @@ async fn serve(mut socket: WebSocket, app: Arc<App>, ip: String) {
                     _ => continue,
                 };
                 relay.frame(&conn, &mut session, &ip, &text, now_ms());
+            }
+            _ = reaper.tick() => {
+                if stall_ms > 0
+                    && pending.load(Ordering::Relaxed) > 0
+                    && now_ms().unsigned_abs().saturating_sub(progress.load(Ordering::Relaxed)) > stall_ms
+                {
+                    break;
+                }
             }
             _ = beat.tick() => {
                 // Nothing heard since the last beat (not even a pong): the other end is gone.

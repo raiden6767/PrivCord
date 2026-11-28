@@ -6,7 +6,14 @@ use crate::{
 };
 use serde_json::Value;
 
-pub const DEFAULT_STUN_URLS: [&str; 1] = ["stun:stun.cloudflare.com:3478"];
+pub const DEFAULT_STUN_URLS: [&str; 6] = [
+    "stun:stun.cloudflare.com:3478",
+    "stun:stun.l.google.com:19302",
+    "stun:stun1.l.google.com:19302",
+    "stun:global.stun.twilio.com:3478",
+    "stun:stun.nextcloud.com:443",
+    "stun:stun.telnyx.com:3478",
+];
 pub const DEFAULT_NOSTR_RELAYS: [&str; 3] = [
     "wss://relay.damus.io",
     "wss://nos.lol",

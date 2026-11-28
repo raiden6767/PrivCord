@@ -6,7 +6,9 @@ name: Test builds
 on:
   push:
     branches: [main]
-    paths-ignore: ['site/**', '*.md', '.gitignore', '.github/workflows/pages.yml']
+    # The self-hosted server is not part of the apps: changing only it does not rebuild or republish them.
+    paths-ignore: ['site/**', '*.md', '.gitignore', '.github/workflows/pages.yml', '.github/workflows/server-release.yml',
+                   'crates/privcord-server/**', 'scripts/nat-lab.sh', 'scripts/bench-*.sh', 'docs/SERVER*.md']
   workflow_dispatch:
     inputs:
       publish:

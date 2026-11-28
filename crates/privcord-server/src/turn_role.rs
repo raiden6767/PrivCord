@@ -12,23 +12,56 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// The secret that signs credentials: made once and kept in the data folder.
 pub fn load_or_make_secret(dir: &std::path::Path) -> Result<Vec<u8>, String> {
+    load_or_make_secret_with(dir, &crate::record::Codec::plain())
+}
+
+/// The same, written through the settings' codec: encrypted at rest when a storage key is set (an older plain file is read, and
+/// written again encrypted).
+pub fn load_or_make_secret_with(
+    dir: &std::path::Path,
+    codec: &crate::record::Codec,
+) -> Result<Vec<u8>, String> {
     let path = dir.join("turn-secret");
     if let Ok(text) = std::fs::read_to_string(&path) {
-        let hex = text.trim();
-        if hex.len() == 64 {
-            return Ok(hex.as_bytes().to_vec());
+        let line = text.trim();
+        let hex = match codec.decode("turn-secret", line) {
+            crate::record::Decoded::Payload(p) => Some(p),
+            crate::record::Decoded::NeedsKey => {
+                return Err(format!(
+                    "{} is encrypted but no storage key is set (storage.key_file, or the storage.key_env variable)",
+                    path.display()
+                ))
+            }
+            // A plain secret (the shape before encryption was an option) is just the hex; an encrypted one that does not open
+            // is the wrong key: nothing is replaced.
+            crate::record::Decoded::Corrupt if line.starts_with("e1 ") => {
+                return Err(format!(
+                    "{} cannot be read with this storage key (nothing was changed)",
+                    path.display()
+                ))
+            }
+            crate::record::Decoded::Corrupt => Some(line.to_owned()),
+        };
+        if let Some(hex) = hex.filter(|h| h.len() == 64) {
+            if codec.encrypts() && !line.starts_with("e1 ") {
+                crate::fsutil::write_private_atomic(
+                    &path,
+                    codec.encode("turn-secret", &hex).as_bytes(),
+                )?;
+            }
+            return Ok(hex.into_bytes());
         }
     }
     let mut raw = [0u8; 32];
     getrandom::fill(&mut raw).map_err(|e| format!("no randomness: {e}"))?;
     let hex: String = raw.iter().map(|b| format!("{b:02x}")).collect();
-    std::fs::create_dir_all(dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    std::fs::write(&path, &hex).map_err(|e| format!("could not write {}: {e}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
+    crate::fsutil::create_private_dir(dir)?;
+    let written = if codec.encrypts() {
+        codec.encode("turn-secret", &hex)
+    } else {
+        hex.clone()
+    };
+    crate::fsutil::write_private_atomic(&path, written.as_bytes())?;
     Ok(hex.into_bytes())
 }
 
@@ -44,7 +77,7 @@ fn password_for(secret: &[u8], username: &str) -> String {
 /// A user name and password valid for `ttl_secs` from `now_secs`.
 pub fn issue(secret: &[u8], now_secs: u64, ttl_secs: u64) -> (String, String) {
     let mut tag = [0u8; 4];
-    let _ = getrandom::fill(&mut tag);
+    crate::fsutil::random(&mut tag);
     let tag: String = tag.iter().map(|b| format!("{b:02x}")).collect();
     let username = format!("{}:{tag}", now_secs.saturating_add(ttl_secs));
     let password = password_for(secret, &username);
@@ -172,6 +205,12 @@ pub mod server {
     /// One relayed connection: refuses to send to addresses it should not, and keeps to a speed limit.
     struct Guard {
         inner: Arc<dyn Conn + Send + Sync>,
+        /// The relay ports in use, and this one's own, so the allocation can be taken off the list when it ends.
+        live: LivePorts,
+        port: u16,
+        /// This server's address as phones see it. Traffic between two of our own allocations is delivered locally, because
+        /// many routers (and some clouds) cannot loop a packet back to their own public address.
+        public_ip: std::net::IpAddr,
         allow_private: bool,
         bucket: Option<Mutex<Bucket>>,
     }
@@ -183,6 +222,24 @@ pub mod server {
     }
 
     impl Guard {
+        /// A packet that came from this machine itself is, to everybody else, from the public address.
+        fn is_live_port(&self, port: u16) -> bool {
+            self.live
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(&port)
+        }
+
+        fn as_seen_from_outside(&self, from: SocketAddr) -> SocketAddr {
+            // Only another allocation of ours can be the source: anything else on this machine that happens to use a
+            // loopback address is not presented as a legitimate peer.
+            if from.ip().is_loopback() && self.is_live_port(from.port()) {
+                SocketAddr::new(self.public_ip, from.port())
+            } else {
+                from
+            }
+        }
+
         fn allows(&self, target: SocketAddr, len: usize) -> bool {
             if !self.allow_private && is_blocked(target.ip()) {
                 return false;
@@ -213,7 +270,8 @@ pub mod server {
             self.inner.recv(buf).await
         }
         async fn recv_from(&self, buf: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
-            self.inner.recv_from(buf).await
+            let (n, from) = self.inner.recv_from(buf).await?;
+            Ok((n, self.as_seen_from_outside(from)))
         }
         async fn send(&self, buf: &[u8]) -> webrtc_util::Result<usize> {
             self.inner.send(buf).await
@@ -223,6 +281,15 @@ pub mod server {
                 // Dropped, as a congested network would: the sender is told it went.
                 return Ok(buf.len());
             }
+            // To our own public address and another allocation's port: deliver it here instead (the receiving side maps it
+            // back, see `recv_from`). Only for a live relay port: a client must not be able to aim a packet at any other
+            // port on this machine's loopback (a local resolver, a database) by naming our public address.
+            let target = match (target.ip() == self.public_ip, self.public_ip) {
+                (true, std::net::IpAddr::V4(_)) if self.is_live_port(target.port()) => {
+                    SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), target.port())
+                }
+                _ => target,
+            };
             self.inner.send_to(buf, target).await
         }
         fn local_addr(&self) -> webrtc_util::Result<SocketAddr> {
@@ -239,10 +306,14 @@ pub mod server {
         }
     }
 
+    /// The relay ports of the allocations that exist now (shared by every transport).
+    type LivePorts = Arc<Mutex<std::collections::HashSet<u16>>>;
+
     struct Gen {
         inner: RelayAddressGeneratorRanges,
         allow_private: bool,
         kbps: u64,
+        live: LivePorts,
     }
 
     #[async_trait]
@@ -266,9 +337,16 @@ pub mod server {
                     per_sec: self.kbps as f64 * 125.0,
                 })
             });
+            self.live
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(addr.port());
             Ok((
                 Arc::new(Guard {
                     inner: conn,
+                    live: self.live.clone(),
+                    port: addr.port(),
+                    public_ip: self.inner.relay_address,
                     allow_private: self.allow_private,
                     bucket,
                 }),
@@ -277,9 +355,94 @@ pub mod server {
         }
     }
 
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.live
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&self.port);
+        }
+    }
+
+    /// A stand-in for a relay socket, for tests: remembers where packets were sent and plays back sources it is given.
+    #[cfg(test)]
+    #[derive(Clone, Default, Debug)]
+    pub struct MockConn {
+        sent: Arc<Mutex<Vec<SocketAddr>>>,
+        incoming: Arc<Mutex<Vec<SocketAddr>>>,
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    impl MockConn {
+        pub fn sent(&self) -> Vec<SocketAddr> {
+            self.sent.lock().unwrap().clone()
+        }
+        pub fn queue_incoming(&self, a: SocketAddr) {
+            self.incoming.lock().unwrap().push(a);
+        }
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    #[async_trait]
+    impl Conn for MockConn {
+        async fn connect(&self, _: SocketAddr) -> webrtc_util::Result<()> {
+            Ok(())
+        }
+        async fn recv(&self, b: &mut [u8]) -> webrtc_util::Result<usize> {
+            self.recv_from(b).await.map(|x| x.0)
+        }
+        async fn recv_from(&self, _: &mut [u8]) -> webrtc_util::Result<(usize, SocketAddr)> {
+            let mut q = self.incoming.lock().unwrap();
+            if q.is_empty() {
+                return Err(webrtc_util::Error::ErrUseClosedNetworkConn);
+            }
+            Ok((0, q.remove(0)))
+        }
+        async fn send(&self, b: &[u8]) -> webrtc_util::Result<usize> {
+            Ok(b.len())
+        }
+        async fn send_to(&self, b: &[u8], t: SocketAddr) -> webrtc_util::Result<usize> {
+            self.sent.lock().unwrap().push(t);
+            Ok(b.len())
+        }
+        fn local_addr(&self) -> webrtc_util::Result<SocketAddr> {
+            Ok("0.0.0.0:0".parse().unwrap())
+        }
+        fn remote_addr(&self) -> Option<SocketAddr> {
+            None
+        }
+        async fn close(&self) -> webrtc_util::Result<()> {
+            Ok(())
+        }
+        fn as_any(&self) -> &(dyn std::any::Any + Send + Sync) {
+            self
+        }
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::unwrap_used)]
+    pub fn test_guard(inner: MockConn, public_ip: &str, live_ports: &[u16]) -> impl Conn {
+        Guard {
+            inner: Arc::new(inner),
+            live: Arc::new(Mutex::new(live_ports.iter().copied().collect())),
+            port: 0,
+            public_ip: public_ip.parse().unwrap(),
+            allow_private: false,
+            bucket: None,
+        }
+    }
+
     pub struct TurnServer {
         server: Server,
+        /// Where the UDP side listens.
         pub addr: SocketAddr,
+        /// Where TURN over TCP / over TLS listens, if enabled.
+        pub tcp_addr: Option<SocketAddr>,
+        pub tls_addr: Option<SocketAddr>,
+        stop: tokio::sync::watch::Sender<bool>,
+        listeners: Vec<tokio::task::JoinHandle<()>>,
     }
 
     impl std::fmt::Debug for TurnServer {
@@ -290,42 +453,94 @@ pub mod server {
 
     impl TurnServer {
         pub async fn close(&self) {
+            let _ = self.stop.send(true);
             let _ = self.server.close().await;
+        }
+
+        /// Waits for the TCP and TLS listeners to finish (after `close`).
+        pub async fn finish(self) {
+            for l in self.listeners {
+                let _ = l.await;
+            }
         }
     }
 
-    /// Starts the TURN server on UDP. `public_ip` is what phones are told to send traffic to.
+    /// Starts the TURN server: UDP, and TURN over TCP and over TLS when asked. `public_ip` is what phones are told to send
+    /// traffic to.
     pub async fn start(
         cfg: &TurnConfig,
         secret: Vec<u8>,
         public_ip: std::net::IpAddr,
+        tls: Option<&crate::tls::Tls>,
     ) -> Result<TurnServer, String> {
         let socket = tokio::net::UdpSocket::bind(&cfg.listen)
             .await
             .map_err(|e| format!("could not listen for TURN on {} (UDP): {e}", cfg.listen))?;
         let addr = socket.local_addr().map_err(|e| e.to_string())?;
-        let users = cfg
+        let users: HashMap<String, String> = cfg
             .users
             .iter()
             .filter_map(|u| u.split_once(':').map(|(n, p)| (n.to_owned(), p.to_owned())))
             .collect();
-        let relay = RelayAddressGeneratorRanges {
-            relay_address: public_ip,
-            min_port: cfg.min_port,
-            max_port: cfg.max_port,
-            max_retries: 20,
-            address: "0.0.0.0".into(),
-            net: Arc::new(Net::new(None)),
+        // Every transport relays the same way: its own generator (they share the port range; a taken port is retried).
+        let live: LivePorts = Arc::new(Mutex::new(std::collections::HashSet::new()));
+        let generator = || -> Box<dyn RelayAddressGenerator + Send + Sync> {
+            Box::new(Gen {
+                inner: RelayAddressGeneratorRanges {
+                    relay_address: public_ip,
+                    min_port: cfg.min_port,
+                    max_port: cfg.max_port,
+                    max_retries: 20,
+                    address: "0.0.0.0".into(),
+                    net: Arc::new(Net::new(None)),
+                },
+                allow_private: cfg.allow_private_peers,
+                kbps: cfg.max_kbps,
+                live: live.clone(),
+            })
         };
+        let mut conn_configs = vec![ConnConfig {
+            conn: Arc::new(socket),
+            relay_addr_generator: generator(),
+        }];
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let mut listeners = Vec::new();
+        let stream_listener = |listen: &str, acceptor: Option<tokio_rustls::TlsAcceptor>| {
+            let listen = listen.to_owned();
+            let stopped = stopped.clone();
+            async move {
+                let tcp = tokio::net::TcpListener::bind(&listen)
+                    .await
+                    .map_err(|e| format!("could not listen for TURN on {listen} (TCP): {e}"))?;
+                let local = tcp.local_addr().map_err(|e| e.to_string())?;
+                let mux = crate::turn_stream::StreamMux::new(local);
+                let task = crate::turn_stream::spawn_listener(mux.clone(), tcp, acceptor, stopped);
+                Ok::<_, String>((mux, task, local))
+            }
+        };
+        let (mut tcp_addr, mut tls_addr) = (None, None);
+        if !cfg.tcp_listen.is_empty() {
+            let (mux, task, local) = stream_listener(&cfg.tcp_listen, None).await?;
+            conn_configs.push(ConnConfig {
+                conn: mux,
+                relay_addr_generator: generator(),
+            });
+            listeners.push(task);
+            tcp_addr = Some(local);
+        }
+        if !cfg.tls_listen.is_empty() {
+            let tls = tls.ok_or("turn.tls_listen needs a certificate ([tls])")?;
+            let (mux, task, local) =
+                stream_listener(&cfg.tls_listen, Some(tls.turn.clone())).await?;
+            conn_configs.push(ConnConfig {
+                conn: mux,
+                relay_addr_generator: generator(),
+            });
+            listeners.push(task);
+            tls_addr = Some(local);
+        }
         let server = Server::new(ServerConfig {
-            conn_configs: vec![ConnConfig {
-                conn: Arc::new(socket),
-                relay_addr_generator: Box::new(Gen {
-                    inner: relay,
-                    allow_private: cfg.allow_private_peers,
-                    kbps: cfg.max_kbps,
-                }),
-            }],
+            conn_configs,
             realm: cfg.realm.clone(),
             auth_handler: Arc::new(Auth { secret, users }),
             channel_bind_timeout: Duration::from_secs(0),
@@ -333,7 +548,14 @@ pub mod server {
         })
         .await
         .map_err(|e| format!("could not start TURN: {e}"))?;
-        Ok(TurnServer { server, addr })
+        Ok(TurnServer {
+            server,
+            addr,
+            tcp_addr,
+            tls_addr,
+            stop,
+            listeners,
+        })
     }
 }
 
@@ -375,5 +597,58 @@ mod block_tests {
                 "{fine} should be allowed"
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "turn"))]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod local_delivery_tests {
+    use super::server::{test_guard, MockConn};
+    use std::net::SocketAddr;
+    use webrtc_util::Conn;
+
+    fn addr(s: &str) -> SocketAddr {
+        s.parse().unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_packet_to_our_own_public_address_goes_to_loopback_only_for_a_live_relay_port() {
+        let mock = MockConn::default();
+        let g = test_guard(mock.clone(), "203.0.113.10", &[49300]);
+        g.send_to(b"x", addr("203.0.113.10:49300")).await.unwrap();
+        g.send_to(b"y", addr("203.0.113.10:53")).await.unwrap(); // not an allocation: must not become 127.0.0.1:53
+        g.send_to(b"z", addr("8.8.8.8:53")).await.unwrap();
+        g.send_to(b"w", addr("127.0.0.1:53")).await.unwrap(); // loopback itself is refused outright
+        assert_eq!(
+            mock.sent(),
+            vec![
+                addr("127.0.0.1:49300"),
+                addr("203.0.113.10:53"),
+                addr("8.8.8.8:53")
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_live_relay_port_on_loopback_is_shown_as_coming_from_the_public_address() {
+        let mock = MockConn::default();
+        let g = test_guard(mock.clone(), "203.0.113.10", &[49300]);
+        mock.queue_incoming(addr("127.0.0.1:49300"));
+        mock.queue_incoming(addr("127.0.0.1:53")); // some other program on this machine
+        mock.queue_incoming(addr("198.51.100.7:4000"));
+        let mut buf = [0u8; 8];
+        assert_eq!(
+            g.recv_from(&mut buf).await.unwrap().1,
+            addr("203.0.113.10:49300")
+        );
+        assert_eq!(
+            g.recv_from(&mut buf).await.unwrap().1,
+            addr("127.0.0.1:53"),
+            "must not be presented as the public address"
+        );
+        assert_eq!(
+            g.recv_from(&mut buf).await.unwrap().1,
+            addr("198.51.100.7:4000")
+        );
     }
 }

@@ -45,7 +45,11 @@ data class AppSettings(
     val updateChecks: Boolean = true,
     /** "Later" on the update prompt: do not ask again before this time (milliseconds). */
     val updateSnoozedUntil: Long = 0L,
+    /** Show the advanced options in Settings (beginners see the short list). */
+    val advanced: Boolean = false,
     val network: NetworkConfig = NetworkConfig(),
+    /** PrivCord servers added with "Use my server" (address and token; what they offer is asked for again at each start). */
+    val servers: List<SavedServer> = emptyList(),
 )
 
 val ACCENTS: List<Pair<String, String>> = listOf(
@@ -91,8 +95,9 @@ class SettingsRepository(context: Context) {
         .put("panicWipe", s.panicWipe).put("appLock", s.appLock)
         .put("mutedChats", JSONArray(s.mutedChats.toList()))
         .put("lastBackupAt", s.lastBackupAt).put("lastSeenVersion", s.lastSeenVersion)
-        .put("updateChecks", s.updateChecks).put("updateSnoozedUntil", s.updateSnoozedUntil)
+        .put("updateChecks", s.updateChecks).put("updateSnoozedUntil", s.updateSnoozedUntil).put("advanced", s.advanced)
         .put("network", s.network.toJson())
+        .put("servers", MyServer.toJson(s.servers))
 
     private fun load(): AppSettings {
         val sealed = prefs.getString(SEALED, null)
@@ -128,7 +133,9 @@ class SettingsRepository(context: Context) {
             lastSeenVersion = o.optString("lastSeenVersion", ""),
             updateChecks = o.optBoolean("updateChecks", true),
             updateSnoozedUntil = o.optLong("updateSnoozedUntil", 0L),
+            advanced = o.optBoolean("advanced", false),
             network = NetworkConfig.fromJson(o.optString("network", "").ifEmpty { null }, fallback = AppConfig.defaultNetworkConfig()),
+            servers = MyServer.fromJson(o.optJSONArray("servers")),
         )
     }
 

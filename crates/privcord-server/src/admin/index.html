@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<script src="/admin/theme.js"></script>
+<title>PrivCord server</title>
+<link rel="stylesheet" href="/admin/app.css">
+<link rel="icon" href="/admin/brand.svg" type="image/svg+xml">
+</head>
+<body>
+<a class="skip" href="#view">Skip to content</a>
+<header class="bar">
+  <div class="col bar-in">
+    <h1 class="brand"><img src="/admin/brand.svg" alt="" width="30" height="30"><span class="name">PrivCord</span><span class="kind">server</span></h1>
+    <div class="who" id="who" hidden>
+      <button type="button" class="adv-switch" id="adv" role="switch" aria-checked="false"><span class="track" aria-hidden="true"></span><span>Advanced</span></button>
+      <button type="button" class="icon-btn" id="theme"></button>
+      <button type="button" class="btn ghost sm" id="signout">Sign out</button>
+    </div>
+  </div>
+</header>
+
+<main class="col">
+  <section id="login" class="login" aria-labelledby="loginTitle">
+    <h2 id="loginTitle">Sign in</h2>
+    <p class="lead">Paste your admin token. Make more with <code>privcord-server admin-token</code> in a terminal on the server.</p>
+    <form id="loginForm" autocomplete="off">
+      <label for="token">Admin token</label>
+      <input id="token" name="token" type="password" spellcheck="false" autocapitalize="off" autocomplete="off" required>
+      <p id="loginError" class="msg bad" role="alert" hidden></p>
+      <button type="submit" class="btn primary">Sign in</button>
+    </form>
+    <form id="setupForm" class="setup" autocomplete="off">
+      <h3 id="setupTitle">Have a setup code?</h3>
+      <p class="muted" id="setupHelp">An admin can make you a code with <code>privcord-server admin-invite</code>. It works once, for 15 minutes, and you get your own token here.</p>
+      <label for="code">Setup code</label>
+      <input id="code" name="code" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="abcd-efgh-jkmn-pqrs-tuvw" required>
+      <p id="setupError" class="msg bad" role="alert" hidden></p>
+      <button type="submit" class="btn primary">Make the owner token</button>
+    </form>
+    <div id="setupDone" hidden aria-live="polite"></div>
+  </section>
+
+  <div id="app" hidden>
+    <nav aria-label="Sections"><div class="tabs" role="tablist" id="tabs"></div></nav>
+    <div id="status" class="sr" role="status" aria-live="polite"></div>
+    <div id="view" role="tabpanel" tabindex="-1"></div>
+  </div>
+</main>
+<script src="/admin/app.js"></script>
+</body>
+</html>

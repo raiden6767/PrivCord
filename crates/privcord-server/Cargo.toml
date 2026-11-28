@@ -19,13 +19,24 @@ turn = ["dep:turn", "dep:webrtc-util", "dep:async-trait"]
 axum = { version = "0.8", default-features = false, features = ["http1", "ws", "tokio", "query", "json"] }
 tokio = { workspace = true, features = ["net", "signal", "io-util", "fs"] }
 futures-util = "0.3"
+hyper = { version = "1", default-features = false, features = ["server", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio", "server", "http1", "service"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
 serde.workspace = true
 serde_json.workspace = true
 toml = "0.9"
 clap = { version = "4", features = ["derive", "env"] }
 sha2.workspace = true
 k256.workspace = true
+log = "0.4"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 hmac.workspace = true
+aes-gcm.workspace = true
+instant-acme = { version = "0.8", default-features = false, features = ["ring", "hyper-rustls", "rcgen"] }
+x509-parser = { version = "0.18", default-features = false }
+negentropy = { version = "0.5", default-features = false, features = ["std"] }
 base64.workspace = true
 getrandom.workspace = true
 turn = { version = "0.17", optional = true }
@@ -33,5 +44,11 @@ webrtc-util = { version = "0.17", optional = true }
 async-trait = { version = "0.1", optional = true }
 
 [dev-dependencies]
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem", "x509-parser"] }
+time = "0.3"
 tokio-tungstenite = "0.30"
 tempfile = "3"
+
+[[example]]
+name = "turn_probe"
+required-features = ["turn"]

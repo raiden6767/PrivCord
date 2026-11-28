@@ -475,17 +475,32 @@ impl Core {
         let Some((contact, opened)) =
             privcord_crypto::seal::open_from_stranger(blob, &own_uid, identity)
         else {
+            self.diag(
+                "invite",
+                "request refused: not readable or not signed by the card inside",
+                blob.from.as_str(),
+            );
             return;
         };
         let payload = opened.payload;
         if payload.get("t").and_then(serde_json::Value::as_str) != Some("hello")
             || contact.uid == own_uid
         {
+            self.diag(
+                "invite",
+                "request refused: not a hello",
+                contact.uid.as_str(),
+            );
             return;
         }
         if self.invites.requests.len() >= MAX_REQUESTS
             && !self.invites.requests.contains_key(&contact.uid)
         {
+            self.diag(
+                "invite",
+                "request refused: too many waiting",
+                contact.uid.as_str(),
+            );
             return;
         }
         let Ok(safety_number) = derive_safety_number(&identity.sign_public(), &contact.card.sign)
@@ -500,6 +515,15 @@ impl Core {
                 contact,
                 safety_number,
             },
+        );
+        self.diag(
+            "invite",
+            if new {
+                "someone asked to be added"
+            } else {
+                "asked again to be added"
+            },
+            uid.as_str(),
         );
         if new {
             self.hub.publish(EngineEvent::InviteRequest { uid });

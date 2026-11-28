@@ -1,0 +1,7 @@
+{"op":"sub","mailbox":"mb"}
+{"op":"put","mailbox":"mb","id":"m1","blob":"AAAA","ttl":60,"kind":"sig"}
+["REQ","a",{"kinds":[1],"limit":5}]
+["REQ","b",{"#t":["room"],"since":1}]
+["COUNT","c",{"authors":["ab"]}]
+["CLOSE","a"]
+["EVENT",{"id":"00","pubkey":"00","created_at":1,"kind":1,"tags":[],"content":"x","sig":"00"}]

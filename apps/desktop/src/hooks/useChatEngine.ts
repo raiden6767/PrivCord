@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { watchMyServers } from '../lib/myServerLoop';
 import { ChatEngine, type ChatState } from '../lib/engine';
 import { pushNativeConfig } from '../lib/network';
 import type { ChatEngineApi } from '../lib/engineApi';
@@ -30,6 +31,8 @@ export function useChatEngine(): UseChatEngine {
   const [fatal, setFatal] = useState<string | null>(null);
   const [needsIdentity, setNeedsIdentity] = useState(false);
   const [version, setVersion] = useState(0);
+
+  useEffect(() => (engine ? watchMyServers(() => engine.reloadNetwork()) : undefined), [engine]);
 
   useEffect(() => {
     installDiagHooks();

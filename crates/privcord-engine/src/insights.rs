@@ -378,7 +378,19 @@ fn devices_summary(i: &DevicesInput) -> Value {
 }
 
 /// What is new, per release: one list for every platform. Newest first.
-const WHATS_NEW: &[(&str, &[&str])] = &[(
+const WHATS_NEW: &[(&str, &[&str])] = &[
+    (
+        "0.3.0",
+        &[
+            "Settings are simpler: a short list for everyday use, and a \"Show advanced settings\" switch for devices, connection options and power tools.",
+            "Clear chats and Erase everything are at the top of Privacy, so they are never a long scroll away.",
+            "Read ticks now reach the sender even when you read a message with no connection: the receipt is kept and sent as soon as there is a way, and delivery receipts fall back to the relay.",
+            "Adding a friend from their QR code leaves a clear trail in the diagnostic log, to find out why a request does not arrive.",
+            "Windows: after your laptop sleeps or changes network, dead relay connections are noticed within a minute and replaced, so messages and new links no longer stall for minutes.",
+            "More public STUN servers (Cloudflare, Google, Twilio, Nextcloud, Telnyx) for finding your address on strict networks.",
+        ],
+    ),
+    (
     "0.2.0",
     &[
         "Link a new device by scanning: the new device shows a code, your phone scans it, and you type six digits.",
@@ -388,7 +400,8 @@ const WHATS_NEW: &[(&str, &[&str])] = &[(
         "PrivCord can update itself: Android downloads in the background, Windows installs a signed update.",
         "Remove a linked device from any of your devices: it waits a day (and can be taken back), or happens at once with your recovery phrase.",
     ],
-)];
+    ),
+];
 
 fn whats_new(version: &str) -> Value {
     let lines = WHATS_NEW
@@ -638,7 +651,7 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
-        assert_eq!(run("whats_new", json!("9.9.9"))["version"], "0.2.0");
+        assert_eq!(run("whats_new", json!("9.9.9"))["version"], "0.3.0");
     }
 
     #[test]

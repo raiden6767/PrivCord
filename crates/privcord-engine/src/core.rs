@@ -1377,6 +1377,10 @@ impl Core {
         if self.messages.contains_key(&message.message_id) {
             let id = message.message_id.clone();
             ack(self, &id);
+            // Already read here, and the sender asks again: they never heard that it was read.
+            if let Some(at) = self.messages.meta(&id).and_then(|m| m.read_at) {
+                let _ = self.send_read_receipt(peer, &id, at);
+            }
             return;
         }
         message.delivery_state = DeliveryState::Delivered;
@@ -1802,8 +1806,8 @@ impl Core {
                 m.delivery_state = DeliveryState::Read;
                 m.read_at = Some(now);
             }
-            for addr in self.ready_addresses(peer) {
-                self.send_secure(&addr, &json!({ "v": PROTOCOL_VERSION, "kind": "ack", "messageId": id, "state": "READ", "at": now }));
+            if !self.send_read_receipt(peer, &id, now) {
+                self.owe_read_receipt(peer, &id, now);
             }
         }
         Ok(())

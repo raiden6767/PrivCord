@@ -13,8 +13,17 @@ export const MAX_MANUAL_SIGNAL_BYTES = 64 * 1024;
 
 export const MANUAL_SIGNAL_PREFIX = 'DUO1:';
 
+/** Public STUN servers from several operators. Each one only tells a device which address the internet sees it at; none sees
+ * a message. A second and third opinion shows whether a router hands out a different address per destination (a strict NAT),
+ * and one being unreachable or blocked no longer leaves a device with no public address. Every operator learns the IP address
+ * of a device that starts a link: that is why the list is short, and why Hide my IP and Tor mode use none of them. */
 export const DEFAULT_STUN_URLS = [
   'stun:stun.cloudflare.com:3478',
+  'stun:stun.l.google.com:19302',
+  'stun:stun1.l.google.com:19302',
+  'stun:global.stun.twilio.com:3478',
+  'stun:stun.nextcloud.com:443',
+  'stun:stun.telnyx.com:3478',
 ];
 
 export const AUTH_TIMEOUT_MS = 15_000;

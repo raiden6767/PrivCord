@@ -29,14 +29,25 @@ pub fn hex(bytes: &[u8]) -> String {
     out
 }
 
+/// Lowercase hex of exactly `N` bytes. (Not `from_str_radix`, which would also accept a leading `+`.)
 pub fn unhex<const N: usize>(s: &str) -> Option<[u8; N]> {
-    if s.len() != N * 2 || !s.is_ascii() {
+    if s.len() != N * 2
+        || !s
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
         return None;
     }
     let mut out = [0u8; N];
     for (slot, pair) in out.iter_mut().zip(s.as_bytes().chunks(2)) {
-        let pair = std::str::from_utf8(pair).ok()?;
-        *slot = u8::from_str_radix(pair, 16).ok()?;
+        let digit = |c: u8| -> u8 {
+            if c.is_ascii_digit() {
+                c - b'0'
+            } else {
+                c - b'a' + 10
+            }
+        };
+        *slot = digit(*pair.first()?) * 16 + digit(*pair.get(1)?);
     }
     Some(out)
 }

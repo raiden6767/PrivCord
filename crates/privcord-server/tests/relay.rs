@@ -278,6 +278,7 @@ async fn healthz_gives_counters_only_and_less_behind_a_proxy() {
             "delivered",
             "mailboxes",
             "ok",
+            "open_connections",
             "put",
             "queued",
             "rejected"
@@ -461,4 +462,160 @@ async fn metrics_are_off_by_default_and_need_the_token_when_on() {
         "{body}"
     );
     r.stop().await;
+}
+
+#[tokio::test]
+async fn a_client_that_stops_reading_is_cut_off_and_its_queue_released() {
+    // Found in review: a client could subscribe to big mailboxes, never read, and hold the relay's memory (and slow everyone).
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = config(dir.path());
+    c.relay.stall_secs = 1;
+    c.relay.max_conns_per_ip = 100;
+    c.relay.max_per_mailbox_per_ip = 100_000;
+    c.relay.backpressure_bytes = 1 << 30;
+    let (r, url) = spawn(c).await;
+    let blob = "A".repeat(60_000);
+    let mut filler = Client::open(&url).await;
+    for mb in 0..4 {
+        for i in 0..120 {
+            filler
+                .send(put(
+                    &format!("big{mb}"),
+                    &format!("m{i}"),
+                    &blob,
+                    600,
+                    "msg",
+                ))
+                .await;
+            filler.next(|m| m["op"] == "ok" || m["op"] == "err").await;
+        }
+    }
+    // a reader that subscribes to everything and then never reads
+    let mut lazy = Client::open(&url).await;
+    for mb in 0..4 {
+        lazy.send(json!({ "op": "sub", "mailbox": format!("big{mb}") }))
+            .await;
+    }
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let queued = r
+        .relay()
+        .unwrap()
+        .out_total()
+        .load(std::sync::atomic::Ordering::Relaxed);
+    assert!(queued > 0, "the replay should be waiting to be written");
+    let mut freed = false;
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if r.relay()
+            .unwrap()
+            .out_total()
+            .load(std::sync::atomic::Ordering::Relaxed)
+            == 0
+        {
+            freed = true;
+            break;
+        }
+    }
+    assert!(
+        freed,
+        "the stalled client's queue should have been released"
+    );
+    drop(lazy);
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn the_address_header_is_believed_only_from_the_proxies_you_name() {
+    // Found in review: a visitor reaching the server directly could choose which address the limits counted.
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = config(dir.path());
+    c.server.trust_proxy = true;
+    c.server.trusted_proxies = vec!["10.9.9.9".into()]; // not the test client (127.0.0.1)
+    c.relay.max_conns_per_ip = 1;
+    let (r, url) = spawn(c).await;
+    let open = |xff: &'static str| {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let mut req = url.clone().into_client_request().unwrap();
+        req.headers_mut()
+            .insert("x-forwarded-for", xff.parse().unwrap());
+        async move { connect_async(req).await.unwrap().0 }
+    };
+    let _first = open("6.6.6.6").await;
+    // a different claimed address does not make it a different visitor: both are really 127.0.0.1
+    let mut second = open("7.7.7.7").await;
+    let m = tokio::time::timeout(Duration::from_secs(3), second.next())
+        .await
+        .unwrap();
+    assert!(matches!(m, Some(Ok(Message::Close(_)))), "{m:?}");
+    r.stop().await;
+}
+
+#[tokio::test]
+async fn an_ipv6_visitor_counts_as_one_however_many_addresses_it_has() {
+    use privcord_server::net::ip_group;
+    let a: std::net::IpAddr = "2001:db8:1:2:aaaa:bbbb:cccc:dddd".parse().unwrap();
+    let b: std::net::IpAddr = "2001:db8:1:2:1111:2222:3333:4444".parse().unwrap();
+    let other: std::net::IpAddr = "2001:db8:1:3::1".parse().unwrap();
+    assert_eq!(ip_group(a), ip_group(b));
+    assert_ne!(ip_group(a), ip_group(other));
+    let v4: std::net::IpAddr = "203.0.113.5".parse().unwrap();
+    assert_eq!(ip_group(v4), v4);
+}
+
+/// One request with any method: (status, the head in lower case, the body).
+async fn raw_request(
+    addr: std::net::SocketAddr,
+    method: &str,
+    path: &str,
+    extra: &str,
+) -> (u16, String, String) {
+    let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+    s.write_all(
+        format!("{method} {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{extra}\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).await.unwrap();
+    let (head, body) = out.split_once("\r\n\r\n").unwrap_or((&out, ""));
+    (
+        head.split_whitespace().nth(1).unwrap().parse().unwrap(),
+        head.to_lowercase(),
+        body.to_owned(),
+    )
+}
+
+#[tokio::test]
+async fn an_app_in_a_web_view_may_ask_the_server_about_itself_from_another_origin() {
+    let dir = tempfile::tempdir().unwrap();
+    let (r, _url) = spawn(config(dir.path())).await;
+    // the preflight a browser makes before a GET with an Authorization header
+    let (status, head, _) = raw_request(
+        r.addr,
+        "OPTIONS",
+        "/turn",
+        "Origin: https://app.example\r\nAccess-Control-Request-Method: GET\r\nAccess-Control-Request-Headers: authorization\r\n",
+    )
+    .await;
+    assert_eq!(status, 204, "{head}");
+    assert!(
+        head.contains("access-control-allow-origin: *") && head.contains("authorization"),
+        "{head}"
+    );
+    // and the answer itself carries the permission
+    let (status, head, body) = raw_request(
+        r.addr,
+        "GET",
+        "/.well-known/privcord-server",
+        "Origin: https://app.example\r\n",
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert!(head.contains("access-control-allow-origin: *"), "{head}");
+    assert!(body.contains("privcord-server"));
+    // the counters get no such permission
+    let (_, head, _) =
+        raw_request(r.addr, "GET", "/healthz", "Origin: https://app.example\r\n").await;
+    assert!(!head.contains("access-control-allow-origin"), "{head}");
 }

@@ -2,6 +2,7 @@
 
 use super::event::{Event, Id};
 use super::filter::Filter;
+use crate::record::{Codec, Decoded};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::path::PathBuf;
@@ -19,11 +20,16 @@ struct Inner {
     /// Which event currently holds a replaceable or addressable slot.
     slots: HashMap<(Id, u64, String), Id>,
     expiring: BTreeSet<Key>,
-    /// Events somebody asked to delete: target id -> who asked. Kept even when the target has not arrived yet, so an event
-    /// that shows up after its deletion is refused. Bounded.
-    deleted: HashMap<Id, Id>,
+    /// Deletions asked for, as (target id, who asked). Kept even when the target has not arrived yet, so an event that
+    /// shows up after its deletion is refused. One entry per asker: somebody else naming the same id cannot displace the
+    /// author's own deletion. Bounded.
+    deleted: HashSet<(Id, Id)>,
     /// Addresses (author, kind, d tag) deleted up to and including a time (NIP-09 `a` tags). Bounded.
     deleted_addrs: HashMap<(Id, u64, String), i64>,
+    /// Events an administrator removed: refused whoever publishes them. Bounded.
+    banned: HashSet<Id>,
+    /// NIP-62: an author asked to be forgotten up to a time: what they published before is gone and refused. Bounded.
+    vanished: HashMap<Id, i64>,
     bytes: usize,
 }
 
@@ -34,14 +40,26 @@ pub enum Put {
     /// A newer event already holds this replaceable slot.
     Stale,
     Deleted,
+    /// The store is at its size limit and this event alone is too big to keep.
+    Full,
+    /// The disk refused the write (full, or failing): the event is not kept, so it is not confirmed either.
+    Failed,
 }
 
 pub struct Store {
     inner: RwLock<Inner>,
     log: Option<Mutex<std::fs::File>>,
     path: Option<PathBuf>,
+    /// The most bytes of events to hold (0: no limit); the oldest go first when it is exceeded.
+    max_bytes: usize,
     lines: std::sync::atomic::AtomicUsize,
+    /// How each record is written (a check, and encryption with a key).
+    codec: Arc<Codec>,
+    /// Records that could not be trusted when the log was read (skipped).
+    corrupt: std::sync::atomic::AtomicUsize,
 }
+
+const LABEL: &str = "nostr-events";
 
 impl std::fmt::Debug for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -49,7 +67,12 @@ impl std::fmt::Debug for Store {
     }
 }
 
-const MAX_TOMBSTONES: usize = 200_000;
+const MAX_TOMBSTONES: usize = 500_000;
+/// The most index entries one query looks at, however many events there are: a wide or hostile filter cannot hold the
+/// store's lock for long.
+const MAX_SCAN: usize = 200_000;
+/// The most events COUNT will count.
+const MAX_COUNT: usize = 100_000;
 
 fn tag_keys(e: &Event) -> impl Iterator<Item = (char, String)> + '_ {
     e.tags.iter().filter_map(|t| {
@@ -81,6 +104,37 @@ impl Inner {
         }
         self.bytes += e.size();
         self.by_id.insert(e.id, e);
+    }
+
+    /// NIP-62 request to vanish: everything the author published up to now goes, and so do the gift wraps (kind 1059) sent
+    /// to them; older events of theirs that arrive later are refused.
+    fn vanish(&mut self, req: &Event) {
+        if self.vanished.len() < MAX_TOMBSTONES {
+            let t = self.vanished.entry(req.pubkey).or_insert(0);
+            *t = (*t).max(req.created_at);
+        }
+        let mut gone: Vec<Id> = self
+            .by_author
+            .get(&req.pubkey)
+            .map(|s| {
+                s.iter()
+                    .filter(|k| k.0 <= req.created_at)
+                    .map(|k| k.1)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let to = ('p', super::event::hex(&req.pubkey));
+        if let Some(s) = self.by_tag.get(&to) {
+            gone.extend(
+                s.iter()
+                    .filter(|k| k.0 <= req.created_at)
+                    .map(|k| k.1)
+                    .filter(|id| self.by_id.get(id).is_some_and(|e| e.kind == 1059)),
+            );
+        }
+        for id in gone {
+            self.remove(&id);
+        }
     }
 
     fn remove(&mut self, id: &Id) -> Option<Arc<Event>> {
@@ -120,15 +174,16 @@ impl Inner {
     }
 
     fn tombstone(&mut self, id: Id, by: Id) {
-        if self.deleted.len() < MAX_TOMBSTONES || self.deleted.contains_key(&id) {
-            self.deleted.insert(id, by);
+        if self.deleted.len() < MAX_TOMBSTONES {
+            self.deleted.insert((id, by));
         }
     }
 
     /// NIP-09: a kind 5 event removes the events it names, if they are the author's own, and refuses them if they arrive
     /// later. Whether the target is known yet does not matter.
     fn apply_deletion(&mut self, d: &Event) {
-        for t in &d.tags {
+        // One deletion names at most this many targets: a single event must not be able to fill the record of deletions.
+        for t in d.tags.iter().take(128) {
             match (t.first().map(String::as_str), t.get(1)) {
                 (Some("e"), Some(id)) => {
                     if let Some(id) = super::event::unhex::<32>(id) {
@@ -189,40 +244,124 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Store {
-    /// A store that keeps its log in `dir` (or only in memory when `dir` is `None`), reading back what it finds.
-    pub fn open(dir: Option<&std::path::Path>) -> Result<Self, String> {
+    /// A store that keeps its log in `dir` (or only in memory when `dir` is `None`), reading back what it finds. Plain lines
+    /// with no check: use [`Store::open_with`] for the settings' codec.
+    pub fn open(dir: Option<&std::path::Path>, max_bytes: usize) -> Result<Self, String> {
+        Self::open_with(dir, max_bytes, Arc::new(Codec::plain()))
+    }
+
+    pub fn open_with(
+        dir: Option<&std::path::Path>,
+        max_bytes: usize,
+        codec: Arc<Codec>,
+    ) -> Result<Self, String> {
         let mut store = Self {
             inner: RwLock::new(Inner::default()),
             log: None,
             path: None,
+            max_bytes,
             lines: std::sync::atomic::AtomicUsize::new(0),
+            codec,
+            corrupt: std::sync::atomic::AtomicUsize::new(0),
         };
+        let mut rewrite = false;
         if let Some(dir) = dir {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+            crate::fsutil::create_private_dir(dir)?;
             let path = dir.join("nostr-events.jsonl");
+            // A crash can leave half a line at the end: cut it, or the next event would be glued to it and lost.
+            let cut = crate::fsutil::trim_torn_tail(&path)
+                .map_err(|e| format!("could not check {}: {e}", path.display()))?;
+            if cut > 0 {
+                eprintln!(
+                    "privcord-server: cut {cut} bytes of a half-written last line from {}",
+                    path.display()
+                );
+            }
             if let Ok(text) = std::fs::read_to_string(&path) {
-                let mut n = 0;
-                for line in text.lines() {
-                    if let Some(e) = serde_json::from_str(line)
-                        .ok()
-                        .and_then(|v| Event::parse_trusted(&v))
+                crate::record::check_key(&store.codec, LABEL, &text, &path.display().to_string())?;
+                let (mut n, mut corrupt, mut old) = (0, 0usize, 0usize);
+                for line in text.lines().filter(|l| !l.is_empty()) {
+                    let payload = match store.codec.decode(LABEL, line) {
+                        Decoded::Payload(p) => p,
+                        Decoded::Corrupt => {
+                            corrupt += 1;
+                            continue;
+                        }
+                        Decoded::NeedsKey => {
+                            return Err(format!(
+                            "{} is encrypted but no storage key is set (storage.key_file or {})",
+                            path.display(),
+                            "the storage.key_env variable"
+                        ))
+                        }
+                    };
+                    if !store.codec.is_current(line) {
+                        old += 1;
+                    }
+                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&payload) else {
+                        corrupt += 1;
+                        continue;
+                    };
+                    if let Some(id) = v
+                        .get("ban")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(super::event::unhex::<32>)
                     {
+                        store.ban_inner(id);
+                        n += 1;
+                    } else if let Some(id) = v
+                        .get("unban")
+                        .and_then(serde_json::Value::as_str)
+                        .and_then(super::event::unhex::<32>)
+                    {
+                        store
+                            .inner
+                            .write()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .banned
+                            .remove(&id);
+                        n += 1;
+                    } else if let Some(e) = Event::parse_trusted(&v) {
                         store.insert_inner(Arc::new(e), false);
                         n += 1;
                     }
                 }
                 store.lines.store(n, std::sync::atomic::Ordering::Relaxed);
+                store
+                    .corrupt
+                    .store(corrupt, std::sync::atomic::Ordering::Relaxed);
+                if corrupt > 0 {
+                    // Kept as it was, before the next compaction drops what could not be read: the damage can be looked at.
+                    let keep = dir.join(format!(
+                        "nostr-events.jsonl.damaged-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_secs())
+                    ));
+                    let _ = std::fs::copy(&path, &keep);
+                    eprintln!(
+                        "privcord-server: {corrupt} damaged records in {} were skipped (a copy is in {})",
+                        path.display(),
+                        keep.display()
+                    );
+                }
+                rewrite = old > 0 && store.codec.frames();
             }
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
+            let file = crate::fsutil::open_private_append(&path)
                 .map_err(|e| format!("could not open {}: {e}", path.display()))?;
             store.log = Some(Mutex::new(file));
             store.path = Some(path);
         }
+        // An older log is rewritten in the shape the settings ask for (checksummed, or encrypted) right away.
+        if rewrite {
+            store.compact(true);
+        }
         Ok(store)
+    }
+
+    /// How many records could not be trusted when the log was read.
+    pub fn corrupt_lines(&self) -> usize {
+        self.corrupt.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn insert_inner(&self, e: Arc<Event>, log: bool) -> Put {
@@ -230,7 +369,14 @@ impl Store {
         if w.by_id.contains_key(&e.id) {
             return Put::Duplicate;
         }
-        if w.deleted.get(&e.id) == Some(&e.pubkey) {
+        if w.banned.contains(&e.id) || w.deleted.contains(&(e.id, e.pubkey)) {
+            return Put::Deleted;
+        }
+        if e.kind != 62
+            && w.vanished
+                .get(&e.pubkey)
+                .is_some_and(|t| e.created_at <= *t)
+        {
             return Put::Deleted;
         }
         if let Some(slot) = e.replace_key() {
@@ -257,13 +403,52 @@ impl Store {
         if e.kind == 5 {
             w.apply_deletion(&e);
         }
+        if e.kind == 62 {
+            w.vanish(&e);
+        }
         w.add(e.clone());
+        if self.max_bytes > 0 && w.bytes > self.max_bytes {
+            // Over the size limit: the oldest events go first (never the one just added, unless it alone is too big).
+            let mut over = w.bytes - self.max_bytes;
+            let oldest: Vec<Id> = w
+                .by_time
+                .iter()
+                .filter(|k| k.1 != e.id)
+                .map(|k| k.1)
+                .collect();
+            for id in oldest {
+                if over == 0 {
+                    break;
+                }
+                if let Some(gone) = w.remove(&id) {
+                    over = over.saturating_sub(gone.size());
+                }
+            }
+            if over > 0 {
+                w.remove(&e.id);
+                return Put::Full;
+            }
+        }
         drop(w);
         if log {
             if let Some(f) = &self.log {
-                let mut line = e.json.to_string();
+                let mut line = self.codec.encode(LABEL, &e.json);
                 line.push('\n');
-                let _ = lock(f).write_all(line.as_bytes());
+                let mut file = lock(f);
+                let before = file.metadata().map(|m| m.len()).ok();
+                if file.write_all(line.as_bytes()).is_err() {
+                    // Whatever part of the line reached the file is cut off again, and the event is not kept: the
+                    // publisher is told, instead of being promised something that is not on disk.
+                    if let Some(len) = before {
+                        let _ = file.set_len(len);
+                    }
+                    drop(file);
+                    self.inner
+                        .write()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(&e.id);
+                    return Put::Failed;
+                }
                 self.lines
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
@@ -276,10 +461,90 @@ impl Store {
     }
 
     /// Asks the disk to keep what has been written so far (a power cut loses at most what came after the last call).
-    pub fn sync(&self) {
-        if let Some(f) = &self.log {
-            let _ = lock(f).sync_data();
+    pub fn sync(&self) -> bool {
+        self.log
+            .as_ref()
+            .is_none_or(|f| lock(f).sync_data().is_ok())
+    }
+
+    /// The events an administrator banned (refused whoever publishes them).
+    pub fn banned_events(&self) -> Vec<Id> {
+        let mut v: Vec<Id> = self
+            .inner
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .banned
+            .iter()
+            .copied()
+            .collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// Takes a ban back: the event may be published (and stored) again. Whether it was banned.
+    pub fn unban_event(&self, id: &Id) -> bool {
+        let was = self
+            .inner
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .banned
+            .remove(id);
+        if was {
+            if let Some(f) = &self.log {
+                let mut line = self.codec.encode(
+                    LABEL,
+                    &format!("{{\"unban\":\"{}\"}}", super::event::hex(id)),
+                );
+                line.push('\n');
+                let _ = lock(f).write_all(line.as_bytes());
+                self.lines
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
+        was
+    }
+
+    /// An administrator removes an event for good (moderation): it goes, and nobody can publish it again.
+    pub fn ban_event(&self, id: &Id) -> bool {
+        let had = self.ban_inner(*id);
+        // Written to the log, so the ban survives a restart (and a crash, which would otherwise reload the event).
+        if let Some(f) = &self.log {
+            let mut line = self
+                .codec
+                .encode(LABEL, &format!("{{\"ban\":\"{}\"}}", super::event::hex(id)));
+            line.push('\n');
+            let _ = lock(f).write_all(line.as_bytes());
+            self.lines
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        had
+    }
+
+    fn ban_inner(&self, id: Id) -> bool {
+        let mut w = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+        let had = w.remove(&id).is_some();
+        if w.banned.len() < MAX_TOMBSTONES {
+            w.banned.insert(id);
+        }
+        had
+    }
+
+    /// Removes every stored event. Bans and deletions are kept, so what was removed on purpose stays refused.
+    pub fn clear(&self) -> usize {
+        let removed = {
+            let mut w = self.inner.write().unwrap_or_else(PoisonError::into_inner);
+            let n = w.by_id.len();
+            let keep = (
+                std::mem::take(&mut w.deleted),
+                std::mem::take(&mut w.deleted_addrs),
+                std::mem::take(&mut w.banned),
+            );
+            *w = Inner::default();
+            (w.deleted, w.deleted_addrs, w.banned) = keep;
+            n
+        };
+        self.compact(true);
+        removed
     }
 
     pub fn len(&self) -> usize {
@@ -350,7 +615,10 @@ impl Store {
                     break;
                 }
                 let mut taken = 0;
-                for key in set.range(lo..=hi).rev() {
+                for (steps, key) in set.range(lo..=hi).rev().enumerate() {
+                    if steps >= MAX_SCAN {
+                        break;
+                    }
                     if let Some(e) = r.by_id.get(&key.1) {
                         if live(e) {
                             found.push(e.clone());
@@ -377,7 +645,7 @@ impl Store {
                 limit: None,
                 ..f.clone()
             };
-            for e in self.query(&g, now, usize::MAX) {
+            for e in self.query(&g, now, MAX_COUNT) {
                 seen.insert(e.id);
             }
         }
@@ -433,14 +701,23 @@ impl Store {
         }
         let r = self.inner.read().unwrap_or_else(PoisonError::into_inner);
         let mut text = String::new();
+        for id in &r.banned {
+            text.push_str(
+                &self
+                    .codec
+                    .encode(LABEL, &format!("{{\"ban\":\"{}\"}}", super::event::hex(id))),
+            );
+            text.push('\n');
+        }
         for key in &r.by_time {
             if let Some(e) = r.by_id.get(&key.1) {
-                text.push_str(&e.json);
+                text.push_str(&self.codec.encode(LABEL, &e.json));
                 text.push('\n');
             }
         }
-        let tmp = path.with_extension("tmp");
-        if std::fs::write(&tmp, &text).is_ok() && std::fs::rename(&tmp, path).is_ok() {
+        // Written to a temporary file, synced, renamed over the log, and the folder synced: a power cut leaves the old log or
+        // the new one, never a half-written file.
+        if crate::fsutil::write_private_atomic(path, text.as_bytes()).is_ok() {
             if let Ok(f) = std::fs::OpenOptions::new().append(true).open(path) {
                 *lock(log) = f;
                 self.lines.store(live, std::sync::atomic::Ordering::Relaxed);

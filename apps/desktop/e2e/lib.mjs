@@ -156,10 +156,16 @@ export async function onboard(page) {
   return words.join(' ');
 }
 
+/** Settings is open: turn the Advanced switch on (the beginner view hides Devices, Connection and the power tools). */
+export async function showAdvanced(page) {
+  const sw = page.locator('button[role="switch"][aria-label="Show advanced settings"]');
+  if ((await sw.getAttribute('aria-checked')) !== 'true') await sw.click();
+}
+
 export async function uidOf(page) {
   await page.click('button[aria-label="Settings"]');
+  await showAdvanced(page); // the id sits in the technical group, shown with Advanced
   await page.click('.tab:has-text("About")');
-  await page.click('summary:has-text("Technical details")'); // the id sits in the closed technical group
   const uid = await page.locator('.settings-content dd.selectable').first().innerText();
   await page.keyboard.press('Escape');
   return uid.trim();
@@ -389,7 +395,8 @@ export async function installBleSim(devs) {
 /** Settings > Security: the "stay group-only" privacy switch. */
 export async function setGroupOnly(page, on) {
   await page.click('button[aria-label="Settings"]');
-  await page.click('.tab:has-text("Security")');
+  await showAdvanced(page);
+  await page.click('.tab:has-text("Privacy")');
   const sw = page.locator('button[role="switch"][aria-label^="Stay group-only"]');
   if ((await sw.getAttribute('aria-checked')) !== String(on)) await sw.click();
   await page.waitForFunction((v) => document.querySelector('button[role="switch"][aria-label^="Stay group-only"]')?.getAttribute('aria-checked') === String(v), on);

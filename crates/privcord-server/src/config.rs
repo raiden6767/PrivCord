@@ -7,6 +7,9 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub admin: AdminConfig,
+    pub tls: TlsConfig,
+    pub storage: StorageConfig,
     pub nostr: NostrConfig,
     pub server: ServerConfig,
     pub relay: RelayConfig,
@@ -25,6 +28,10 @@ pub struct ServerConfig {
     /// With `trust_proxy`: the header that carries the client's address (the last entry is used), for example
     /// `cf-connecting-ip` behind Cloudflare.
     pub real_ip_header: String,
+    /// With `trust_proxy`: the addresses of your proxy. The header is believed only from these; from anyone else it is
+    /// ignored (so a visitor who reaches the server directly cannot pick the address limits are counted against). Empty:
+    /// believed from any caller, which is only safe if nothing but your proxy can reach this port.
+    pub trusted_proxies: Vec<String>,
     /// Serve Prometheus-style counters at `/metrics` (needs an access token if tokens are set).
     pub metrics: bool,
     /// Who may use this server. Empty: anyone. Otherwise a visitor must present one of these (as `?token=...` on the relay
@@ -32,6 +39,17 @@ pub struct ServerConfig {
     pub access_tokens: Vec<String>,
     /// The words shown to people who add this server: who runs it and how to reach them.
     pub admin_contact: String,
+    /// A client has this long to send the whole request head (and, between requests, to start the next one) before the
+    /// connection is closed: a client that sends one byte a minute cannot hold a connection (the "slow header" attack).
+    pub header_timeout_secs: u64,
+    /// A request that has not been answered after this long gets a 408 (a body that trickles in, a stuck handler).
+    pub request_timeout_secs: u64,
+    /// Connections in the request/response phase, in all (a WebSocket leaves this count once it is upgraded: the relay's own
+    /// limits apply to it).
+    pub max_http_connections: usize,
+    /// The same, from one address (a /64 for IPv6). 0: no limit; it is also off with `trust_proxy`, where every visitor
+    /// arrives from the proxy.
+    pub max_http_connections_per_ip: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +71,9 @@ pub struct RelayConfig {
     /// When this much is waiting to be written across all connections, senders are slowed down (their sockets are not
     /// read) until listeners catch up. Keeps memory flat under a flood.
     pub backpressure_bytes: usize,
+    /// A connection that has been sent something but has not taken any of it for this long is closed (a client that stops
+    /// reading must not be able to hold the relay's memory). 0: never.
+    pub stall_secs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +82,11 @@ pub struct TurnConfig {
     pub enabled: bool,
     /// Where the TURN server listens (UDP).
     pub listen: String,
+    /// Also accept TURN over TCP here, for networks that block UDP (for example `0.0.0.0:3478`). Empty: off.
+    pub tcp_listen: String,
+    /// Also accept TURN over TLS here (needs `[tls]`), for networks that only let TLS through (for example `0.0.0.0:443`
+    /// or `0.0.0.0:5349`). Empty: off.
+    pub tls_listen: String,
     /// The address phones reach this machine at from the internet (the one in the TURN answers). Required when enabled.
     pub public_ip: String,
     pub realm: String,
@@ -84,9 +110,14 @@ impl Default for ServerConfig {
             data_dir: PathBuf::from("./data"),
             trust_proxy: false,
             real_ip_header: "x-forwarded-for".into(),
+            trusted_proxies: Vec::new(),
             metrics: false,
             access_tokens: Vec::new(),
             admin_contact: String::new(),
+            header_timeout_secs: 10,
+            request_timeout_secs: 30,
+            max_http_connections: 20_000,
+            max_http_connections_per_ip: 100,
         }
     }
 }
@@ -104,6 +135,7 @@ impl Default for RelayConfig {
             max_queued_bytes: 256 * 1024 * 1024,
             max_buffered_per_conn: 64 * 1024 * 1024,
             backpressure_bytes: 32 * 1024 * 1024,
+            stall_secs: 30,
         }
     }
 }
@@ -113,6 +145,8 @@ impl Default for TurnConfig {
         Self {
             enabled: false,
             listen: "0.0.0.0:3478".into(),
+            tcp_listen: String::new(),
+            tls_listen: String::new(),
             public_ip: String::new(),
             realm: "privcord".into(),
             min_port: 49152,
@@ -132,6 +166,13 @@ impl Config {
         toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// Whether anything here needs a certificate.
+    pub fn wants_tls(&self) -> bool {
+        !self.tls.https_listen.is_empty()
+            || (self.turn.enabled && !self.turn.tls_listen.is_empty())
+            || (self.admin.enabled && self.admin.tls)
+    }
+
     /// What would stop this from working, in words (empty: fine).
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
@@ -144,6 +185,28 @@ impl Config {
                 self.server.listen
             ));
         }
+        if self.admin.enabled
+            && !self.admin.tls
+            && !self.admin.allow_plain_http
+            && self
+                .admin
+                .listen
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|a| !a.ip().is_loopback())
+        {
+            out.push(format!(
+                "admin.listen \"{}\" is not this machine and admin.tls is off: admin tokens would cross the network unencrypted. \
+                 Set admin.tls = true (with [tls]), listen on 127.0.0.1 and use an SSH tunnel, or set admin.allow_plain_http = true \
+                 if the network is a VPN you trust",
+                self.admin.listen
+            ));
+        }
+        if self.nostr.enabled
+            && (self.nostr.auth_required || self.nostr.auth_dms)
+            && self.nostr.relay_url.trim().is_empty()
+        {
+            out.push("nostr.relay_url is needed when auth_required or auth_dms is on (NIP-42 checks the client signed for this relay), for example \"wss://relay.example.org\"".into());
+        }
         for k in self
             .nostr
             .allowed_pubkeys
@@ -152,6 +215,47 @@ impl Config {
         {
             if k.len() != 64 || !k.bytes().all(|b| b.is_ascii_hexdigit()) {
                 out.push(format!("nostr key \"{k}\" is not 64 hex characters"));
+            }
+        }
+        if self.admin.enabled && self.admin.listen.parse::<std::net::SocketAddr>().is_err() {
+            out.push(format!(
+                "admin.listen \"{}\" is not an address like 127.0.0.1:8788",
+                self.admin.listen
+            ));
+        }
+        if self.wants_tls()
+            && self.tls.cert_file.is_empty()
+            && !self.tls.self_signed
+            && !self.tls.acme
+        {
+            out.push("TLS is asked for (tls.https_listen or turn.tls_listen) but there is no certificate: set tls.cert_file and tls.key_file, or tls.self_signed = true to try things out".into());
+        }
+        if self.tls.acme {
+            if self.tls.domain.trim().is_empty()
+                || self.tls.domain.parse::<std::net::IpAddr>().is_ok()
+            {
+                out.push("tls.acme needs tls.domain: the name (not an IP address) people use to reach this server".into());
+            }
+            if !self.tls.acme_accept_terms {
+                out.push("tls.acme needs tls.acme_accept_terms = true: you accept the certificate authority's terms of service".into());
+            }
+            if self.tls.https_listen.is_empty() {
+                out.push("tls.acme needs tls.https_listen (port 443): the authority proves the name by connecting there".into());
+            }
+            if !self.tls.cert_file.is_empty() {
+                out.push("tls.acme and tls.cert_file are alternatives: use one".into());
+            }
+        }
+        if self.tls.cert_file.is_empty() != self.tls.key_file.is_empty() {
+            out.push("tls.cert_file and tls.key_file go together".into());
+        }
+        for (name, v) in [
+            ("tls.https_listen", &self.tls.https_listen),
+            ("turn.tcp_listen", &self.turn.tcp_listen),
+            ("turn.tls_listen", &self.turn.tls_listen),
+        ] {
+            if !v.is_empty() && v.parse::<std::net::SocketAddr>().is_err() {
+                out.push(format!("{name} \"{v}\" is not an address like 0.0.0.0:443"));
             }
         }
         if self.turn.enabled {
@@ -199,19 +303,33 @@ pub struct NostrConfig {
     pub max_filters: usize,
     pub max_limit: usize,
     pub max_subid_len: usize,
+    /// NIP-77 (set reconciliation): the most events one sync may cover (a filter that matches more is refused with "blocked:
+    /// too many results": narrow it), and the syncs one connection may have open at once.
+    pub max_negentropy_items: usize,
+    pub max_negentropy_sessions: usize,
     pub events_per_minute_per_ip: u64,
     /// Events per second the whole relay accepts, all authors together (protects the disk). 0: no cap.
     pub events_per_second_global: u64,
     /// Subscriptions (REQ) one connection may open per minute. 0: no cap.
     pub reqs_per_minute_per_conn: u64,
+    /// Most values (ids, authors, kinds, tag values) in one filter. Each costs work on every stored event.
+    pub max_filter_values: usize,
+    /// The most bytes of events kept in memory and on disk; the oldest go first. 0: no limit (not for a public relay).
+    pub max_store_bytes: usize,
+    /// This relay's own address, for example `wss://relay.example.org`. NIP-42 authentication checks the client signed for
+    /// it, so another relay cannot pass a challenge on. Required when `auth_required` or `auth_dms` is on.
+    pub relay_url: String,
     /// Confirm an event (and hand it to subscribers) only after it is safely on disk. Batched, so it stays fast.
     pub durable: bool,
     /// Keep events on disk at all. Off: memory only, gone at restart.
     pub persist: bool,
     /// NIP-42: send direct messages (kinds 4 and 1059) only to the authenticated sender and recipient.
     pub auth_dms: bool,
-    /// The administrator's Nostr public key (hex), shown in the information document.
+    /// The administrator's Nostr public key (hex), shown in the information document. It may also use the management API.
     pub admin_pubkey: String,
+    /// More public keys (hex) allowed to use the NIP-86 management API, signed with NIP-98. With `admin_pubkey` empty too, the
+    /// API is off. It also needs `[admin] enabled = true`: what it changes is saved with the panel's settings.
+    pub admin_pubkeys: Vec<String>,
     /// Leading zero bits an event id needs (NIP-13). 0: none.
     pub min_pow: u32,
     pub auth_required: bool,
@@ -243,13 +361,19 @@ impl Default for NostrConfig {
             max_filters: 16,
             max_limit: 500,
             max_subid_len: 256,
+            max_negentropy_items: 100_000,
+            max_negentropy_sessions: 2,
             events_per_minute_per_ip: 600,
             events_per_second_global: 0,
-            reqs_per_minute_per_conn: 0,
+            reqs_per_minute_per_conn: 600,
+            max_filter_values: 256,
+            max_store_bytes: 512 * 1024 * 1024,
+            relay_url: String::new(),
             durable: false,
             persist: true,
             auth_dms: false,
             admin_pubkey: String::new(),
+            admin_pubkeys: Vec::new(),
             min_pow: 0,
             auth_required: false,
             created_at_upper_secs: 900,
@@ -260,6 +384,90 @@ impl Default for NostrConfig {
             blocked_pubkeys: Vec::new(),
             allowed_kinds: Vec::new(),
             blocked_kinds: Vec::new(),
+        }
+    }
+}
+
+/// TLS: `wss://` and `https://` for the relay and the admin panel, and TURN over TLS. Certificates come from files (read
+/// again when they change) or, for trying things out, a self-signed one that apps will not trust.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TlsConfig {
+    pub cert_file: String,
+    pub key_file: String,
+    /// Make a certificate for testing. Apps and browsers will refuse it; use real files in production.
+    pub self_signed: bool,
+    /// The name people use to reach this server. In TURN-over-TLS addresses and in the self-signed certificate.
+    pub domain: String,
+    /// Serve the relay (and admin panel) over TLS here, for example `0.0.0.0:443`. The plain listener stays as it is.
+    pub https_listen: String,
+    /// Get and renew the certificate for `domain` by itself (ACME, for example Let's Encrypt), proving the name with
+    /// TLS-ALPN-01 on `https_listen`: that must be reachable as port 443 of `domain`. The certificate and its key are kept in
+    /// `data_dir/tls`; until the first one is issued a placeholder is served. Needs `acme_accept_terms = true`.
+    pub acme: bool,
+    /// Say yes to the certificate authority's terms of service (for Let's Encrypt: https://letsencrypt.org/repository/).
+    pub acme_accept_terms: bool,
+    /// An address the authority can write to when something about the certificate needs attention (optional).
+    pub acme_email: String,
+    /// The authority's ACME directory. Empty: Let's Encrypt (production). The staging one is
+    /// `https://acme-staging-v02.api.letsencrypt.org/directory`: try that first (its certificates are not trusted).
+    pub acme_directory: String,
+    /// A file with the root certificate of a private authority (for a CA of your own, such as step-ca). Empty: the system's.
+    pub acme_ca_root: String,
+}
+
+/// The admin panel: a web page and API for managing this server, on its own listener so it can sit on localhost or a
+/// private network (a VPN such as Tailscale) and never on the public internet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AdminConfig {
+    pub enabled: bool,
+    pub listen: String,
+    /// Serve it over TLS (needs `[tls]`). Without it, keep `listen` on localhost or a private network: admin tokens travel
+    /// in the clear over plain HTTP.
+    pub tls: bool,
+    /// Allow the panel over plain HTTP on an address other than this machine (a VPN or a private network you trust).
+    /// Off: the server refuses to start that way, because admin tokens would cross the network unencrypted.
+    pub allow_plain_http: bool,
+    /// Days an admin token works before it must be replaced (from the panel, or with a new setup code). 0: never expires.
+    pub token_days: u32,
+}
+
+impl Default for AdminConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: "127.0.0.1:8788".into(),
+            tls: false,
+            allow_plain_http: false,
+            token_days: 90,
+        }
+    }
+}
+
+/// How the server's logs are written to disk (see `record.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StorageConfig {
+    /// A check on every record, so damage in the middle of a log is noticed (and reported) instead of silently skipped or,
+    /// worse, believed. Off writes plain lines as the earlier versions did, which the Node relay can also read.
+    pub checksums: bool,
+    /// Encrypt every record (AES-256-GCM) with a key kept outside `data_dir`. The key is 32 random bytes as 64 hex
+    /// characters: make one with `privcord-server store-key --out FILE`. Lose the key and the data is gone.
+    pub encrypt: bool,
+    /// A file holding the key (for example a systemd credential or a file on another volume).
+    pub key_file: String,
+    /// Or an environment variable holding it, when no `key_file` is set.
+    pub key_env: String,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            checksums: true,
+            encrypt: false,
+            key_file: String::new(),
+            key_env: "PRIVCORD_STORE_KEY".into(),
         }
     }
 }

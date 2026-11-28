@@ -65,7 +65,14 @@ interface Link {
   socket: WebSocket | null;
   attempt: number;
   timer: Timer | undefined;
+  /** When anything last came from this relay: a socket that has been silent for too long is dead, whatever it claims. */
+  lastRx: number;
 }
+
+/** How often each open socket is probed, and how long a silence is accepted before the socket is replaced. */
+export const HEARTBEAT_MS = 20_000;
+export const DEAD_AFTER_MS = 55_000;
+const NO_SUCH_EVENT = '0'.repeat(64);
 
 /** Signaling and mailboxes over public Nostr relays: decentralized, nothing to host. */
 export class NostrTransport implements SignalingTransport {
@@ -76,6 +83,12 @@ export class NostrTransport implements SignalingTransport {
   private stopped = true;
   private seen = new Set<string>();
   private subId = `duo-${Math.random().toString(36).slice(2, 10)}`;
+  private beat: Timer | undefined;
+  private lastBeat = 0;
+  private probes = 0;
+  private readonly wake = () => {
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') this.reconnectAll();
+  };
 
   constructor(
     private readonly relays: string[],
@@ -87,9 +100,65 @@ export class NostrTransport implements SignalingTransport {
     this.onBlob = onBlob;
     this.stopped = false;
     for (const url of this.relays) {
-      this.links.set(url, { socket: null, attempt: 0, timer: undefined });
+      this.links.set(url, { socket: null, attempt: 0, timer: undefined, lastRx: Date.now() });
       this.open(url);
     }
+    // A laptop that slept or changed network leaves sockets that look open and carry nothing (a relay never stores the
+    // live signals sent meanwhile): probe them, and start over at once when the network or the window comes back.
+    this.lastBeat = Date.now();
+    globalThis.clearInterval(this.beat);
+    this.beat = globalThis.setInterval(() => this.heartbeat(), HEARTBEAT_MS);
+    globalThis.addEventListener?.('online', this.wake);
+    globalThis.addEventListener?.('focus', this.wake);
+    globalThis.document?.addEventListener?.('visibilitychange', this.wake);
+  }
+
+  /** Probe every open socket (any answer counts), and replace the ones that have gone quiet. A late tick means the machine slept. */
+  heartbeat(now = Date.now()): void {
+    if (this.stopped) return;
+    const slept = now - this.lastBeat > HEARTBEAT_MS * 2.5;
+    this.lastBeat = now;
+    if (slept) return this.reconnectAll();
+    for (const [url, link] of this.links) {
+      const socket = link.socket;
+      if (!socket || socket.readyState !== WebSocket.OPEN) continue;
+      if (now - link.lastRx > DEAD_AFTER_MS) {
+        this.replace(url);
+        continue;
+      }
+      try {
+        // A question every relay answers with EOSE at once: no subscription is left behind.
+        const id = `hb-${this.probes++}`;
+        socket.send(JSON.stringify(['REQ', id, { ids: [NO_SUCH_EVENT], limit: 1 }]));
+        socket.send(JSON.stringify(['CLOSE', id]));
+      } catch {
+        this.replace(url);
+      }
+    }
+  }
+
+  /** Throw every socket away and connect again now (the network came back, or the window did). */
+  reconnectAll(): void {
+    if (this.stopped) return;
+    for (const url of this.links.keys()) this.replace(url);
+  }
+
+  private replace(url: string): void {
+    const link = this.links.get(url);
+    if (!link || this.stopped) return;
+    globalThis.clearTimeout(link.timer);
+    const old = link.socket;
+    link.socket = null;
+    link.attempt = 0;
+    if (old) {
+      old.onclose = null;
+      try {
+        old.close();
+      } catch {
+        /* already gone */
+      }
+    }
+    this.open(url);
   }
 
   status(): SignalingStatus {
@@ -113,16 +182,22 @@ export class NostrTransport implements SignalingTransport {
       return;
     }
     link.socket = socket;
+    link.lastRx = Date.now();
     socket.onopen = () => {
       link.attempt = 0;
+      link.lastRx = Date.now();
       // As far back as a stored message lives on a relay (a week): what was sent while the app was closed still arrives.
       const since = Math.floor(Date.now() / 1000) - 7 * 24 * 3600;
       socket.send(
         JSON.stringify(['REQ', this.subId, { kinds: [NOSTR_KIND_SIGNAL, NOSTR_KIND_MESSAGE], '#t': [this.mailbox], since }]),
       );
     };
-    socket.onmessage = (event) => this.handle(String(event.data));
+    socket.onmessage = (event) => {
+      link.lastRx = Date.now();
+      this.handle(String(event.data));
+    };
     socket.onclose = () => {
+      if (link.socket !== socket) return;
       link.socket = null;
       this.retry(url);
     };
@@ -174,6 +249,10 @@ export class NostrTransport implements SignalingTransport {
 
   stop(): void {
     this.stopped = true;
+    globalThis.clearInterval(this.beat);
+    globalThis.removeEventListener?.('online', this.wake);
+    globalThis.removeEventListener?.('focus', this.wake);
+    globalThis.document?.removeEventListener?.('visibilitychange', this.wake);
     for (const link of this.links.values()) {
       globalThis.clearTimeout(link.timer);
       const socket = link.socket;

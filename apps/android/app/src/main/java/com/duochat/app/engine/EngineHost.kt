@@ -56,7 +56,13 @@ object EngineHost {
             app = app,
             scope = newScope,
             conversationId = com.duochat.app.AppConfig.conversationId,
-            networkConfig = { settings.settings.value.network },
+            networkConfig = {
+                val now = settings.settings.value
+                com.duochat.app.data.MyServer.overlay(
+                    now.network,
+                    now.servers.map { it to com.duochat.app.data.MyServerState.get(it.base) },
+                )
+            },
             ownName = { settings.settings.value.displayName },
             legacyMuted = { settings.settings.value.mutedChats },
             clearLegacyMuted = { settings.update { copy(mutedChats = emptySet()) } },
@@ -68,6 +74,26 @@ object EngineHost {
         engine = created
         if (s.mesh) created.setMeshEnabled(true)
         startJob = newScope.launch { created.start() }
+        // The servers added with "Use my server": asked again when a login is about to run out.
+        newScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            while (true) {
+                var changed = false
+                // Tor mode: this phone makes no direct request to anyone (the relay sockets go through Tor; this HTTP call
+                // does not), so what a server offers is not asked for. Its relay address is still used, through Tor.
+                val servers = if (settings.settings.value.network.torMode) emptyList() else settings.settings.value.servers
+                for (server in servers) {
+                    val before = com.duochat.app.data.MyServerState.get(server.base)
+                    if (!com.duochat.app.data.MyServer.needsRefresh(before)) continue
+                    com.duochat.app.data.MyServerState.set(
+                        server.base,
+                        com.duochat.app.data.MyServer.refresh(server, before, com.duochat.app.data.MyServer::httpGet),
+                    )
+                    changed = true
+                }
+                if (changed) created.reloadNetwork()
+                kotlinx.coroutines.delay(5 * 60_000L)
+            }
+        }
         watchNetwork(app)
         BackgroundPolicy.watch(app)
         // Weekly automatic backups (when turned on): checked a minute after start and then every few hours, with the

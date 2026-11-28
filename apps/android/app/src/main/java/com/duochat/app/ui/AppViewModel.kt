@@ -109,9 +109,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val result = runCatching {
                 kotlinx.coroutines.withContext(Dispatchers.Default) {
-                    val rust = engine as? com.duochat.app.rustcore.RustChatEngine
-                        ?: throw IllegalStateException("The engine is not ready yet.")
-                    rust.recoverIdentity(phrase, passphrase).getOrThrow()
+                    val running = engine ?: throw IllegalStateException("The engine is not ready yet.")
+                    running.recoverIdentity(phrase, passphrase).getOrThrow()
                 }
                 Unit
             }
@@ -217,7 +216,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val before = settingsRepository.settings.value
         settingsRepository.update(patch)
         val after = settingsRepository.settings.value
-        if (after.network != before.network) engine?.reloadNetwork()
+        if (after.network != before.network || after.servers != before.servers) engine?.reloadNetwork()
         if (after.displayName != before.displayName) engine?.onOwnNameChanged()
         if (after.groupOnly != before.groupOnly) engine?.setGroupOnly(after.groupOnly)
         if (after.mesh != before.mesh) engine?.setMeshEnabled(after.mesh)

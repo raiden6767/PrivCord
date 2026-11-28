@@ -73,7 +73,7 @@ try {
     }, '10-manual');
     await open(async () => {
       await a.page.click('button[aria-label="Settings"]');
-      await a.page.click('.tab:has-text("Security")');
+      await a.page.click('.tab:has-text("Privacy")');
       await a.page.click('button:has-text("Erase everything")');
     }, '11-wipe');
   }

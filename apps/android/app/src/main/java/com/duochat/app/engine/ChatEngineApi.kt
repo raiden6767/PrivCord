@@ -13,6 +13,15 @@ interface ChatEngineApi {
     val state: StateFlow<ChatState>
 
     suspend fun start()
+
+    /**
+     * First run / restore: derive the identity from the 12-word recovery phrase. It is on the interface (and not reached by
+     * casting to one engine class) because the engine is wrapped for the diagnostic log: a cast to the inner class fails on
+     * the wrapper, which is how "Create identity" once answered "The engine is not ready yet." on every fresh install.
+     */
+    suspend fun recoverIdentity(phrase: String, passphrase: String): Result<Unit> =
+        Result.failure(IllegalStateException("This engine cannot create an identity."))
+
     fun stop()
     fun setVisible(isVisible: Boolean)
     fun setOpenChat(conversationId: String?)

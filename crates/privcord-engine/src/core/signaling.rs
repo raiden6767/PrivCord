@@ -65,9 +65,17 @@ pub(super) struct SealedState {
     seen_loaded: bool,
     seen_dirty: bool,
     seen_saved_at: i64,
+    /// Read receipts that could not be handed over yet (no link and no service): kept across restarts and tried again, so
+    /// a message that was read never stays on one tick for the sender.
+    owed_reads: Vec<(UserId, MessageId, i64)>,
+    owed_loaded: bool,
+    owed_try_at: i64,
 }
 
 const KV_SEEN: &str = "signaling.seen.v1";
+const KV_OWED_READS: &str = "receipts.owed-reads.v1";
+const OWED_RETRY_MS: i64 = 15_000;
+const MAX_OWED_READS: usize = 500;
 const SEEN_SAVE_EVERY_MS: i64 = 20_000;
 
 impl Core {
@@ -128,11 +136,101 @@ impl Core {
                 PutKind::Msg,
                 RELAY_TTL_SEC,
             );
-        } else {
-            self.send_secure(
+        } else if !self.send_secure(
+            peer,
+            &json!({ "v": privcord_domain::limits::PROTOCOL_VERSION, "kind": "ack", "messageId": id, "state": "DELIVERED", "at": at }),
+        ) {
+            // The link went away between the message and its receipt: through the service instead (the sender asks again
+            // until it hears, and a repeat is answered again).
+            let _ = self.put_sealed(
                 peer,
-                &json!({ "v": privcord_domain::limits::PROTOCOL_VERSION, "kind": "ack", "messageId": id, "state": "DELIVERED", "at": at }),
+                &json!({ "t": "ack", "id": id }),
+                PutKind::Msg,
+                RELAY_TTL_SEC,
             );
+        }
+    }
+
+    /// Tell `peer` that we read `id`: over a link when one is up, otherwise sealed through the service. True once handed over.
+    pub(super) fn send_read_receipt(&mut self, peer: &UserId, id: &MessageId, at: i64) -> bool {
+        let mut sent = false;
+        for addr in self.ready_addresses(peer) {
+            sent |= self.send_secure(
+                &addr,
+                &json!({ "v": privcord_domain::limits::PROTOCOL_VERSION, "kind": "ack", "messageId": id, "state": "READ", "at": at }),
+            );
+        }
+        sent || self
+            .put_sealed(
+                peer,
+                &json!({ "t": "ack", "id": id, "state": "READ", "at": at }),
+                PutKind::Msg,
+                RELAY_TTL_SEC,
+            )
+            .is_ok()
+    }
+
+    /// Remember a read receipt that could not be sent, and try again later.
+    pub(super) fn owe_read_receipt(&mut self, peer: &UserId, id: &MessageId, at: i64) {
+        self.load_owed_reads();
+        if self.sealed.owed_reads.len() >= MAX_OWED_READS {
+            self.sealed.owed_reads.remove(0);
+        }
+        self.sealed.owed_reads.push((peer.clone(), id.clone(), at));
+        self.save_owed_reads();
+    }
+
+    fn load_owed_reads(&mut self) {
+        if self.sealed.owed_loaded {
+            return;
+        }
+        self.sealed.owed_loaded = true;
+        if let Ok(Some(bytes)) = self.ports.storage.kv(KV_OWED_READS) {
+            if let Ok(rows) = serde_json::from_slice::<Vec<(String, String, i64)>>(&bytes) {
+                self.sealed.owed_reads = rows
+                    .into_iter()
+                    .filter_map(|(p, m, at)| {
+                        Some((UserId::new(p).ok()?, MessageId::new(m).ok()?, at))
+                    })
+                    .collect();
+            }
+        }
+    }
+
+    fn save_owed_reads(&mut self) {
+        let rows: Vec<(&str, &str, i64)> = self
+            .sealed
+            .owed_reads
+            .iter()
+            .map(|(p, m, at)| (p.as_str(), m.as_str(), *at))
+            .collect();
+        if let Ok(value) = serde_json::to_vec(&rows) {
+            let _ = self.ports.storage.apply(&[StorageOp::SetKv {
+                key: KV_OWED_READS.into(),
+                value,
+            }]);
+        }
+    }
+
+    /// Try the read receipts that are still owed (every few seconds, while any are).
+    fn tick_owed_reads(&mut self) {
+        self.load_owed_reads();
+        let now = self.now();
+        if self.sealed.owed_reads.is_empty() || now < self.sealed.owed_try_at {
+            return;
+        }
+        self.sealed.owed_try_at = now + OWED_RETRY_MS;
+        let rows = std::mem::take(&mut self.sealed.owed_reads);
+        let mut left = Vec::new();
+        for (peer, id, at) in rows {
+            if !self.send_read_receipt(&peer, &id, at) {
+                left.push((peer, id, at));
+            }
+        }
+        let changed = left.len() != self.sealed.owed_reads.len();
+        self.sealed.owed_reads = left;
+        if changed || !self.sealed.owed_reads.is_empty() {
+            self.save_owed_reads();
         }
     }
 
@@ -323,12 +421,28 @@ impl Core {
             return;
         };
         if !self.is_own_address(own.as_str()) {
+            self.diag(
+                "relay",
+                "message for an address that is not ours",
+                own.as_str(),
+            );
             return;
         }
         let Some(keys) = self.contact_keys(&person) else {
             // Not a contact: the only thing a stranger may send is a friend request after adding us from our card.
             if self.uid.as_ref() == Some(&own) {
+                self.diag(
+                    "invite",
+                    "message from someone not added yet",
+                    person.as_str(),
+                );
                 self.on_friend_request(&blob);
+            } else {
+                self.diag(
+                    "relay",
+                    "message from a stranger to another address of ours",
+                    person.as_str(),
+                );
             }
             return;
         };
@@ -495,7 +609,12 @@ impl Core {
             Some("keys") => self.take_keys(&from, &Value::Object(payload.clone())),
             Some("ack") => {
                 if let Some(id) = text("id") {
-                    self.on_ack(&from, &json!({ "messageId": id, "state": "DELIVERED" }));
+                    let state = if text("state") == Some("READ") {
+                        "READ"
+                    } else {
+                        "DELIVERED"
+                    };
+                    self.on_ack(&from, &json!({ "messageId": id, "state": state }));
                 }
             }
             _ => {}
@@ -635,6 +754,7 @@ impl Core {
     /// are offline on the relay.
     pub(super) fn tick_sealed(&mut self) {
         self.persist_seen();
+        self.tick_owed_reads();
         let available = self.ports.transport.signal_available();
         if !available {
             self.sealed.subscribed.clear();

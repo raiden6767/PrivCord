@@ -49,6 +49,48 @@ const TICK_EVERY: Duration = Duration::from_millis(500);
 /// A put waits this long for a relay to be online, as the page did.
 const PUT_WAIT: Duration = Duration::from_secs(20);
 const IDLE_SLEEP: Duration = Duration::from_millis(20);
+/// A socket that has been silent this long is asked a question (a WebSocket ping, which every relay answers)...
+const PING_EVERY_MS: i64 = 20_000;
+/// ...and is replaced if nothing at all has come from it for this long. A laptop that slept or changed network leaves
+/// sockets that look open and carry nothing; relays do not keep the live signals sent meanwhile.
+const DEAD_AFTER_MS: i64 = 55_000;
+/// The worker ticks twice a second: a gap this long between two ticks means the machine was asleep.
+const RESUME_GAP_MS: i64 = 10_000;
+
+/// When a socket is pinged and when it is given up on (milliseconds; shortened by the tests).
+#[derive(Clone, Copy, Debug)]
+pub struct Timing {
+    ping_every_ms: i64,
+    dead_after_ms: i64,
+    resume_gap_ms: i64,
+}
+
+impl Timing {
+    pub fn new(ping_every_ms: i64, dead_after_ms: i64, resume_gap_ms: i64) -> Self {
+        Self {
+            ping_every_ms,
+            dead_after_ms,
+            resume_gap_ms,
+        }
+    }
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            ping_every_ms: PING_EVERY_MS,
+            dead_after_ms: DEAD_AFTER_MS,
+            resume_gap_ms: RESUME_GAP_MS,
+        }
+    }
+}
+
+/// When anything last came from a socket, and when it was last pinged (wall-clock milliseconds: a monotonic timer may not
+/// count the time a laptop spends asleep).
+struct Clock {
+    last_rx: i64,
+    last_ping: i64,
+}
 
 enum Cmd {
     Configure {
@@ -75,12 +117,16 @@ pub struct NativeSignaling {
 
 impl NativeSignaling {
     pub fn start(sink: BlobSink, status: StatusSink) -> Self {
+        Self::start_with(sink, status, Timing::default())
+    }
+
+    pub fn start_with(sink: BlobSink, status: StatusSink, timing: Timing) -> Self {
         let (tx, rx) = channel();
         let online = Arc::new(AtomicBool::new(false));
         let flag = online.clone();
         let worker = std::thread::Builder::new()
             .name("relay-sockets".into())
-            .spawn(move || Worker::new(sink, status, flag).run(&rx))
+            .spawn(move || Worker::new(sink, status, flag, timing).run(&rx))
             .ok();
         Self { tx, online, worker }
     }
@@ -139,6 +185,7 @@ impl Drop for NativeSignaling {
 struct Hub {
     hub: SignalingHub,
     sockets: BTreeMap<String, Ws>,
+    clocks: BTreeMap<String, Clock>,
 }
 
 struct PendingPut {
@@ -163,6 +210,9 @@ struct Worker {
     online: Arc<AtomicBool>,
     began: Instant,
     last_tick: Instant,
+    /// The wall-clock time of the last tick, to notice that the machine was asleep.
+    last_tick_wall: i64,
+    timing: Timing,
     put_seq: u64,
 }
 
@@ -181,7 +231,7 @@ fn services_for(config: &NetworkConfig, mailbox: &str) -> Vec<Service> {
 }
 
 impl Worker {
-    fn new(sink: BlobSink, status: StatusSink, online: Arc<AtomicBool>) -> Self {
+    fn new(sink: BlobSink, status: StatusSink, online: Arc<AtomicBool>, timing: Timing) -> Self {
         let mut raw = [0u8; 16];
         let _ = OsEntropy.fill(&mut raw);
         Self {
@@ -198,6 +248,8 @@ impl Worker {
             online,
             began: Instant::now(),
             last_tick: Instant::now(),
+            last_tick_wall: 0,
+            timing,
             put_seq: 0,
         }
     }
@@ -301,6 +353,7 @@ impl Worker {
         let mut hub = Hub {
             hub: SignalingHub::new(services_for(&self.config, mailbox)),
             sockets: BTreeMap::new(),
+            clocks: BTreeMap::new(),
         };
         let out = hub.hub.start(mailbox);
         self.hubs.insert(mailbox.to_owned(), hub);
@@ -335,6 +388,13 @@ impl Worker {
                     Action::Connect { url } => match connect(&url, socks.as_deref()) {
                         Ok(ws) => {
                             h.sockets.insert(url.clone(), ws);
+                            h.clocks.insert(
+                                url.clone(),
+                                Clock {
+                                    last_rx: now,
+                                    last_ping: now,
+                                },
+                            );
                             pending.push(h.hub.socket_opened(&url, now));
                         }
                         Err(_) => pending.push(h.hub.socket_closed(&url, now)),
@@ -375,7 +435,14 @@ impl Worker {
             let Some(sock) = h.sockets.get_mut(&url) else {
                 continue;
             };
-            let out = match sock.read() {
+            let read = sock.read();
+            if read.is_ok() {
+                // Anything at all (a pong, a ping, an event) proves the other end is there.
+                if let Some(c) = h.clocks.get_mut(&url) {
+                    c.last_rx = now;
+                }
+            }
+            let out = match read {
                 Ok(Message::Text(t)) => {
                     any = true;
                     h.hub.socket_message(&url, t.as_str(), now)
@@ -405,14 +472,51 @@ impl Worker {
 
     fn tick_all(&mut self) {
         let mailboxes: Vec<String> = self.hubs.keys().cloned().collect();
+        let now = self.now();
+        // The worker ticks twice a second. A long gap means the machine slept: every socket is suspect, so all are
+        // replaced at once instead of waiting out the silence.
+        let slept =
+            self.last_tick_wall != 0 && now - self.last_tick_wall > self.timing.resume_gap_ms;
+        let timing = self.timing;
         for m in mailboxes {
             let now = self.now();
             let Some(h) = self.hubs.get_mut(&m) else {
                 continue;
             };
-            let out = h.hub.tick(now);
-            self.apply(&m, out);
+            let urls: Vec<String> = h.sockets.keys().cloned().collect();
+            let mut closed = Vec::new();
+            for url in urls {
+                let Some(clock) = h.clocks.get_mut(&url) else {
+                    continue;
+                };
+                let silent = now - clock.last_rx;
+                let dead = slept || silent > timing.dead_after_ms;
+                let ping_failed = !dead && now - clock.last_ping >= timing.ping_every_ms && {
+                    clock.last_ping = now;
+                    h.sockets
+                        .get_mut(&url)
+                        .is_none_or(|s| s.send(Message::Ping(Vec::new().into())).is_err())
+                };
+                if dead || ping_failed {
+                    if let Some(mut s) = h.sockets.remove(&url) {
+                        let _ = s.close(None);
+                    }
+                    h.clocks.remove(&url);
+                    closed.push(url);
+                }
+            }
+            let mut outs: Vec<Out> = closed
+                .iter()
+                .map(|url| h.hub.socket_closed(url, now))
+                .collect();
+            outs.push(h.hub.tick(now));
+            for out in outs {
+                self.apply(&m, out);
+            }
         }
+        // Measured from the end of the work, not the start: a tick that spent its time connecting to slow relays must not
+        // make the next one believe the machine slept (that closed every healthy socket and started the storm again).
+        self.last_tick_wall = self.now();
     }
 
     /// Sends queued puts through a hub that is online (the mailbox's own, else any). Returns whether one went out.

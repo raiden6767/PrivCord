@@ -6,6 +6,34 @@ import {
   type TurnServer,
 } from '@duochat/protocol';
 import { getSealed, setSealed } from './sealedSettings';
+import { overlay, parseSavedServers, strip, type SavedServer, type ServerInfo } from './myServer';
+
+/** What each saved server last offered (not saved: the TURN login is short-lived). */
+const learned = new Map<string, ServerInfo>();
+
+export function loadMyServers(): SavedServer[] {
+  try {
+    return parseSavedServers(JSON.parse(getSealed('servers') ?? '[]'));
+  } catch {
+    return [];
+  }
+}
+
+export function saveMyServers(servers: SavedServer[]): void {
+  setSealed('servers', JSON.stringify(servers));
+  void pushNativeConfig();
+}
+
+export function serverInfo(base: string): ServerInfo | null {
+  return learned.get(base) ?? null;
+}
+
+export function setServerInfo(base: string, info: ServerInfo): void {
+  learned.set(base, info);
+  void pushNativeConfig();
+}
+
+const known = () => loadMyServers().map((saved) => ({ saved, info: learned.get(saved.base) ?? null }));
 
 /**
  * The TURN relay this release was built with (VITE_PRIVCORD_TURN_URLS / _USERNAME / _CREDENTIAL at build time; see
@@ -48,11 +76,12 @@ export function loadNetworkConfig(): NetworkConfig {
   } catch {
     config = structuredClone(DEFAULT_NETWORK_CONFIG);
   }
+  config = overlay(config, known());
   return torActive ? { ...config, torMode: true } : config;
 }
 
 export function saveNetworkConfig(config: NetworkConfig): void {
-  const { torMode: _ignored, ...saved } = config;
+  const { torMode: _ignored, ...saved } = strip(config, known());
   setSealed('network', JSON.stringify(saved));
   void pushNativeConfig();
 }

@@ -434,7 +434,7 @@ class RustChatEngine(
     }
 
     /** First run: derive the identity from the recovery phrase in the engine (the Keystore keeps its keys). */
-    suspend fun recoverIdentity(phrase: String, passphrase: String): Result<Unit> = runCatching {
+    override suspend fun recoverIdentity(phrase: String, passphrase: String): Result<Unit> = runCatching {
         // The engine starts in the background; wait for it (a few seconds at most).
         var waited = 0
         while (engine == null && waited < 100) { delay(100); waited += 1 }
@@ -742,6 +742,8 @@ class RustChatEngine(
             }
             SignalKindDto.OFFER -> {
                 if (sdp == null) return
+                // Private mode (Tor): never answer. The answer carries this phone's addresses to the other side.
+                if (networkConfig().torMode) return
                 val t = newTransport(peer)
                 val answer = runCatching { t.acceptOffer(sdp) }.getOrNull() ?: return
                 signal(peer, SignalKindDto.ANSWER, answer)

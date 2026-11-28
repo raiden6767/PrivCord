@@ -158,13 +158,15 @@ fun OnboardingScreen(
 @Composable
 private fun ShowPhrase(phrase: String, onBack: () -> Unit, onNext: () -> Unit) {
     var saved by remember { mutableStateOf(false) }
-    // The words never show in a screenshot, a screen recording or the recent-apps preview, whatever the setting says.
+    // By default the words never show in a screenshot, a screen recording or the recent-apps preview. The person can
+    // allow a screenshot for this screen only, after being told what it means (the image lands in the photo gallery).
+    var allowShot by remember { mutableStateOf(false) }
     val window = (androidx.compose.ui.platform.LocalContext.current as? android.app.Activity)?.window
-    androidx.compose.runtime.DisposableEffect(window) {
+    androidx.compose.runtime.DisposableEffect(window, allowShot) {
         val flag = android.view.WindowManager.LayoutParams.FLAG_SECURE
         val had = window != null && (window.attributes.flags and flag) != 0
-        window?.addFlags(flag)
-        onDispose { if (!had) window?.clearFlags(flag) }
+        if (allowShot) window?.clearFlags(flag) else window?.addFlags(flag)
+        onDispose { if (had) window?.addFlags(flag) else window?.clearFlags(flag) }
     }
     Text("Write these 12 words down, in order", style = MaterialTheme.typography.headlineMedium)
     Spacer(Modifier.height(8.dp))
@@ -196,7 +198,19 @@ private fun ShowPhrase(phrase: String, onBack: () -> Unit, onNext: () -> Unit) {
             }
         }
     }
-    Spacer(Modifier.height(14.dp))
+    Spacer(Modifier.height(10.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = allowShot, onCheckedChange = { allowShot = it })
+        Text("Allow a screenshot of these words", style = MaterialTheme.typography.bodyMedium)
+    }
+    if (allowShot) {
+        Text(
+            "A screenshot is saved in your photo gallery and may be backed up to the cloud. Anyone who sees it has your identity. Delete it once the words are somewhere safe.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+    }
+    Spacer(Modifier.height(4.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
         Checkbox(checked = saved, onCheckedChange = { saved = it })
         Text("I wrote the 12 words down", style = MaterialTheme.typography.bodyMedium)

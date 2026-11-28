@@ -26,16 +26,18 @@ import { useAppVersion } from '../lib/appVersion';
 
 export type SettingsSection = 'profile' | 'devices' | 'appearance' | 'notifications' | 'connection' | 'security' | 'backup' | 'about';
 
-const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
+/** `advanced` sections only show when the Advanced switch is on. The data you may want to delete lives under Privacy, first. */
+const SECTIONS: Array<{ id: SettingsSection; label: string; advanced?: boolean }> = [
   { id: 'profile', label: 'Profile' },
-  { id: 'devices', label: 'Devices' },
+  { id: 'security', label: 'Privacy' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'notifications', label: 'Notifications' },
-  { id: 'connection', label: 'Connection' },
-  { id: 'security', label: 'Security' },
   { id: 'backup', label: 'Backup' },
+  { id: 'devices', label: 'Devices', advanced: true },
+  { id: 'connection', label: 'Connection', advanced: true },
   { id: 'about', label: 'About' },
 ];
+const isAdvancedSection = (id: SettingsSection) => SECTIONS.some((x) => x.id === id && x.advanced);
 
 interface BackgroundSettings {
   closeToTray: boolean;
@@ -294,8 +296,15 @@ export function SettingsDialog({
   const [linking, setLinking] = useState(false);
   const quiet = (state.prefs ?? NO_PREFS).quiet;
 
+  const adv = settings.advanced;
+  // A link from elsewhere (a warning that says "open Connection") turns Advanced on so the page exists.
+  const goTo = (id: SettingsSection) => {
+    if (isAdvancedSection(id) && !adv) updateSettings({ advanced: true });
+    setSection(id);
+  };
   useEffect(() => {
     if (!open) return;
+    if (isAdvancedSection(initialSection) && !adv) updateSettings({ advanced: true });
     setSection(initialSection);
     setDisplayName(settings.displayName);
     setSaved(false);
@@ -308,7 +317,7 @@ export function SettingsDialog({
   return (
     <Modal open={open} onClose={onClose} title="Settings" wide className="tall">
       <div className="tabs" role="tablist" aria-label="Settings sections">
-        {SECTIONS.map((item) => (
+        {SECTIONS.filter((item) => !item.advanced || adv).map((item) => (
           <button
             key={item.id}
             type="button"
@@ -320,6 +329,27 @@ export function SettingsDialog({
             {item.label}
           </button>
         ))}
+      </div>
+
+      <div className="adv-row">
+        <button
+          type="button"
+          role="switch"
+          aria-checked={adv}
+          aria-label="Show advanced settings"
+          aria-describedby="adv-hint"
+          className={`switch ${adv ? 'on' : ''}`}
+          onClick={() => {
+            if (adv && isAdvancedSection(section)) setSection('profile');
+            updateSettings({ advanced: !adv });
+          }}
+        >
+          <span />
+        </button>
+        <div>
+          <strong>Show advanced settings</strong>
+          <p className="muted small" id="adv-hint">Devices, connection options and power-user tools. Everything works without them.</p>
+        </div>
       </div>
 
       <div className="settings-content">
@@ -492,12 +522,6 @@ export function SettingsDialog({
               disabled={!settings.notificationsEnabled}
             />
             <Toggle
-              label="Unread count in the title and taskbar"
-              description="Turn off to keep the number of unread messages out of the window title, tray tooltip and taskbar badge, which anyone watching your screen or a screen share can see."
-              checked={settings.showUnreadCount}
-              onChange={(value) => updateSettings({ showUnreadCount: value })}
-            />
-            <Toggle
               label="Quiet hours"
               description="No notifications between these times, on all your devices. Messages still arrive and wait in the chat."
               checked={quiet.enabled}
@@ -517,7 +541,17 @@ export function SettingsDialog({
               </div>
             ) : null}
             {isTauri() ? <div id="keep-running"><BackgroundToggles /></div> : null}
-            <DeliveryHealth engine={engine} state={state} notificationsEnabled={settings.notificationsEnabled} go={setSection} />
+            {adv ? (
+              <>
+            <Toggle
+              label="Unread count in the title and taskbar"
+              description="Turn off to keep the number of unread messages out of the window title, tray tooltip and taskbar badge, which anyone watching your screen or a screen share can see."
+              checked={settings.showUnreadCount}
+              onChange={(value) => updateSettings({ showUnreadCount: value })}
+            />
+                <DeliveryHealth engine={engine} state={state} notificationsEnabled={settings.notificationsEnabled} go={goTo} />
+              </>
+            ) : null}
           </section>
         ) : null}
 
@@ -550,7 +584,46 @@ export function SettingsDialog({
 
         {section === 'security' ? (
           <section className="settings-section">
-            <PrivacyCheckup engine={engine} settings={settings} state={state} go={setSection} />
+            <div className="data-actions" role="group" aria-label="Your data">
+              <h3>Your data</h3>
+              <div className="emergency-block">
+                <div>
+                  <strong>Clear all chats</strong>
+                  <p className="muted small">Deletes every message on this device. Friends and groups stay.</p>
+                </div>
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => {
+                    onClose();
+                    onOpenClearChats();
+                  }}
+                >
+                  <TrashIcon size={15} />
+                  Clear chats…
+                </button>
+              </div>
+              <div className="emergency-block">
+                <div>
+                  <strong>Erase everything</strong>
+                  <p className="muted small">
+                    Deletes chats, friends, groups, keys and settings from this device and starts over. Other people keep what they already received.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="button danger"
+                  onClick={() => {
+                    onClose();
+                    onOpenNuke();
+                  }}
+                >
+                  <AlertIcon size={15} />
+                  Erase everything…
+                </button>
+              </div>
+            </div>
+            <PrivacyCheckup engine={engine} settings={settings} state={state} go={goTo} />
             <AppLockControl />
             {engine?.setSecureScreen ? (
               <Toggle
@@ -560,17 +633,17 @@ export function SettingsDialog({
                 onChange={(on) => engine.setSecureScreen!(on)}
               />
             ) : null}
-            <Toggle
-              label="Stay group-only with people I meet in groups"
-              description="You still read and reply in the groups you share, but nobody you only know through a group can message you directly, and you cannot message them, unless you swap invites yourselves. It applies to people you meet from now on and to the ones you already have."
-              checked={settings.groupOnly}
-              onChange={(value) => {
-                updateSettings({ groupOnly: value });
-                engine?.setGroupOnly(value);
-              }}
-            />
-            <details className="advanced">
-              <summary>More privacy tools</summary>
+            {adv ? (
+              <>
+                <Toggle
+                  label="Stay group-only with people I meet in groups"
+                  description="You still read and reply in the groups you share, but nobody you only know through a group can message you directly, and you cannot message them, unless you swap invites yourselves. It applies to people you meet from now on and to the ones you already have."
+                  checked={settings.groupOnly}
+                  onChange={(value) => {
+                    updateSettings({ groupOnly: value });
+                    engine?.setGroupOnly(value);
+                  }}
+                />
             <Toggle
               label="Panic wipe"
               description={`Press Ctrl+Shift+Backspace ${PANIC_PRESSES} times within ${PANIC_WINDOW_MS / 1000} seconds and everything on this device is erased immediately, with no confirmation. Your 12 recovery words are the only way back, so keep them somewhere safe first.`}
@@ -597,44 +670,8 @@ export function SettingsDialog({
                 Restore from phrase
               </button>
             </div>
-            <div className="card-box">
-              <div className="card-title">
-                <TrashIcon size={18} />
-                <strong>Clear all chats</strong>
-              </div>
-              <p className="muted small">Deletes every message on this device. Friends and groups stay.</p>
-              <button
-                type="button"
-                className="button secondary small"
-                onClick={() => {
-                  onClose();
-                  onOpenClearChats();
-                }}
-              >
-                Clear chats…
-              </button>
-            </div>
-            </details>
-            <div className="emergency-block">
-              <div>
-                <strong>Erase everything</strong>
-                <p className="muted small">
-                  Deletes chats, friends, groups, keys and settings from this device and starts over. Other
-                  people keep what they already received.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="button danger"
-                onClick={() => {
-                  onClose();
-                  onOpenNuke();
-                }}
-              >
-                <AlertIcon size={15} />
-                Erase everything…
-              </button>
-            </div>
+              </>
+            ) : null}
           </section>
         ) : null}
 
@@ -658,8 +695,12 @@ export function SettingsDialog({
               </div>
             ) : null}
             <WhatsNew engine={engine} />
-            <DiagLogCard engine={engine} />
-            <StorageByChat state={state} engine={engine} />
+            {adv ? (
+              <>
+                <DiagLogCard engine={engine} />
+                <StorageByChat state={state} engine={engine} />
+              </>
+            ) : null}
             <p>
               <strong>PrivCord</strong> · {isTauri() ? `version ${appVersion}` : 'development build'}
             </p>
@@ -673,7 +714,8 @@ export function SettingsDialog({
                 {config.about.authorLinkLabel}
               </a>
             </p>
-            <details className="advanced">
+            {adv ? (
+            <details className="advanced" open>
               <summary>Technical details</summary>
               <SupportTools engine={engine} />
             {state.usage ? (
@@ -715,6 +757,7 @@ export function SettingsDialog({
               </div>
             </dl>
             </details>
+            ) : null}
           </section>
         ) : null}
       </div>

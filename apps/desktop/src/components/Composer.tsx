@@ -127,6 +127,17 @@ export function Composer({
     }
   }
 
+  // Leaving the chat (the composer is keyed by it) while recording: stop and drop the recording, and release the microphone.
+  useEffect(
+    () => () => {
+      if (recorder.current) {
+        cancelled.current = true;
+        recorder.current.stop();
+      }
+    },
+    [],
+  );
+
   /** Voice note: record from the microphone, send as a small audio file when stopped. */
   async function toggleRecording(cancel = false) {
     if (recorder.current) {

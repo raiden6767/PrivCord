@@ -34,6 +34,12 @@ describe('parseSettings', () => {
     expect(parseSettings(JSON.stringify({ showUnreadCount: 'no' })).showUnreadCount).toBe(true);
   });
 
+  it('starts in the simple view and remembers the Advanced switch', () => {
+    expect(parseSettings(null).advanced).toBe(false);
+    expect(parseSettings(JSON.stringify({ advanced: true })).advanced).toBe(true);
+    expect(parseSettings(JSON.stringify({ advanced: 'yes' })).advanced).toBe(false);
+  });
+
   it('rejects an invalid accent color', () => {
     expect(parseSettings(JSON.stringify({ accent: 'red' })).accent).toBe('#7a3e73');
   });

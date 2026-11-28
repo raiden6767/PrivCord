@@ -5,9 +5,11 @@ A relay and, if you want one, a TURN server for PrivCord, in one program that yo
 * **Relay**: a mailbox for sealed messages. It carries blobs it cannot read and keeps them (if you allow it) for up to
   seven days, so people who are offline still get their messages.
 * **TURN** (optional): carries voice and file traffic between two phones that cannot reach each other directly (two
-  different mobile networks, strict routers).
+  different mobile networks, strict routers). Works over UDP, TCP and TLS, so it also gets through networks that block UDP.
+* **Nostr** (optional): the same port also speaks the Nostr relay protocol, so it can serve as a relay for Nostr apps too.
+* **Admin panel** (optional): a web page to manage the server, with admin accounts and roles.
 
-Turn either or both on in the settings file.
+Turn on what you want in the settings file.
 
 > **You are responsible for your server.** Whoever runs this program is the operator of that server, of the communities
 > that use it, and of what is done with it. The PrivCord authors do not run it, cannot see it, and are not responsible
@@ -22,9 +24,25 @@ privcord-server doctor          # checks ports, your public address, NAT
 privcord-server serve
 ```
 
-Then in the apps, add `ws://YOUR-ADDRESS:8787` as a relay (use `wss://` behind a TLS proxy such as Caddy:
-`reverse_proxy 127.0.0.1:8787`, and set `trust_proxy = true`). TURN is `turn:YOUR-IP:3478` with credentials from
+Then in the apps, add `ws://YOUR-ADDRESS:8787` as a relay. For `wss://`, put a certificate in `[tls]` (see below) or use a TLS
+proxy such as Caddy (`reverse_proxy 127.0.0.1:8787`, with `trust_proxy = true`). TURN is `turn:YOUR-IP:3478` with credentials from
 `https://YOUR-HOST/turn` (short-lived) or a fixed `name:password` in `turn.users`.
+
+### STUN comes with it
+
+The TURN port also answers STUN Binding requests, over UDP and over TCP, without a login (that is how TURN works: a device asks
+"what address do you see me at?" before it asks for a relay). So a server with `[turn] enabled = true` is also a STUN server:
+list `stun:YOUR-IP:3478` in the apps (Settings, Connection, STUN servers) next to the public ones, or instead of them to keep
+your friends' addresses off third-party servers. The panel's Home page shows the address with a Copy button, and
+`tests/turn_stream.rs` checks the answer on both transports. A STUN-only mode (no relay, no ports to open beyond one) is not built.
+
+### Several servers (for example one per continent)
+
+In the apps, add each server with "Use my server": a phone then holds one login per server and uses whichever answers first.
+Each server hands out TURN logins signed with its own `data/turn-secret`, and a login only works on the server that made it.
+So the servers need nothing from each other. Copy one server's `turn-secret` to the others only if you want a login from any
+of them to work on all of them (then keep the file private: whoever holds it can make logins; with `encrypt = true` it is
+encrypted on disk under that server's own key, so copy the key too).
 
 ## Nostr
 
@@ -34,14 +52,71 @@ talking Nostr; one that sends an object is talking PrivCord). The PrivCord apps 
 
 | | |
 |---|---|
-| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT |
+| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT, NIP-50 search (every word, any case; newest first), NIP-62 request to vanish, NIP-70 protected events, NIP-77 set reconciliation (negentropy), NIP-86 relay management (with NIP-98 HTTP auth) |
 | Checks | every event's id and Schnorr signature, size, tag count, `created_at` window, expiry; hex must be lowercase |
 | Rules you set | allowed and blocked public keys, allowed and blocked kinds, minimum proof of work, authentication required, per-address publish rate, retention (days), event cap |
-| Not yet | NIP-50 search, NIP-86 management API, NIP-98 HTTP auth, NIP-77 sync, NIP-70 protected events, NIP-05 write checks |
+| Not yet | NIP-05 write checks, NIP-29 groups |
 | Storage | in memory with indexes by time, author, kind and tag, plus an append-only log in `data_dir` (synced to disk twice a second), compacted when it doubles |
 
 Whoever publishes to a Nostr relay publishes readable content: unlike PrivCord's sealed messages, you can read what is stored
 here. That is your responsibility as the operator.
+
+### Sync (NIP-77)
+
+`NEG-OPEN`, `NEG-MSG`, `NEG-CLOSE` and `NEG-ERR` work as the NIP describes: a client sends a filter and its first
+message, the relay answers in rounds, and the client ends up knowing exactly which events each side lacks (then fetches them with
+a plain `REQ`), without either side listing everything. It follows the same access rules as `REQ` (authentication, who may see
+direct messages). Limits: `max_negentropy_items` (100,000: a filter that matches more is refused with `blocked: too many results`,
+narrow it) and `max_negentropy_sessions` (2 open at once per connection). The tests use the reference Rust library as the
+client; a second, independent implementation was not tried.
+
+### Management API (NIP-86)
+
+Set `[nostr] admin_pubkey = "<hex>"` (and more keys in `admin_pubkeys`) and turn the admin panel on (`[admin] enabled = true`: what the
+API changes is saved with the panel's settings). Any Nostr relay manager can then `POST` to the relay's own address with
+`Content-Type: application/nostr+json+rpc`, a body like `{"method":"banpubkey","params":["<hex>","spam"]}` and an
+`Authorization: Nostr <base64 of a signed kind 27235 event>` header (NIP-98: the event names the URL, `POST` and the SHA-256 of the
+body, and is good for a minute). Supported: `supportedmethods`, `banpubkey`, `allowpubkey`, `listbannedpubkeys`,
+`listallowedpubkeys`, `banevent`, `allowevent`, `listbannedevents`, `listeventsneedingmoderation` (always empty: nothing waits
+for review), `allowkind`, `disallowkind`, `listallowedkinds`, `changerelayname`, `changerelaydescription`, `changerelayicon`,
+`blockip`, `unblockip`, `listblockedips`. Changes apply at once and survive a restart. A blocked address cannot open the relay's
+socket but can still make management calls (that is how it is unblocked). Without administrator keys the endpoint does not exist;
+a request from anyone else is a 401, and 60 calls a minute are allowed from one address.
+
+### What happens in a crash
+
+The log is append-only: one event per line, written in one call. After a crash or a power cut the next start cuts off a
+half-written last line (otherwise the next event would be glued to it and lost). A failed write (a full or failing disk) is
+undone and the publisher is told, instead of being promised something that is not on disk; in durable mode a failed sync turns
+every confirmation in that batch into an error. Compaction writes a new file, syncs it, renames it over the log and syncs the
+folder, so a power cut leaves the old log or the new one, never half of either. `tests/crash.rs` runs the real program in
+durable mode, kills it (SIGKILL) in the middle of a stream, appends half a line, and checks that every confirmed event is
+back, and that an event written after the torn line is kept. (A power cut itself cannot be simulated here: it relies on the
+disk honouring its sync.) What SQLite adds that this does not have: page checksums, so silent corruption in the middle of a file
+is not detected: lines that cannot be read are skipped.
+
+### Checked and encrypted on disk
+
+Every record in the logs (`nostr-events.jsonl`, `queue.jsonl`) is written with a check, so damage in the middle of a file is
+noticed: a record whose check fails is skipped, counted (the panel's Home page warns), and a copy of the whole file is kept as
+`….damaged-<time>` before anything is rewritten. Settings:
+
+```toml
+[storage]
+checksums = true        # false writes plain lines (the Node relay can read those)
+encrypt = false         # true: AES-256-GCM on every record, and on turn-secret
+key_file = ""           # a file holding the key (64 hex characters), or ...
+key_env = "PRIVCORD_STORE_KEY"   # ... an environment variable
+```
+
+`privcord-server store-key --out /etc/privcord/store.key` makes a key in a new file (read-only; it is never printed). Keep it off
+the data volume and back it up: without it the encrypted data cannot be read. With encryption on, a stolen disk or a copy of the
+data folder is noise; the GCM tag is also the check (a changed byte, a record moved to another log, or a wrong key all fail).
+**A wrong or missing key stops the server at start and changes nothing**: it does not skip every record and then rewrite an empty
+log. Logs written by earlier versions (plain lines) are read, and rewritten in the new shape at the next start.
+What it does not do: the key lives in the server's memory while it runs, so it protects a copy of the disk and not a
+compromised running server; `admin.json` holds only hashes and is not encrypted; events published to Nostr are readable by the
+server by design.
 
 ### Durable mode
 
@@ -95,21 +170,135 @@ I read its source (event handling, storage, limits, configuration) and adopted w
 Left out on purpose: NIP-05 write verification (needs outbound web requests from the server), pay-to-relay, an external
 admission service, and logging each client's address and browser (this server keeps no such log).
 
+## Certificates that renew themselves
+
+```toml
+[tls]
+https_listen = "0.0.0.0:443"
+domain = "relay.example.com"
+acme = true
+acme_accept_terms = true        # you accept the certificate authority's terms (Let's Encrypt: letsencrypt.org/repository)
+acme_email = "you@example.com"  # optional
+# acme_directory = "https://acme-staging-v02.api.letsencrypt.org/directory"   # try the staging one first
+```
+
+The server gets a certificate for `domain` by itself (ACME) and renews it 30 days before it runs out (it looks twice a day;
+a failed try is repeated after 5 minutes, then less often, up to every 6 hours, and the reason is printed). The name is proved
+with TLS-ALPN-01 on the HTTPS port, so **port 443 of `domain` must reach `https_listen`**; nothing else has to be open (no port
+80, no DNS access). The certificate and its key are written to `data_dir/tls` (private files), the account to `acme-account.json`
+there (encrypted when `storage.encrypt` is on), and the new certificate is served at once, with no restart. Until the first one
+arrives a placeholder is served (apps will not trust it). `acme_ca_root` points at the root certificate of a private authority
+(step-ca, Pebble). Checked against a mock authority that behaves like Let's Encrypt (it connects back and checks the challenge
+the way the real one does, signs the request, and the server then serves that certificate and renews it), **not against the real
+Let's Encrypt, which this machine cannot reach**: try the staging directory first on your own server.
+
+## Admin panel
+
+```toml
+[admin]
+enabled = true
+listen = "127.0.0.1:8788"
+# token_days = 90              # admin tokens expire after this many days (0 = never)
+# allow_plain_http = false     # only for a VPN you trust: the panel over plain HTTP on a non-local address
+```
+
+Start the server and it prints `admin panel: http://127.0.0.1:8788/admin` and a **setup code** that works once, for 15 minutes.
+No admin token exists yet, so nothing long-lived is ever printed or written to a file (a terminal's output ends up in a service
+journal or a log file; a code that has already been used or has expired is worth nothing there). Open the page, enter the code,
+and the **owner token is shown once, in your browser**: copy it. Only its hash is kept. If the 15 minutes pass, restart the
+server for a new code. Then sign in with the token and you can:
+
+| | |
+|---|---|
+| **Overview** | what is running, addresses to give the apps (with Copy buttons), counters, and warnings (an open server, a self-signed certificate, TURN without TCP/TLS, a panel on a public address over plain HTTP) |
+| **Access** | make and remove access tokens (one per person or device); with at least one, apps must present it. Removing the *last* token (which would open the server to everyone) asks for confirmation |
+| **Admins** | add and remove admins, each with their own token: **owner** (everything), **moderator** (rules, tokens, removing events), **viewer** (look only). There is always at least one owner |
+| **Nostr rules** | allowed and blocked authors and kinds, applied at once and saved; remove an event for good |
+| **TURN** | the addresses phones are given and what to open in the firewall |
+
+`privcord-server admin-invite --name Sam --role moderator` makes a **one-time setup code** for another admin (a running server
+notices). Sam opens the panel, enters it under "Have a setup code?", and gets their own token there; nothing long-lived is ever
+printed. Tokens **expire after 90 days** (`admin.token_days`, 0 = never): the Settings page shows the days left and replaces your token
+in one click (the old one stops at once). If every owner's token has run out, the server prints a new setup code at start, so the
+panel can never lock you out.
+
+**Where to reach it from.** The panel has its own listener, on localhost by default, and is never served on the relay's port.
+To reach it from elsewhere you do not need anything built in:
+- an SSH tunnel: `ssh -L 8788:127.0.0.1:8788 you@your-vps`, then open `http://127.0.0.1:8788/admin`; or
+- put `listen` on a private-network address, for example your Tailscale or WireGuard address (`listen = "100.x.y.z:8788"`): only
+  devices on that network can reach it, and the traffic is already encrypted; or
+- set `tls = true` (needs `[tls]`) to serve it over HTTPS, if you must expose it.
+The server **refuses to start** with the panel on a non-local address over plain HTTP, unless you set `allow_plain_http = true`
+(for a VPN you trust). With TLS it also sends HSTS.
+
+**What protects it.** Tokens are 256 random bits, kept only as SHA-256 hashes (in `admin.json`, readable by the server's user only);
+ten wrong tokens or setup codes from an address lock that address out for a minute (a setup code is also 99 bits); the page loads nothing from anywhere else (strict
+content-security-policy, no inline script) and builds everything with `textContent`, never HTML from server data; the API uses a
+bearer token, not cookies, so there is nothing for another website to ride on. The page was checked with an automated
+accessibility scan (axe, WCAG 2.2 AA, light and dark, no violations) and by keyboard.
+
+## TLS (wss, https, and TURN over TLS)
+
+Put a certificate in `[tls]` and the web side can also listen over TLS (`https_listen = "0.0.0.0:443"`), so apps connect with
+`wss://` and you need no reverse proxy:
+
+```toml
+[tls]
+cert_file = "/etc/letsencrypt/live/example.org/fullchain.pem"
+key_file  = "/etc/letsencrypt/live/example.org/privkey.pem"
+domain    = "example.org"
+https_listen = "0.0.0.0:443"
+```
+
+The files are read again every 30 seconds when they change, so a renewed certificate is picked up without a restart (a broken
+new file is ignored and the old certificate stays). Getting the certificate is yours to do (certbot, your host's tool, or
+a reverse proxy such as Caddy that handles it for you); this server does not talk to Let's Encrypt itself yet.
+`self_signed = true` makes a certificate for trying things out; apps and browsers will not trust it.
+
 ## Behind a router, a home connection, or a cloud NAT
 
-TURN is the part that is hard to run behind NAT, because phones must be able to send UDP to it from the internet.
+TURN is the part that is hard to run behind NAT, because phones must be able to reach it from the internet.
 
-1. **Ports.** Forward (or allow in your cloud firewall) **TCP 8787** (or 443 via the proxy) for the relay, **UDP 3478**
-   and the **UDP range `min_port`–`max_port`** (default 49152–49400, one port per relayed connection) for TURN.
-2. **Public address.** `public_ip = "auto"` asks a public STUN server what address the internet sees, and tells phones to
+1. **Ports.** Forward (or allow in your cloud firewall) **TCP 8787** (or 443 via TLS) for the relay, **UDP 3478** and the
+   **UDP range `min_port`-`max_port`** (default 49152-49400, one port per relayed connection) for TURN.
+2. **Networks that block UDP.** Turn on `tcp_listen` (TURN over TCP, for example `0.0.0.0:3478`) and `tls_listen` (TURN over
+   TLS, for example `0.0.0.0:443`, which gets through networks that only allow HTTPS). Forward those TCP ports too. The
+   phone's own leg goes over TCP or TLS; what the server sends on to the other phone is still UDP, so the UDP range must
+   stay open. Phones are told every way in (`/turn` lists `turn:`, `turn:...?transport=tcp` and `turns:...`).
+3. **Public address.** `public_ip = "auto"` asks a public STUN server what address the internet sees, and tells phones to
    use it. On a cloud VM with a private address and a 1:1 public one, this is what you want. If your address changes,
    restart the server (or use a dynamic-DNS name and set the IP by hand).
-3. **Carrier-grade NAT.** If your provider shares one public address between customers (`doctor` says so, or your router's
-   WAN address starts 100.64–100.127), nothing can reach you from outside. Run the server on a small VPS instead, or put a
+4. **Two phones on the same server** relay to the server's own public address; many routers cannot loop traffic back to
+   themselves, so the server delivers it locally instead (this is tested below).
+5. **Carrier-grade NAT.** If your provider shares one public address between customers (`doctor` says so, or your router's
+   WAN address starts 100.64-100.127), nothing can reach you from outside. Run the server on a small VPS instead, or put a
    tunnel (a VPS with the ports forwarded over WireGuard) in front.
-4. **Testing from your own network.** Many routers cannot loop traffic back to their own public address ("hairpin NAT"),
+6. **Testing from your own network.** Many routers cannot loop traffic back to their own public address ("hairpin NAT"),
    so test with a phone on **mobile data**, not Wi-Fi.
-5. **TURN is UDP only** in this version. A phone on a network that blocks all UDP cannot use it (TCP/TLS TURN comes later).
+
+### Tested behind NAT (an emulation)
+
+`sudo scripts/nat-lab.sh` builds a small internet out of network namespaces: two phones behind two separate NAT routers
+(real Linux conntrack), the internet between them, and this server behind its own gateway with port forwards (a VPS with a
+private address, or a home server). It runs the real server and a real TURN client. Result on this machine:
+
+| Scenario | Result |
+|---|---|
+| two ordinary home routers (cone NAT): can the phones reach each other directly (UDP hole punching)? | yes |
+| two symmetric NATs: direct connection | no (this is when TURN is needed) |
+| two home routers: TURN over UDP through the forwarded server | works |
+| two symmetric NATs: TURN over UDP | works |
+| both offices block UDP: TURN over UDP | fails, as it must |
+| both offices block UDP: TURN over TCP | works |
+| only TCP 443 gets out: TURN over TCP 3478 | fails, as it must |
+| only TCP 443 gets out: TURN over TLS 443 | works |
+| one phone behind a UDP-blocking office, the other behind a symmetric NAT (TCP) | works |
+
+The same lab against the server as it was before the local-delivery fix (point `SRV_BIN` at an older build): both UDP relay
+scenarios fail, so that fix is what makes two phones on one port-forwarded server work.
+
+What this does not show: a real ISP or carrier (some do odd things to UDP), a real phone, the real internet's latency and
+loss, IPv6. It shows the server's logic is right in the situations that make TURN hard.
 
 ## Safety defaults
 
@@ -151,105 +340,6 @@ prints delivery times measured at the Rust test client; under a burst they are h
 median at 2,000 connections against under 1 ms for Node). I believe that is the test client being flooded faster than it can
 read, since one-at-a-time delivery is a tie, but I have not proven it. Numbers vary by machine: run it on yours.
 
-## Nostr
-
-Set `[nostr] enabled = true` and the same port also speaks the Nostr relay protocol (a client that sends a JSON array is
-talking Nostr; one that sends an object is talking PrivCord). The PrivCord apps already use Nostr events (kinds 21733 and
-31733) on public relays, so this server works as one of them too, and any other Nostr client can use it.
-
-| | |
-|---|---|
-| Supported | NIP-01 (events, REQ/CLOSE/EOSE, filters, replaceable, ephemeral and addressable kinds), NIP-02, NIP-09 deletion, NIP-11 information document, NIP-12 tag queries, NIP-13 proof of work, NIP-15, NIP-16, NIP-20, NIP-22, NIP-33, NIP-40 expiration, NIP-42 authentication, NIP-45 COUNT |
-| Checks | every event's id and Schnorr signature, size, tag count, `created_at` window, expiry; hex must be lowercase |
-| Rules you set | allowed and blocked public keys, allowed and blocked kinds, minimum proof of work, authentication required, per-address publish rate, retention (days), event cap |
-| Not yet | NIP-50 search, NIP-86 management API, NIP-98 HTTP auth, NIP-77 sync, NIP-70 protected events, NIP-05 write checks |
-| Storage | in memory with indexes by time, author, kind and tag, plus an append-only log in `data_dir` (synced to disk twice a second), compacted when it doubles |
-
-Whoever publishes to a Nostr relay publishes readable content: unlike PrivCord's sealed messages, you can read what is stored
-here. That is your responsibility as the operator.
-
-### Compared with nostr-rs-relay
-
-`scripts/bench-nostr.sh` (with `NOSTR_RS_RELAY=/path/to/nostr-rs-relay`) runs the same load against both. One run on a
-shared 4-vCPU container, load generator on the same machine, default settings for both (rate limits off on this server):
-
-| | nostr-rs-relay 0.8.12 | privcord-server |
-|---|---|---|
-| start until it answers | 22 ms | 9-13 ms |
-| idle memory | 25 MB | 5 MB |
-| 20,000 live events to 200 rooms (200 listeners): time | 2.6 s (7.7k deliveries/s) | 0.55 s (36k deliveries/s) |
-| 20,000 events stored from 20 connections | 13.4 s (1.5k events/s) | 0.5 s (40k events/s) |
-| 2,000 reads of 50 events each, one after another | 105 s (19/s) | 0.8 s (2.5k/s) |
-| one event at a time, median / 99th percentile | 0.35 ms / 0.7-1.8 ms | 0.37 ms / 0.8-1.8 ms |
-| peak memory / CPU time for the whole run | 98 MB / 38-40 s | 46 MB / 4.4 s |
-
-Read it carefully:
-- **Durability is not identical.** nostr-rs-relay stores in SQLite, which is a database with queries and indexes of its own;
-  this server keeps events in memory with a log that is synced to disk twice a second, so a power cut can lose up to half a
-  second of events (a crash of the program loses none). Memory use grows with the number of stored events (cap them with
-  `max_events` and `retention_days`).
-- **The read figure is mostly a socket setting.** `nostr-rs-relay` leaves Nagle's algorithm on (checked with `strace`: it
-  sets `TCP_NODELAY` to 0), so a burst of 50 small replies waits on the client's delayed ACK, about 50 ms a query. This server
-  turns it off. Different clients and networks change this figure.
-- Latency for single events is a tie; the gains are in throughput, memory and CPU.
-- strfry, the most used relay, was not measured here (building it needs system packages I did not install). The script runs
-  it too if you give it `STRFRY=/path/to/strfry`.
-
-## Behind a router, a home connection, or a cloud NAT
-
-TURN is the part that is hard to run behind NAT, because phones must be able to send UDP to it from the internet.
-
-1. **Ports.** Forward (or allow in your cloud firewall) **TCP 8787** (or 443 via the proxy) for the relay, **UDP 3478**
-   and the **UDP range `min_port`–`max_port`** (default 49152–49400, one port per relayed connection) for TURN.
-2. **Public address.** `public_ip = "auto"` asks a public STUN server what address the internet sees, and tells phones to
-   use it. On a cloud VM with a private address and a 1:1 public one, this is what you want. If your address changes,
-   restart the server (or use a dynamic-DNS name and set the IP by hand).
-3. **Carrier-grade NAT.** If your provider shares one public address between customers (`doctor` says so, or your router's
-   WAN address starts 100.64–100.127), nothing can reach you from outside. Run the server on a small VPS instead, or put a
-   tunnel (a VPS with the ports forwarded over WireGuard) in front.
-4. **Testing from your own network.** Many routers cannot loop traffic back to their own public address ("hairpin NAT"),
-   so test with a phone on **mobile data**, not Wi-Fi.
-5. **TURN is UDP only** in this version. A phone on a network that blocks all UDP cannot use it (TCP/TLS TURN comes later).
-
-## Safety defaults
-
-* TURN refuses to relay to loopback, private, link-local, carrier-grade-NAT and multicast addresses, so it cannot be used
-  to reach the machine it runs on or the network behind it (`allow_private_peers = false`).
-* TURN credentials expire (default 1 h); there are no accounts to leak. Fixed accounts exist only if you add them.
-* `access_tokens` makes the server private: clients must present a token.
-* Per-address limits on connections, mailboxes, subscriptions, message rate; caps on total messages and bytes stored.
-* `GET /healthz` shows counters only; `GET /.well-known/privcord-server` tells apps what the server offers.
-
-## Capacity
-
-Everything is sharded and lock-light, with no per-message disk wait. On a laptop (client and server sharing the same
-machine), 1,000 listeners and 1,000 senders moved 20,000 messages of 2 KiB in 1.3 s (about 15,000 messages/s), every one
-delivered, slowest 0.23 s. Run it on your own hardware:
-`cargo test -p privcord-server --release --test load -- --ignored --nocapture` (`LOAD_PAIRS`, `LOAD_MSGS` set the size).
-Raise the open-files limit (`ulimit -n 65536`, or `LimitNOFILE=` in systemd) for many thousands of connections. TURN
-capacity is bounded by your network bandwidth; use `max_kbps` to cap each relayed connection.
-
-### Against the Node relay
-
-`scripts/bench-relay.sh [pairs] [messages]` runs the same load (same limits, 2 KiB messages) against the Node relay and
-this one, and prints start-up time, memory, CPU time and throughput. One run on a shared 4-vCPU container, the load
-generator on the same machine:
-
-| | Node 22 | Rust |
-|---|---|---|
-| start until it answers | 80-105 ms | 8-11 ms |
-| idle memory | 63 MB | 5 MB |
-| 200,000 messages (200 listeners, 200 senders): time | 4.75 s (42k msg/s) | 1.02 s (195k msg/s) |
-| the same run: CPU time used by the server | 5.0 s | 2.3 s |
-| 20,000 messages across 2,000 connections: peak memory | 90-109 MB | 30-43 MB |
-| one message at a time, median / p99 delivery (separate client) | 0.11 ms / 1.10 ms | 0.13 ms / 0.78 ms |
-
-Honest notes: with very fast senders the Rust relay queues events faster than the listeners drain them, so its peak memory
-there (146 MB) was higher than Node's (96 MB); a slow listener is cut off past a byte limit, as in the Node relay. The
-"slowest delivery" the load test prints is dominated by the Rust test client sharing the machine's cores, not by the
-server; the one-at-a-time figure above, from an independent Node client, is the fair latency comparison. Numbers vary by
-machine: run it on yours.
-
 ## Docker
 
 ```sh
@@ -257,3 +347,24 @@ docker build -t privcord-server -f crates/privcord-server/Dockerfile .
 docker run -d --network host -v privcord-data:/data privcord-server
 ```
 (`--network host` keeps the TURN port range simple.)
+
+The admin panel embeds the Bricolage Grotesque and Figtree fonts (SIL Open Font License 1.1, the same files as the landing page; see `site/THIRD_PARTY.md`).
+
+## Slow and greedy clients
+
+The web side (the relay's port, HTTPS and the admin panel) does not use a stock accept loop: a client has `header_timeout_secs`
+(10) to send its whole request head, also while waiting for the next request on a kept-alive connection, so a client that sends
+one byte a minute, or says nothing at all, is cut off (the "slow header" attack); a request not answered in `request_timeout_secs`
+(30) gets a 408 (a body that trickles in); the head's size is bounded; and a connection that is over `max_http_connections`
+(20,000) or `max_http_connections_per_ip` (100, per /64 for IPv6, off with `trust_proxy`) is dropped before anything is read. A
+WebSocket leaves these counts once upgraded: the relay's per-address and rate limits apply to it. `tests/hardening.rs` attacks
+the real server with a half-sent head, a silent connection, a stalled body and many connections. Not covered: a flood big enough
+to fill the network link (that needs a provider or a proxy in front), and slow *reading* of a response by a client, which the
+relay already cuts off for WebSockets (`stall_secs`).
+
+## Running it as a service (hardened)
+
+`contrib/privcord-server.service` is a systemd unit that gives the server only what it needs: its own data directory, network
+sockets, no privileges (`NoNewPrivileges`, an empty capability set; use `CAP_NET_BIND_SERVICE` for ports below 1024), a
+read-only system (`ProtectSystem=strict`), a filtered set of system calls, and memory and task limits. The steps are in the
+file's header; `systemd-analyze security privcord-server` scores it.

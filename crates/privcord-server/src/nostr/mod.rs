@@ -6,6 +6,7 @@
 
 pub mod event;
 pub mod filter;
+pub mod nip98;
 pub mod store;
 
 use crate::config::NostrConfig;
@@ -43,6 +44,8 @@ struct SubRef {
 #[derive(Default, Debug)]
 pub struct Session {
     subs: HashMap<String, Vec<SubKey>>,
+    /// NIP-77 syncs in progress on this connection (the server's side of each).
+    negs: HashMap<String, negentropy::Negentropy<'static, negentropy::NegentropyStorageVector>>,
     challenge: Option<String>,
     authed: Arc<RwLock<Option<Id>>>,
     /// Subscriptions opened in the current minute: (count, minute ends at ms).
@@ -73,7 +76,11 @@ pub struct Policy {
 
 impl Policy {
     pub fn from_config(c: &NostrConfig) -> Self {
-        let keys = |v: &[String]| v.iter().filter_map(|s| unhex::<32>(s)).collect();
+        let keys = |v: &[String]| {
+            v.iter()
+                .filter_map(|s| unhex::<32>(&s.trim().to_lowercase()))
+                .collect()
+        };
         Self {
             allowed_pubkeys: keys(&c.allowed_pubkeys),
             blocked_pubkeys: keys(&c.blocked_pubkeys),
@@ -92,8 +99,20 @@ struct Stats {
     reqs: AtomicU64,
 }
 
+/// The Nostr limits an administrator can change while the server runs.
+#[derive(Debug)]
+pub struct NostrLimits {
+    pub events_per_minute: AtomicU64,
+    pub requests_per_minute: AtomicU64,
+    /// Days to keep events (0: for ever).
+    pub keep_days: AtomicU64,
+}
+
 pub struct Nostr {
+    limits: NostrLimits,
     pub cfg: NostrConfig,
+    /// Name, description and icon set through the management API (they win over the settings file).
+    info_override: RwLock<(Option<String>, Option<String>, Option<String>)>,
     store: Option<Store>,
     policy: RwLock<Policy>,
     subs: Vec<Mutex<HashMap<SubKey, Vec<SubRef>>>>,
@@ -122,18 +141,78 @@ fn shard_of(k: &SubKey) -> usize {
     (h.finish() % SHARDS as u64) as usize
 }
 
+/// A relay address reduced to what identifies it: host and port (scheme only decides the default port), lower case.
+fn relay_key(url: &str) -> Option<(String, u16)> {
+    let u = url.trim().to_lowercase();
+    let (scheme, rest) = u.split_once("://")?;
+    let default = match scheme {
+        "wss" | "https" => 443,
+        "ws" | "http" => 80,
+        _ => return None,
+    };
+    let host_port = rest.split(['/', '?', '#']).next()?;
+    if let Some(v6) = host_port.strip_prefix('[') {
+        let (host, after) = v6.split_once(']')?;
+        let port = after
+            .strip_prefix(':')
+            .map_or(Some(default), |p| p.parse().ok())?;
+        return Some((host.to_owned(), port));
+    }
+    match host_port.rsplit_once(':') {
+        Some((h, p)) => Some((h.to_owned(), p.parse().ok()?)),
+        None => Some((host_port.to_owned(), default)),
+    }
+}
+
+/// NIP-42: the `relay` tag must name this relay. Otherwise another relay could hand a client our challenge, get it signed
+/// for itself, and replay it here as that client.
+fn relay_matches(tag: Option<&str>, configured: &str) -> bool {
+    match (tag.and_then(relay_key), relay_key(configured)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// The largest NEG-MSG the server sends back (bytes, before hex): it must fit in a WebSocket message with room to spare.
+const NEG_FRAME_LIMIT: u64 = 60_000;
+
+fn unhex_vec(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || !s.is_ascii() {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok())
+        .collect()
+}
+
 fn frame_event(sub: &str, e: &Event) -> Arc<str> {
     format!("[\"EVENT\",{},{}]", Value::from(sub), e.json).into()
 }
 
 impl Nostr {
     pub fn new(cfg: NostrConfig, data_dir: &std::path::Path) -> Result<Self, String> {
+        Self::with_codec(cfg, data_dir, Arc::new(crate::record::Codec::plain()))
+    }
+
+    /// With the settings' way of writing the log (a check on every record, and encryption when a key is set).
+    pub fn with_codec(
+        cfg: NostrConfig,
+        data_dir: &std::path::Path,
+        codec: Arc<crate::record::Codec>,
+    ) -> Result<Self, String> {
         let store = cfg
             .store_events
-            .then(|| Store::open(cfg.persist.then_some(data_dir)))
+            .then(|| Store::open_with(cfg.persist.then_some(data_dir), cfg.max_store_bytes, codec))
             .transpose()?;
         let policy = Policy::from_config(&cfg);
         Ok(Self {
+            info_override: RwLock::new((None, None, None)),
+            limits: NostrLimits {
+                events_per_minute: AtomicU64::new(cfg.events_per_minute_per_ip),
+                requests_per_minute: AtomicU64::new(cfg.reqs_per_minute_per_conn),
+                keep_days: AtomicU64::new(cfg.retention_days),
+            },
             cfg,
             store,
             policy: RwLock::new(policy),
@@ -152,6 +231,15 @@ impl Nostr {
         &self.subs[shard_of(k)]
     }
 
+    pub fn limits(&self) -> &NostrLimits {
+        &self.limits
+    }
+
+    /// Removes every stored event; how many there were.
+    pub fn clear_events(&self) -> usize {
+        self.store.as_ref().map_or(0, Store::clear)
+    }
+
     pub fn policy(&self) -> Policy {
         self.policy
             .read()
@@ -163,8 +251,49 @@ impl Nostr {
         *self.policy.write().unwrap_or_else(PoisonError::into_inner) = p;
     }
 
+    /// Moderation: removes the stored event with this id (hex) and refuses it from now on. Whether it was there.
+    pub fn ban_event(&self, id_hex: &str) -> Option<bool> {
+        let id = unhex::<32>(id_hex)?;
+        Some(self.store.as_ref().is_some_and(|s| s.ban_event(&id)))
+    }
+
     pub fn store(&self) -> Option<&Store> {
         self.store.as_ref()
+    }
+
+    /// Takes a ban on an event back. `None` for something that is not an event id; otherwise whether it was banned.
+    pub fn unban_event(&self, id_hex: &str) -> Option<bool> {
+        let id = unhex::<32>(id_hex)?;
+        Some(self.store.as_ref().is_some_and(|s| s.unban_event(&id)))
+    }
+
+    /// The events banned by an administrator, as hex.
+    pub fn banned_events(&self) -> Vec<String> {
+        self.store
+            .as_ref()
+            .map(|s| s.banned_events().iter().map(|i| hex(i)).collect())
+            .unwrap_or_default()
+    }
+
+    /// Public keys (hex) allowed to use the management API: `admin_pubkey` and `admin_pubkeys`.
+    pub fn admin_keys(&self) -> Vec<Id> {
+        std::iter::once(&self.cfg.admin_pubkey)
+            .chain(self.cfg.admin_pubkeys.iter())
+            .filter_map(|k| unhex::<32>(k.trim().to_lowercase().as_str()))
+            .collect()
+    }
+
+    /// Changes what the information document says about this relay (kept until the next change).
+    pub fn set_info(
+        &self,
+        name: Option<String>,
+        description: Option<String>,
+        icon: Option<String>,
+    ) {
+        *self
+            .info_override
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = (name, description, icon);
     }
 
     pub fn counters(&self) -> Value {
@@ -182,12 +311,17 @@ impl Nostr {
     /// NIP-11.
     pub fn info(&self, contact: &str) -> Value {
         let c = &self.cfg;
+        let over = self
+            .info_override
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         let mut doc = json!({
-            "name": c.name,
-            "description": c.description,
+            "name": over.0.as_deref().unwrap_or(&c.name),
+            "description": over.1.as_deref().unwrap_or(&c.description),
             "contact": contact,
             "pubkey": c.admin_pubkey,
-            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45],
+            "supported_nips": [1, 2, 9, 11, 12, 13, 15, 16, 20, 22, 33, 40, 42, 45, 50, 62, 70, 77, 86, 98],
             "software": "https://github.com/raiden6767/privcord",
             "version": env!("CARGO_PKG_VERSION"),
             "limitation": {
@@ -204,8 +338,9 @@ impl Nostr {
                 "created_at_upper_limit": c.created_at_upper_secs,
             },
         });
-        if let (false, Some(o)) = (c.icon.is_empty(), doc.as_object_mut()) {
-            o.insert("icon".into(), Value::from(c.icon.clone()));
+        let icon = over.2.clone().unwrap_or_else(|| c.icon.clone());
+        if let (false, Some(o)) = (icon.is_empty(), doc.as_object_mut()) {
+            o.insert("icon".into(), Value::from(icon));
         }
         doc
     }
@@ -241,7 +376,7 @@ impl Nostr {
     }
 
     fn rate_limited(&self, ip: &str, now_ms: i64) -> bool {
-        let limit = self.cfg.events_per_minute_per_ip;
+        let limit = self.limits.events_per_minute.load(Ordering::Relaxed);
         if limit == 0 {
             return false;
         }
@@ -256,9 +391,11 @@ impl Nostr {
 
     /// NIP-42: a relay that wants authentication offers its challenge as soon as a client connects.
     pub fn challenge(&self, conn: &Conn, sess: &mut Session) {
-        if (self.cfg.auth_required || self.cfg.auth_dms) && sess.challenge.is_none() {
+        if (self.cfg.auth_required || self.cfg.auth_dms || !self.cfg.relay_url.is_empty())
+            && sess.challenge.is_none()
+        {
             let mut b = [0u8; 16];
-            let _ = getrandom::fill(&mut b);
+            crate::fsutil::random(&mut b);
             let ch = hex(&b);
             conn.send(json!(["AUTH", ch]).to_string());
             sess.challenge = Some(ch);
@@ -280,6 +417,13 @@ impl Nostr {
             },
             Some("REQ") => self.on_req(conn, sess, &msg, now),
             Some("COUNT") => self.on_count(conn, sess, &msg, now),
+            Some("NEG-OPEN") => self.on_neg_open(conn, sess, &msg, now),
+            Some("NEG-MSG") => self.on_neg_msg(conn, sess, &msg),
+            Some("NEG-CLOSE") => {
+                if let Some(id) = msg.get(1).and_then(Value::as_str) {
+                    sess.negs.remove(id);
+                }
+            }
             Some("CLOSE") => {
                 if let Some(id) = msg.get(1).and_then(Value::as_str) {
                     self.close_sub(sess, id, conn);
@@ -341,6 +485,27 @@ impl Nostr {
         if c.auth_required && sess.auth().is_none() {
             return reject("auth-required: authenticate first");
         }
+        // NIP-70: a protected event (a lone "-" tag) is only taken from its own author, signed in (NIP-42).
+        if e.tags
+            .iter()
+            .any(|t| t.len() == 1 && t.first().is_some_and(|n| n == "-"))
+            && sess.auth() != Some(e.pubkey)
+        {
+            return reject(
+                "auth-required: this event is protected, only its author may publish it (authenticate first)",
+            );
+        }
+        // NIP-62: a request to vanish names this relay, or all relays.
+        if e.kind == 62
+            && !e.tags.iter().any(|t| {
+                t.first().is_some_and(|n| n == "relay")
+                    && t.get(1).is_some_and(|v| {
+                        v == "ALL_RELAYS" || relay_matches(Some(v.as_str()), &c.relay_url)
+                    })
+            })
+        {
+            return reject("invalid: this request to vanish is not addressed to this relay");
+        }
         {
             let p = self.policy.read().unwrap_or_else(PoisonError::into_inner);
             if p.blocked_pubkeys.contains(&e.pubkey) || p.blocked_kinds.contains(&e.kind) {
@@ -394,6 +559,8 @@ impl Nostr {
                         )
                     }
                     Put::Deleted => return reject("blocked: this event was deleted"),
+                    Put::Full => return reject("blocked: this relay's storage is full"),
+                    Put::Failed => return reject("error: could not write the event to disk"),
                 }
             }
         }
@@ -417,17 +584,16 @@ impl Nostr {
     }
 
     fn fan_out(&self, e: &Arc<Event>) {
-        let mut seen: Vec<(u64, Arc<str>)> = Vec::new();
+        let mut seen: HashSet<(u64, Arc<str>)> = HashSet::new();
         for key in Self::keys_for(e) {
             let candidates: Vec<SubRef> = lock(self.shard(&key))
                 .get(&key)
                 .cloned()
                 .unwrap_or_default();
             for s in candidates {
-                if seen.iter().any(|(c, i)| *c == s.conn.id && **i == *s.id) {
+                if !seen.insert((s.conn.id, s.id.clone())) {
                     continue;
                 }
-                seen.push((s.conn.id, s.id.clone()));
                 if any_match(&s.filters, e)
                     && self.visible(e, *s.auth.read().unwrap_or_else(PoisonError::into_inner))
                 {
@@ -481,6 +647,20 @@ impl Nostr {
         }
     }
 
+    /// A cap on how fast one connection may ask (REQ and COUNT both cost the store work).
+    fn req_allowed(&self, sess: &mut Session, now: i64) -> bool {
+        let cap = self.limits.requests_per_minute.load(Ordering::Relaxed);
+        if cap == 0 {
+            return true;
+        }
+        let now_ms = now * 1000;
+        if sess.req_window.1 <= now_ms {
+            sess.req_window = (0, now_ms + 60_000);
+        }
+        sess.req_window.0 += 1;
+        sess.req_window.0 <= cap
+    }
+
     fn parse_filters(&self, msg: &[Value], from: usize) -> Result<Vec<Filter>, String> {
         let raw = msg.get(from..).unwrap_or(&[]);
         if raw.is_empty() {
@@ -489,9 +669,14 @@ impl Nostr {
         if raw.len() > self.cfg.max_filters {
             return Err("invalid: too many filters".into());
         }
-        raw.iter()
+        let filters: Vec<Filter> = raw
+            .iter()
             .map(|v| Filter::parse(v).map_err(str::to_owned))
-            .collect()
+            .collect::<Result<_, _>>()?;
+        if filters.iter().map(Filter::value_count).sum::<usize>() > self.cfg.max_filter_values {
+            return Err("invalid: too many values in the filters".into());
+        }
+        Ok(filters)
     }
 
     fn on_req(&self, conn: &Conn, sess: &mut Session, msg: &[Value], now: i64) {
@@ -509,15 +694,8 @@ impl Nostr {
         if !sess.subs.contains_key(sub) && sess.subs.len() >= self.cfg.max_subs_per_conn {
             return closed("error: too many subscriptions");
         }
-        if self.cfg.reqs_per_minute_per_conn > 0 {
-            let now_ms = now * 1000;
-            if sess.req_window.1 <= now_ms {
-                sess.req_window = (0, now_ms + 60_000);
-            }
-            sess.req_window.0 += 1;
-            if sess.req_window.0 > self.cfg.reqs_per_minute_per_conn {
-                return closed("rate-limited: too many subscriptions requested, slow down");
-            }
+        if !self.req_allowed(sess, now) {
+            return closed("rate-limited: too many subscriptions requested, slow down");
         }
         let filters = match self.parse_filters(msg, 2) {
             Ok(f) => f,
@@ -560,13 +738,98 @@ impl Nostr {
         conn.send(json!(["EOSE", sub]).to_string());
     }
 
-    fn on_count(&self, conn: &Conn, sess: &Session, msg: &[Value], now: i64) {
+    /// NIP-77: the client opens a sync with a filter and its first message; the answer says which events each side lacks, in
+    /// as many rounds as it takes (`NEG-MSG` both ways), and the client then asks for what it needs with a plain `REQ`.
+    fn on_neg_open(&self, conn: &Conn, sess: &mut Session, msg: &[Value], now: i64) {
+        let Some(sub) = msg.get(1).and_then(Value::as_str) else {
+            return conn
+                .send(json!(["NOTICE", "error: NEG-OPEN needs a subscription id"]).to_string());
+        };
+        let err = |why: &str| conn.send(json!(["NEG-ERR", sub, why]).to_string());
+        if sub.is_empty() || sub.len() > self.cfg.max_subid_len {
+            return err("invalid: bad subscription id");
+        }
+        if self.cfg.auth_required && sess.auth().is_none() {
+            return err("auth-required: authenticate first");
+        }
+        if !sess.negs.contains_key(sub) && sess.negs.len() >= self.cfg.max_negentropy_sessions {
+            return err("blocked: too many sync sessions open on this connection");
+        }
+        if !self.req_allowed(sess, now) {
+            return err("rate-limited: too many requests, slow down");
+        }
+        let Some(store) = &self.store else {
+            return err("blocked: this relay keeps no events");
+        };
+        let Some(mut filter) = msg.get(2).and_then(|v| Filter::parse(v).ok()) else {
+            return err("invalid: the filter is not valid");
+        };
+        if filter.value_count() > self.cfg.max_filter_values {
+            return err("invalid: too many values in the filter");
+        }
+        let Some(first) = msg.get(3).and_then(Value::as_str).and_then(unhex_vec) else {
+            return err("invalid: the first message must be hex");
+        };
+        filter.limit = None;
+        let max = self.cfg.max_negentropy_items;
+        let found = store.query(&filter, now, max.saturating_add(1));
+        if found.len() > max {
+            return err("blocked: too many results, narrow the filter");
+        }
+        let mut set = negentropy::NegentropyStorageVector::with_capacity(found.len());
+        for e in found.iter().filter(|e| self.visible(e, sess.auth())) {
+            let _ = set.insert(
+                u64::try_from(e.created_at).unwrap_or(0),
+                negentropy::Id::from_byte_array(e.id),
+            );
+        }
+        let ready = set
+            .seal()
+            .ok()
+            .and_then(|()| negentropy::Negentropy::owned(set, NEG_FRAME_LIMIT).ok());
+        let Some(mut ng) = ready else {
+            return err("error: could not start the sync");
+        };
+        match ng.reconcile(&first) {
+            Ok(reply) => {
+                sess.negs.insert(sub.to_owned(), ng);
+                conn.send(json!(["NEG-MSG", sub, hex(&reply)]).to_string());
+            }
+            Err(e) => err(&format!("error: {e}")),
+        }
+    }
+
+    fn on_neg_msg(&self, conn: &Conn, sess: &mut Session, msg: &[Value]) {
+        let Some(sub) = msg.get(1).and_then(Value::as_str) else {
+            return conn
+                .send(json!(["NOTICE", "error: NEG-MSG needs a subscription id"]).to_string());
+        };
+        let err = |why: &str| conn.send(json!(["NEG-ERR", sub, why]).to_string());
+        let Some(bytes) = msg.get(2).and_then(Value::as_str).and_then(unhex_vec) else {
+            return err("invalid: the message must be hex");
+        };
+        let Some(ng) = sess.negs.get_mut(sub) else {
+            return err("closed: there is no such sync session (it was closed, or never opened)");
+        };
+        match ng.reconcile(&bytes) {
+            Ok(reply) => conn.send(json!(["NEG-MSG", sub, hex(&reply)]).to_string()),
+            Err(e) => {
+                sess.negs.remove(sub);
+                err(&format!("error: {e}"));
+            }
+        }
+    }
+
+    fn on_count(&self, conn: &Conn, sess: &mut Session, msg: &[Value], now: i64) {
         let Some(sub) = msg.get(1).and_then(Value::as_str) else {
             return conn.send(json!(["NOTICE", "error: COUNT needs an id"]).to_string());
         };
         if self.cfg.auth_required && sess.auth().is_none() {
             return conn
                 .send(json!(["CLOSED", sub, "auth-required: authenticate first"]).to_string());
+        }
+        if !self.req_allowed(sess, now) {
+            return conn.send(json!(["CLOSED", sub, "rate-limited: slow down"]).to_string());
         }
         match self.parse_filters(msg, 2) {
             Ok(f) => {
@@ -579,7 +842,7 @@ impl Nostr {
                                 limit: None,
                                 ..g.clone()
                             };
-                            for e in s.query(&g, now, usize::MAX) {
+                            for e in s.query(&g, now, 100_000) {
                                 if self.visible(&e, sess.auth()) {
                                     seen.insert(e.id);
                                 }
@@ -617,7 +880,7 @@ impl Nostr {
         if e.kind != AUTH_KIND
             || !challenge_ok
             || (e.created_at - now).abs() > 600
-            || e.tag("relay").is_none()
+            || !relay_matches(e.tag("relay"), &self.cfg.relay_url)
         {
             return fail("invalid: not a valid authentication for this connection");
         }
@@ -638,7 +901,7 @@ impl Nostr {
                 .store(now.unsigned_abs(), Ordering::Relaxed);
             store.sweep(
                 now,
-                i64::try_from(self.cfg.retention_days).unwrap_or(0) * 86_400,
+                i64::try_from(self.limits.keep_days.load(Ordering::Relaxed)).unwrap_or(0) * 86_400,
                 self.cfg.max_events,
             );
             store.compact(false);
@@ -663,15 +926,22 @@ impl Nostr {
                 continue;
             }
             let me = self.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                if let Some(s) = &me.store {
-                    s.sync();
-                }
-            })
-            .await;
+            // False when the disk refused the sync: nothing in this batch is confirmed as safe.
+            let synced =
+                tokio::task::spawn_blocking(move || me.store.as_ref().is_none_or(|s| s.sync()))
+                    .await
+                    .unwrap_or(false);
             for p in batch {
-                self.fan_out(&p.event);
-                p.conn.send(p.ok);
+                if synced {
+                    self.fan_out(&p.event);
+                    p.conn.send(p.ok);
+                } else {
+                    let id = hex(&p.event.id);
+                    p.conn.send(
+                        json!(["OK", id, false, "error: could not write the event to disk"])
+                            .to_string(),
+                    );
+                }
             }
         }
     }
