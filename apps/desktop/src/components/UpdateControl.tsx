@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { loadNetworkConfig } from '../lib/network';
 import type { AppSettings } from '../lib/settings';
-import { RECHECK_MS, SNOOZE_MS, checkForUpdate, dueForCheck, installUpdate, mayCheckForUpdates, snoozeActive, type FoundUpdate } from '../lib/updates';
+import { RECHECK_MS, SNOOZE_MS, buildOf, checkForUpdate, dueForCheck, installUpdate, mayCheckForUpdates, shouldOffer, type FoundUpdate } from '../lib/updates';
 
 /** Installs a found update: the app closes and comes back as the new version. */
 function InstallButton({ found }: { found: FoundUpdate }) {
@@ -74,7 +74,10 @@ export function UpdateCheck() {
  */
 export function UpdateBanner({ settings, updateSettings }: { settings: AppSettings; updateSettings: (patch: Partial<AppSettings>) => void }) {
   const [found, setFound] = useState<FoundUpdate | null>(null);
-  const wanted = settings.updateChecks && !snoozeActive(settings.updateSnoozedUntil);
+  const wanted = settings.updateChecks;
+  // Read when a build is found, not when the effect starts: "Later" must not restart the checking.
+  const snooze = useRef({ until: settings.updateSnoozedUntil, for: settings.updateSnoozedFor });
+  snooze.current = { until: settings.updateSnoozedUntil, for: settings.updateSnoozedFor };
   useEffect(() => {
     if (!wanted) return;
     let live = true;
@@ -85,7 +88,7 @@ export function UpdateBanner({ settings, updateSettings }: { settings: AppSettin
       checkForUpdate()
         .then((update) => {
           lastDone = started;
-          if (live && update) setFound(update);
+          if (live && update && shouldOffer(update, snooze.current.until, snooze.current.for)) setFound(update);
         })
         .catch(() => undefined);
     };
@@ -116,7 +119,7 @@ export function UpdateBanner({ settings, updateSettings }: { settings: AppSettin
             className="button secondary small"
             onClick={() => {
               setFound(null);
-              updateSettings({ updateSnoozedUntil: Date.now() + SNOOZE_MS });
+              updateSettings({ updateSnoozedUntil: Date.now() + SNOOZE_MS, updateSnoozedFor: buildOf(found.version) });
             }}
           >
             Later

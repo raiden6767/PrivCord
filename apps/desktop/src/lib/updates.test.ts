@@ -5,7 +5,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...
 const inShell = vi.fn(() => true);
 vi.mock('../config', () => ({ isTauri: () => inShell() }));
 
-import { checkForUpdate, dueForCheck, installUpdate, mayCheckForUpdates, RECHECK_MS, snoozeActive, SNOOZE_MS } from './updates';
+import { buildOf, checkForUpdate, dueForCheck, shouldOffer, installUpdate, mayCheckForUpdates, RECHECK_MS, snoozeActive, SNOOZE_MS } from './updates';
 import { parseSettings } from './settings';
 
 beforeEach(() => {
@@ -47,5 +47,19 @@ describe('updates', () => {
     expect(parseSettings(JSON.stringify({ updateChecks: false })).updateChecks).toBe(false);
     expect(parseSettings(JSON.stringify({ updateSnoozedUntil: 5 })).updateSnoozedUntil).toBe(5);
     expect(parseSettings(JSON.stringify({ updateSnoozedUntil: 'x' })).updateSnoozedUntil).toBe(0);
+  });
+});
+
+describe('"Later" puts off one build, not every build after it', () => {
+  const found = (version: string) => ({ version, notes: null });
+  it('reads the build number', () => {
+    expect(buildOf('0.1.39')).toBe(39);
+    expect(buildOf('nonsense')).toBe(0);
+  });
+  it('hides the build that was put off while the snooze lasts, and offers a newer one at once', () => {
+    const now = 1_000;
+    expect(shouldOffer(found('0.1.38'), now + 500, 38, now)).toBe(false);
+    expect(shouldOffer(found('0.1.39'), now + 500, 38, now)).toBe(true);
+    expect(shouldOffer(found('0.1.38'), now - 1, 38, now)).toBe(true);
   });
 });

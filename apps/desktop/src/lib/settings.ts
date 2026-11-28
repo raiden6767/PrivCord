@@ -25,6 +25,8 @@ export interface AppSettings {
   updateChecks: boolean;
   /** "Later" on the update prompt: do not ask again before this time (milliseconds since 1970). */
   updateSnoozedUntil: number;
+  /** The build "Later" put off: a newer build is offered at once. */
+  updateSnoozedFor: number;
   /** Show the advanced options in Settings (beginners see the short list). */
   advanced: boolean;
 }
@@ -49,6 +51,7 @@ const DEFAULTS: AppSettings = {
   panicWipe: false,
   updateChecks: true,
   updateSnoozedUntil: 0,
+  updateSnoozedFor: 0,
   advanced: false,
 };
 
@@ -81,6 +84,8 @@ export function parseSettings(raw: string | null): AppSettings {
       updateChecks: typeof parsed.updateChecks === 'boolean' ? parsed.updateChecks : DEFAULTS.updateChecks,
       updateSnoozedUntil:
         typeof parsed.updateSnoozedUntil === 'number' && Number.isFinite(parsed.updateSnoozedUntil) ? parsed.updateSnoozedUntil : DEFAULTS.updateSnoozedUntil,
+      updateSnoozedFor:
+        typeof parsed.updateSnoozedFor === 'number' && Number.isFinite(parsed.updateSnoozedFor) ? parsed.updateSnoozedFor : DEFAULTS.updateSnoozedFor,
       advanced: typeof parsed.advanced === 'boolean' ? parsed.advanced : DEFAULTS.advanced,
       displayName:
         typeof parsed.displayName === 'string'

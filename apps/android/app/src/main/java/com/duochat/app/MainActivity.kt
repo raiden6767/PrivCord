@@ -161,19 +161,22 @@ private fun RootScreen(viewModel: AppViewModel) {
     LaunchedEffect(settings.updateChecks, settings.network.forceRelay, settings.network.torMode, resumes) {
         val now = System.currentTimeMillis()
         if (update == null && settings.updateChecks && com.duochat.app.data.AppUpdate.mayCheck(settings.network) &&
-            now >= settings.updateSnoozedUntil && com.duochat.app.data.AppUpdate.dueForCheck(com.duochat.app.UpdateSignal.lastCheck, now)
+            com.duochat.app.data.AppUpdate.dueForCheck(com.duochat.app.UpdateSignal.lastCheck, now)
         ) {
             // Only a finished look counts: a failed one (no network yet) or one cut short is tried again at the next resume.
             com.duochat.app.AppUpdater.latest().onSuccess {
                 com.duochat.app.UpdateSignal.lastCheck = now
-                update = it
+                // "Later" puts off the build that was shown, not every build after it: a newer one is offered at once.
+                if (it != null && com.duochat.app.data.AppUpdate.shouldOffer(it, settings.updateSnoozedUntil, settings.updateSnoozedFor, now)) update = it
             }
         }
     }
     update?.let { info ->
         com.duochat.app.ui.UpdateDialog(info) {
             update = null
-            viewModel.updateSettings { copy(updateSnoozedUntil = System.currentTimeMillis() + 3 * 24 * 60 * 60 * 1000L) }
+            viewModel.updateSettings {
+                copy(updateSnoozedUntil = System.currentTimeMillis() + 3 * 24 * 60 * 60 * 1000L, updateSnoozedFor = info.versionCode)
+            }
         }
     }
     // Tell the engine which conversation is on screen (it marks messages read and stays quiet about them).

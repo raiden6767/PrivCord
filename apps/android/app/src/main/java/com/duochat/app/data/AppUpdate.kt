@@ -20,6 +20,13 @@ object AppUpdate {
 
     fun isNewer(info: UpdateInfo, currentVersionCode: Int) = info.versionCode > currentVersionCode
 
+    /**
+     * Whether to show an update that was found. "Later" puts off the build that was shown, not every build after it: a newer
+     * one is offered at once, whatever is left of the snooze.
+     */
+    fun shouldOffer(info: UpdateInfo, snoozedUntil: Long, snoozedFor: Int, now: Long) =
+        now >= snoozedUntil || info.versionCode > snoozedFor
+
     /** The automatic check runs at most this often (the "Check now" button always asks). */
     // Six hours, not thirty minutes: every check tells GitHub this phone is online and its address.
     const val RECHECK_MS = 6 * 60 * 60 * 1000L

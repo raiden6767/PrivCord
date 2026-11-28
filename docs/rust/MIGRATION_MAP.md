@@ -11,10 +11,10 @@ Status meanings: **Ported, tested** = the Rust implementation exists and is chec
 | Ported, tested | 54 | 8375 |
 | Partly ported | 0 | 0 |
 | Not yet ported | 0 | 0 |
-| Stays (UI) | 106 | 19362 |
-| Stays (platform adapter) | 80 | 14291 |
+| Stays (UI) | 106 | 19411 |
+| Stays (platform adapter) | 80 | 14295 |
 | Replaced by a library | 3 | 208 |
-| **All mapped files** | **243** | **42236** |
+| **All mapped files** | **243** | **42289** |
 
 Ported does not mean retired: the TypeScript and Kotlin versions stay in production until the apps call the Rust engine (M7 desktop, M8 Android) and the compatibility gates pass (PRD section 16).
 
@@ -94,7 +94,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/components/RequestDialog.tsx` | 57 | `RequestDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/SettingsDialog.tsx` | 778 | `SettingsSection`, `SettingsDialog` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/StorageByChat.tsx` | 69 | `StorageByChat` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
-| `apps/desktop/src/components/UpdateControl.tsx` | 128 | `UpdateCheck`, `UpdateBanner` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
+| `apps/desktop/src/components/UpdateControl.tsx` | 131 | `UpdateCheck`, `UpdateBanner` | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/dialogFocus.test.tsx` | 46 | (none) | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/components/screens.test.tsx` | 236 | (none) | React components and hooks | UI | UI | Stays (UI) | Stays; hooks become thin wrappers over Tauri commands in M7 | n/a |
 | `apps/desktop/src/config.ts` | 19 | `config`, `isTauri` | App shell | UI | UI | Stays (UI) | Stays | n/a |
@@ -158,15 +158,15 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/desktop/src/lib/secureStore.ts` | 42 | `usingOsSecureStorage`, `secretGet`, `secretSet`, `secretDelete` | Secure storage and at-rest encryption helpers | SecureStore adapter (Tauri keyring) | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/desktop/src/lib/selectedTab.test.ts` | 20 | (none) | Guards the look: later style layers must not repaint selected controls | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/settings.test.ts` | 46 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/lib/settings.ts` | 140 | `ThemeMode`, `AppSettings`, `ACCENTS`, `parseSettings`, `loadSettings`, `saveSettings` +3 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/desktop/src/lib/settings.ts` | 145 | `ThemeMode`, `AppSettings`, `ACCENTS`, `parseSettings`, `loadSettings`, `saveSettings` +3 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/signalingStatus.ts` | 2 | `SignalingStatus` | The name of the relays' overall state (the Rust signaling layer decides it) | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/spotlight.ts` | 16 | `installSpotlight` | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/storage.test.ts` | 17 | (none) | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/storage.ts` | 41 | `ChatStorage`, `storageByChat` | Small pure helpers for the screens: privacy checkup, pinned chats, the hosts the app contacts | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/themes.test.ts` | 64 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/themes.ts` | 162 | `ThemeDef`, `THEMES`, `DEFAULT_PALETTE`, `classicTheme`, `APRICOT`, `themeById` +6 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/lib/updates.test.ts` | 51 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
-| `apps/desktop/src/lib/updates.ts` | 42 | `FoundUpdate`, `SNOOZE_MS`, `mayCheckForUpdates`, `checkForUpdate`, `installUpdate`, `RECHECK_MS` +2 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/desktop/src/lib/updates.test.ts` | 65 | (none) | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/desktop/src/lib/updates.ts` | 56 | `FoundUpdate`, `SNOOZE_MS`, `mayCheckForUpdates`, `checkForUpdate`, `installUpdate`, `RECHECK_MS` +4 | Presentation helpers, UI settings, themes, notifications bridge | UI / adapter (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/waveform.test.ts` | 22 | (none) | Voice-note waveform bars, receipt and nearby wording, quick-send and drop-to-send target lists | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/lib/waveform.ts` | 43 | `bucketPeaks`, `playedBars`, `waveformFor` | Voice-note waveform bars, receipt and nearby wording, quick-send and drop-to-send target lists | Desktop UI | UI | Stays (UI) | Stays | n/a |
 | `apps/desktop/src/main.tsx` | 21 | (none) | App shell | UI | UI | Stays (UI) | Stays | n/a |
@@ -191,10 +191,10 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | File | Lines | Main symbols | Current responsibility | Destination | Class | Status | Removal condition | Tests |
 |---|---:|---|---|---|---|---|---|---|
 | `apps/android/app/src/main/java/com/duochat/app/AppConfig.kt` | 37 | `AppConfig` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/AppUpdater.kt` | 127 | `UpdateDownload`, `UpdateSignal`, `AppUpdater`, `InstallResultReceiver` | In-app update: downloads the APK into Android's installer | Platform adapter (stays) | Adapter | Stays (platform adapter) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/AppUpdater.kt` | 131 | `UpdateDownload`, `UpdateSignal`, `AppUpdater`, `InstallResultReceiver` | In-app update: downloads the APK into Android's installer | Platform adapter (stays) | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/CrashLog.kt` | 128 | `CrashLog` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/DuoChatApp.kt` | 25 | `DuoChatApp` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/MainActivity.kt` | 522 | `MainActivity`, `RootScreen`, `exists` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/MainActivity.kt` | 525 | `MainActivity`, `RootScreen`, `exists` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/RustCore.kt` | 16 | `RustCore` | Android shell and the loader for the Rust core | UI / platform | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/UpdateService.kt` | 139 | `UpdateService` | In-app update: downloads the APK into Android's installer | Platform adapter (stays) | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/AndroidMeshRadio.kt` | 489 | `AndroidMeshRadio` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
@@ -206,7 +206,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/ble/BleTransport.kt` | 673 | `BleConstants`, `RawLink`, `BleTransport` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/MeshRadio.kt` | 25 | `MeshRadio` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/ble/SecureBleLink.kt` | 131 | `SecureBleLink` | Android Bluetooth radio, permissions, link | BLE adapter | Adapter | Stays (platform adapter) | Stays | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/data/AppUpdate.kt` | 30 | `UpdateInfo`, `AppUpdate` | In-app update: reads the release's android.json, version and privacy rules | UI state (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/data/AppUpdate.kt` | 37 | `UpdateInfo`, `AppUpdate` | In-app update: reads the release's android.json, version and privacy rules | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/AutoBackup.kt` | 116 | `AutoBackup` | Android automatic backups: folder access and Keystore-held passphrase | Backup (platform side) | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Diagnosis.kt` | 77 | `CandidateCounts`, `ConnectionFacts`, `DiagnosisAction`, `Diagnosis`, `diagnoseConnection`, `countSdpCandidates` | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Files.kt` | 270 | `MessageType`, `ReplyRef`, `makeReplyRef`, `FileMeta`, `DeclineReason`, `declinedFrame` +15 | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
@@ -214,7 +214,7 @@ Ported does not mean retired: the TypeScript and Kotlin versions stay in product
 | `apps/android/app/src/main/java/com/duochat/app/data/Models.kt` | 425 | `DeliveryState`, `TransportKind`, `needsDelivery`, `ChatMessage`, `OutboxRow`, `EnginePhase` +39 | Chat state models and the in-memory message store over Room | engine state (snapshot, events) and storage::SqliteStorage | Engine | Ported, tested | M8: the engine owns this state | engine and storage tests |
 | `apps/android/app/src/main/java/com/duochat/app/data/MyServer.kt` | 205 | `SavedServer`, `ServerTurn`, `ServerInfo`, `MyServerException`, `MyServer`, `MyServerState` | "Use my server": finds a PrivCord server from one address, reads its relay and STUN/TURN, refreshes the short-lived TURN login | UI/settings glue (stays); the server side is crates/privcord-server | Adapter | Stays (platform adapter) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/NetworkConfig.kt` | 202 | `TransportMode`, `TurnServer`, `SignalingConfig`, `NetworkConfig`, `TurnShare` | Domain rules duplicated from TypeScript | domain | Domain | Ported, tested | M8 | n/a |
-| `apps/android/app/src/main/java/com/duochat/app/data/Preferences.kt` | 173 | `AppSettings`, `SettingsRepository` | App settings storage | UI state (stays) | UI | Stays (UI) | Stays | n/a |
+| `apps/android/app/src/main/java/com/duochat/app/data/Preferences.kt` | 176 | `AppSettings`, `SettingsRepository` | App settings storage | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/QuickWins.kt` | 187 | `minutesLabel`, `HostRow`, `CheckupItem`, `ChatStorage`, `objects`, `parseCheckup` +29 | Small pure helpers for the screens: pinned chats, hosts the app contacts, privacy checkup | UI state (stays) | UI | Stays (UI) | Stays | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Social.kt` | 106 | `deleteFrame`, `reactFrame`, `parseDelete`, `ReactionEvent`, `parseReact`, `ReactionChip` +3 | Delete/react frames, backup | domain::social, crypto::backup | Domain/Crypto | Ported, tested | M8 | n/a |
 | `apps/android/app/src/main/java/com/duochat/app/data/Themes.kt` | 70 | `ThemeDef`, `themeById`, `channel`, `mixColors`, `luminance`, `contrastRatio` +2 | Themes | UI | UI | Stays (UI) | Stays | n/a |

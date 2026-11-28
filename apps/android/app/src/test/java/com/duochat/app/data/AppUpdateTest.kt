@@ -50,4 +50,13 @@ class AppUpdateTest {
         assertFalse(AppUpdate.dueForCheck(t, t + AppUpdate.RECHECK_MS - 1))
         assertTrue(AppUpdate.dueForCheck(t, t + AppUpdate.RECHECK_MS))
     }
+
+    @Test
+    fun `later puts off one build and a newer build is offered at once`() {
+        fun info(code: Int) = UpdateInfo(code, "0.1.$code", AppUpdate.BASE + "PrivCord.apk", "a".repeat(64))
+        val now = 1_000L
+        assertFalse(AppUpdate.shouldOffer(info(38), now + 500, 38, now))
+        assertTrue(AppUpdate.shouldOffer(info(39), now + 500, 38, now))
+        assertTrue(AppUpdate.shouldOffer(info(38), now - 1, 38, now))
+    }
 }

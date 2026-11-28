@@ -45,6 +45,8 @@ data class AppSettings(
     val updateChecks: Boolean = true,
     /** "Later" on the update prompt: do not ask again before this time (milliseconds). */
     val updateSnoozedUntil: Long = 0L,
+    /** The build that "Later" put off: a newer build than this is offered at once, whatever the snooze. */
+    val updateSnoozedFor: Int = 0,
     /** Show the advanced options in Settings (beginners see the short list). */
     val advanced: Boolean = false,
     val network: NetworkConfig = NetworkConfig(),
@@ -95,7 +97,7 @@ class SettingsRepository(context: Context) {
         .put("panicWipe", s.panicWipe).put("appLock", s.appLock)
         .put("mutedChats", JSONArray(s.mutedChats.toList()))
         .put("lastBackupAt", s.lastBackupAt).put("lastSeenVersion", s.lastSeenVersion)
-        .put("updateChecks", s.updateChecks).put("updateSnoozedUntil", s.updateSnoozedUntil).put("advanced", s.advanced)
+        .put("updateChecks", s.updateChecks).put("updateSnoozedUntil", s.updateSnoozedUntil).put("updateSnoozedFor", s.updateSnoozedFor).put("advanced", s.advanced)
         .put("network", s.network.toJson())
         .put("servers", MyServer.toJson(s.servers))
 
@@ -133,6 +135,7 @@ class SettingsRepository(context: Context) {
             lastSeenVersion = o.optString("lastSeenVersion", ""),
             updateChecks = o.optBoolean("updateChecks", true),
             updateSnoozedUntil = o.optLong("updateSnoozedUntil", 0L),
+            updateSnoozedFor = o.optInt("updateSnoozedFor", 0),
             advanced = o.optBoolean("advanced", false),
             network = NetworkConfig.fromJson(o.optString("network", "").ifEmpty { null }, fallback = AppConfig.defaultNetworkConfig()),
             servers = MyServer.fromJson(o.optJSONArray("servers")),
