@@ -325,6 +325,12 @@ export function DownloadPage({ Go, repo, reduce, dlRef, dlOn }) {
           <div className="dl">
             <div className="dl-row"><div><h3><Icon d={P.mon} />Windows</h3><p>Installer for Windows 10 and 11 (64-bit). Downloads the file directly.</p></div>{link('Download for Windows', 'Windows/PrivCord-setup.exe')}</div>
             <div className="dl-row"><div><h3><Icon d={P.ph} />Android</h3><p>One APK for Android phones. Downloads the file directly.</p></div>{link('Download for Android', 'Android/PrivCord.apk')}</div>
+            <div className="dl-row"><div><h3><Icon d={P.mon} />Server (test build)</h3><p>Run your own relay, Nostr and TURN server, with a web admin panel. For people who host: a command-line program, not an app. Pick your system.</p></div>
+              <div className="dl-server">
+                <a className="btn primary small" href={`${repo}/releases/download/Server/privcord-server-linux-x86_64`}>Linux</a>
+                <a className="btn primary small" href={`${repo}/releases/download/Server/privcord-server-windows-x86_64.exe`}>Windows</a>
+                <a className="btn primary small" href={`${repo}/releases/download/Server/privcord-server-macos-arm64`}>macOS</a>
+              </div></div>
           </div>
         </div>
       </section>
@@ -336,6 +342,7 @@ export function DownloadPage({ Go, repo, reduce, dlRef, dlOn }) {
             <article className="fcard plain"><h3>Android</h3><p>You need to allow installing from the app or browser you downloaded it with. Pick the arm64 file unless your phone is very old.</p></article>
             <article className="fcard plain"><h3>First run</h3><p>The app makes your 12 recovery words. Write them down before you continue: they are the only way back to your account.</p></article>
             <article className="fcard plain"><h3>Requirements</h3><p>Windows 10 or 11. Android phones: arm64 for almost every phone, armeabi-v7a only for old 32-bit ones. The app asks for the camera (QR codes), Bluetooth (nearby mode, Android) and notifications, and never for your contacts.</p></article>
+            <article className="fcard plain"><h3>Server</h3><p>Run <code>privcord-server init</code>, then <code>privcord-server doctor</code> to check your network, then <code>privcord-server serve</code>; the admin panel is at <code>/admin</code>. It is a test build and not independently audited. Read the <a href={`${repo}/blob/main/crates/privcord-server/README.md`}>server guide</a> first. Whoever runs a server is responsible for it.</p></article>
             <article className="fcard plain"><h3>Where files come from</h3><p>Only from the GitHub releases page of the project. We do not distribute it anywhere else, so treat other download sites with suspicion.</p></article>
             <article className="fcard plain"><h3>Before you rely on it</h3><p>PrivCord has not been independently audited. Read the <a href={`${repo}/blob/main/docs/KNOWN_LIMITATIONS.md`}>known limitations</a> first.</p></article>
           </div>

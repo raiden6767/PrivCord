@@ -299,6 +299,14 @@ export default function App() {
                   <div><h3><Icon d={P.ph} />Android</h3><p>One APK for Android phones. Downloads the file directly.</p></div>
                   <Magnet padding={60} magnetStrength={3} disabled={reduce}><StarBorder as="a" href={APK} color={YELLOW} trailColor="#ffffff" backgroundColor={YELLOW} textColor={INK} borderColor="rgba(0,0,0,0)" duration={5} radius={10} className="cta-star">Download the APK</StarBorder></Magnet>
                 </div>
+                <div className="dl-row">
+                  <div><h3><Icon d={P.mon} />Server (test build)</h3><p>Host your own relay, Nostr and TURN server. For people who run servers.</p></div>
+                  <div className="dl-server">
+                    <a className="btn primary small" href={`${REPO}/releases/download/Server/privcord-server-linux-x86_64`}>Linux</a>
+                    <a className="btn primary small" href={`${REPO}/releases/download/Server/privcord-server-windows-x86_64.exe`}>Windows</a>
+                    <a className="btn primary small" href={`${REPO}/releases/download/Server/privcord-server-macos-arm64`}>macOS</a>
+                  </div>
+                </div>
               </div>
               <p className="warn"><strong>Heads up:</strong> the Windows installer is not code-signed yet, so Windows SmartScreen will warn you: choose <em>More info</em>, then <em>Run anyway</em>. On Android you need to allow installing apps from this source. Windows will also ask to allow the firewall the first time, which lets PrivCord find friends on your local network.</p>
               <p className="more-row"><Go className="more" to="download">Install notes →</Go></p>
